@@ -1,0 +1,108 @@
+import os
+import shutil
+import tempfile
+from datetime import datetime, timezone
+
+from pyflink.common.typeinfo import Types
+from pyflink.datastream.output_tag import OutputTag
+from sunbird_ai_core.base.base_process_function import BaseProcessFunction
+from sunbird_ai_core.graph.janusgraph_util import JanusGraphUtil
+from sunbird_ai_core.kafka.event_schemas import MediaTranscriptionRequest
+from sunbird_ai_core.storage.blob_util import BlobStorageUtil
+
+from caption_generator.audio import extract_audio
+from caption_generator.builders.vtt_builder import build_transcript_json, build_vtt
+from caption_generator.providers.transcription.base import TranscriptionProvider
+from caption_generator.sync import sync_enrichment_transcripts
+
+TRANSCRIPTION_DLQ_TAG = OutputTag("transcription-dlq", Types.STRING())
+
+
+def run_transcription_pipeline(
+    request: MediaTranscriptionRequest,
+    graph: JanusGraphUtil,
+    storage: BlobStorageUtil,
+    provider: TranscriptionProvider,
+    generated_by: str,
+    auto_approve: bool,
+) -> None:
+    """S1-S7 of the transcription path. Raises on any failure — caller is
+    responsible for marking the Transcript node Failed and routing to DLQ.
+    """
+    transcript_node = graph.get_node(request.transcriptId)
+    assert transcript_node is not None, f"Transcript node {request.transcriptId} not found"
+    language_code = transcript_node["languageCode"]
+
+    graph.update_node(request.transcriptId, {"status": "Processing"})  # S1
+
+    tmp_dir = tempfile.mkdtemp(prefix=f"{request.contentId}_transcribe_")
+    try:
+        video_path = os.path.join(tmp_dir, "source_video")
+        storage.download_from_uri(request.artifactUrl, video_path)  # S2
+
+        audio_path = os.path.join(tmp_dir, "audio.wav")
+        extract_audio(video_path, audio_path)  # S3
+
+        segments = provider.transcribe(audio_path)  # S4
+
+        transcript_json = build_transcript_json(segments)  # S5
+        vtt = build_vtt(segments)
+
+        json_key = f"content/{request.contentId}/transcripts/{language_code}/transcript.json"
+        vtt_key = f"content/{request.contentId}/transcripts/{language_code}/captions.vtt"
+        storage.upload_bytes(transcript_json.encode("utf-8"), json_key)  # S6
+        storage.upload_bytes(vtt.encode("utf-8"), vtt_key)
+
+        graph.update_node(  # S7
+            request.transcriptId,
+            {
+                "artifactUrl": storage.get_uri(json_key),
+                "captionsUrl": storage.get_uri(vtt_key),
+                "generatedBy": generated_by,
+                "generatedOn": datetime.now(timezone.utc).isoformat(),
+                "status": "Live" if auto_approve else "Review",
+                "autoApproved": auto_approve,
+            },
+        )
+        sync_enrichment_transcripts(graph, request.enrichmentId)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+class TranscriptionFunction(BaseProcessFunction):
+    def __init__(self, config):
+        super().__init__(config)
+        self._provider = None
+        self._generated_by = None
+        self._auto_approve = None
+
+    def open(self, runtime_context) -> None:
+        super().open(runtime_context)
+        from caption_generator.providers.factory import build_transcription_provider
+
+        model = self._config.raw("transcription.model")
+        self._provider = build_transcription_provider(
+            self._config.raw("transcription.provider"),
+            model=model,
+            device=self._config.raw("transcription.device", "cpu"),
+            compute_type=self._config.raw("transcription.compute_type", "int8"),
+        )
+        self._generated_by = f"{self._config.raw('transcription.provider')}:{model}"
+        self._auto_approve = bool(self._config.raw("transcription.auto_approve", False))
+
+    def process_element(self, value: str, ctx):
+        assert self.graph is not None, "open() must be called before process_element()"
+        assert self.storage is not None, "open() must be called before process_element()"
+        assert self.logger is not None, "open() must be called before process_element()"
+
+        request = MediaTranscriptionRequest.from_json(value)
+        try:
+            run_transcription_pipeline(
+                request, self.graph, self.storage, self._provider, self._generated_by, self._auto_approve
+            )
+        except Exception as error:
+            self.logger.exception("Transcription failed for %s: %s", request.contentId, error)
+            self.graph.update_node(
+                request.transcriptId, {"status": "Failed", "errorMessage": str(error)}
+            )
+            self.emit_to_dlq(request, error, ctx, TRANSCRIPTION_DLQ_TAG)
