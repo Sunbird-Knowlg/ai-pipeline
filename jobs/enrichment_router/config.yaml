@@ -1,0 +1,40 @@
+job:
+  name: enrichment-router
+  parallelism: 4
+
+kafka:
+  brokers: ${KAFKA_BROKERS}
+  group_id: enrichment-router
+  topics:
+    input: ${ENV}.enriched.metadata
+    transcription_out: ${ENV}.media.transcription.request
+    multilingual_out: ${ENV}.media.multilingual.request
+
+janusgraph:
+  host: ${JANUSGRAPH_HOST}
+  port: 8182
+
+schema:
+  base_path: ${SCHEMA_BASE_PATH}
+
+knowlg:
+  # No api_key — internal calls to the knowlg platform require no auth.
+  content_service_url: ${CONTENT_SERVICE_URL}
+  apis:
+    transcript_create: /content/v4/transcript/create
+    content_read: /content/v4/read/{identifier}
+
+cloud_storage_type: azure
+cloud_storage_auth_type: OIDC
+cloud_storage_container: ${STORAGE_CONTAINER}
+
+enrichment:
+  transcript:
+    enabled: true
+    mime_types:
+      - video/mp4
+      - video/webm
+    languages: []
+    auto_approve:
+      source: false
+      multilingual: true
