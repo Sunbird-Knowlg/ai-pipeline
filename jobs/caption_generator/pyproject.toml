@@ -1,0 +1,31 @@
+[project]
+name = "caption-generator"
+version = "0.1.0"
+description = "Transcription (faster-whisper) and multilingual translation (LiteLLM) for content captions"
+requires-python = ">=3.11"
+# sunbird-ai-core is installed separately (pip install -e ../../core), not
+# declared here — see root Makefile packaging targets.
+dependencies = [
+    "apache-flink>=1.18,<1.19",
+    "faster-whisper>=1.0.0",
+    "litellm>=1.40.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.14.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["caption_generator*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires local docker-compose stack (JanusGraph, Kafka, Azurite)",
+]

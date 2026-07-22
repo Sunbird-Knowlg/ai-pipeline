@@ -1,0 +1,52 @@
+job:
+  name: caption-generator
+  parallelism: 4
+
+kafka:
+  brokers: ${KAFKA_BROKERS}
+  group_id: caption-generator
+  topics:
+    transcription_in: ${ENV}.media.transcription.request
+    multilingual_in: ${ENV}.media.multilingual.request
+    transcription_dlq: ${ENV}.media.transcription.dlq
+    multilingual_dlq: ${ENV}.media.multilingual.dlq
+
+janusgraph:
+  host: ${JANUSGRAPH_HOST}
+  port: 8182
+
+schema:
+  base_path: ${SCHEMA_BASE_PATH}
+
+knowlg:
+  # No api_key — internal calls to the knowlg platform require no auth.
+  content_service_url: ${CONTENT_SERVICE_URL}
+  apis:
+    transcript_create: /content/v4/transcript/create
+    content_read: /content/v4/read/{identifier}
+
+cloud_storage_type: azure
+cloud_storage_auth_type: OIDC
+cloud_storage_container: ${STORAGE_CONTAINER}
+
+transcription:
+  provider: faster_whisper
+  model: large-v3-turbo
+  device: cpu
+  compute_type: int8
+  auto_approve: false
+
+multilingual:
+  provider: litellm
+  model: ${LLM_MODEL}
+  api_key: ${LLM_API_KEY}
+  batch_size: 80
+  context_overlap: 2
+  auto_approve: true
+  ecar:
+    # Source language must always be Live for ECAR generation to trigger.
+    # true (default): a permanently Failed language does not block ECAR
+    # generation — the ECAR is built from whatever languages succeeded.
+    # false: Failed is treated the same as Draft/Review/Processing — blocks
+    # generation until that language is retried/fixed.
+    allow_failed_languages: true
