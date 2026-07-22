@@ -1,0 +1,35 @@
+[project]
+name = "sunbird-ai-core"
+version = "0.1.0"
+description = "Core utilities for Sunbird AI Flink jobs — graph access, blob storage, config, Kafka event schemas"
+requires-python = ">=3.11"
+dependencies = [
+    "gremlinpython>=3.7.0",
+    "fsspec>=2024.6.0",
+    "adlfs>=2024.4.0",
+    "s3fs>=2024.6.0",
+    "gcsfs>=2024.6.0",
+    "azure-identity>=1.16.0",
+    "jsonschema>=4.22.0",
+    "PyYAML>=6.0",
+    "requests>=2.32.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.14.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["sunbird_ai_core*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires local docker-compose stack (JanusGraph, Kafka, Azurite)",
+]
