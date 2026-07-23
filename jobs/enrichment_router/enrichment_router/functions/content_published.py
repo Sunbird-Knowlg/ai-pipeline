@@ -33,7 +33,10 @@ def handle_content_published(
         return None
 
     enrichment_id = enrichment["IL_UNIQUE_ID"]
-    transcripts = graph.get_related_nodes(enrichment_id, "transcripts", direction="out")
+    # "transcripts" is the schema relation *name*, not the JanusGraph edge
+    # label — all associatedTo-type relations share the "associatedTo" edge
+    # label (see AssociationRelation.getRelationType in knowledge-platform).
+    transcripts = graph.get_related_nodes(enrichment_id, "associatedTo", direction="out")
     source_transcript = next((t for t in transcripts if t.get("sourceLanguage") is True), None)
     if source_transcript is None:
         logger.info(

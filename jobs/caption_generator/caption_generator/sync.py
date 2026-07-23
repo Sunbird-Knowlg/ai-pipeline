@@ -10,7 +10,10 @@ def sync_enrichment_transcripts(graph: JanusGraphUtil, enrichment_id: str) -> li
     so callers can still check identifiers/status directly.
     """
     relation_fields = graph.schema_registry.get_relation_fields("Transcript")
-    transcripts = graph.get_related_nodes(enrichment_id, "transcripts", direction="out")
+    # "transcripts" is the schema relation *name*, not the JanusGraph edge
+    # label — all associatedTo-type relations share the "associatedTo" edge
+    # label (see AssociationRelation.getRelationType in knowledge-platform).
+    transcripts = graph.get_related_nodes(enrichment_id, "associatedTo", direction="out")
 
     snapshot = [{field: t.get(field) for field in relation_fields} for t in transcripts]
 

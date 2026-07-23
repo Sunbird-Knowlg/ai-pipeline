@@ -22,7 +22,10 @@ MULTILINGUAL_DLQ_TAG = OutputTag("multilingual-dlq", Types.STRING())
 def resolve_target_transcript_ids(
     graph: JanusGraphUtil, enrichment_id: str, target_languages: list[str]
 ) -> dict[str, str]:
-    transcripts = graph.get_related_nodes(enrichment_id, "transcripts", direction="out")
+    # "transcripts" is the schema relation *name*, not the JanusGraph edge
+    # label — all associatedTo-type relations share the "associatedTo" edge
+    # label (see AssociationRelation.getRelationType in knowledge-platform).
+    transcripts = graph.get_related_nodes(enrichment_id, "associatedTo", direction="out")
     by_language = {t["languageCode"]: t["IL_UNIQUE_ID"] for t in transcripts if not t.get("sourceLanguage")}
     return {lang: by_language[lang] for lang in target_languages if lang in by_language}
 

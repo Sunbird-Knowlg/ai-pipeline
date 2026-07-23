@@ -33,7 +33,10 @@ def handle_transcript_approved(
     content_id = event.data["contentId"]
     enrichment_id = event.data["enrichmentId"]
 
-    existing_transcripts = graph.get_related_nodes(enrichment_id, "transcripts", direction="out")
+    # "transcripts" is the schema relation *name*, not the JanusGraph edge
+    # label — all associatedTo-type relations share the "associatedTo" edge
+    # label (see AssociationRelation.getRelationType in knowledge-platform).
+    existing_transcripts = graph.get_related_nodes(enrichment_id, "associatedTo", direction="out")
     active_languages = {
         t["languageCode"]
         for t in existing_transcripts
