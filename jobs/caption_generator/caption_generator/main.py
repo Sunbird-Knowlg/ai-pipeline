@@ -1,6 +1,7 @@
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream.connectors.kafka import (
+    KafkaOffsetResetStrategy,
     KafkaOffsetsInitializer,
     KafkaRecordSerializationSchema,
     KafkaSink,
@@ -48,7 +49,9 @@ class CaptionGeneratorJob(BaseFlinkJob):
             .set_bootstrap_servers(self.config.kafka_brokers)
             .set_topics(topic)
             .set_group_id(self.config.kafka_group_id)
-            .set_starting_offsets(KafkaOffsetsInitializer.committed_offsets())
+            .set_starting_offsets(
+                KafkaOffsetsInitializer.committed_offsets(KafkaOffsetResetStrategy.LATEST)
+            )
             .set_value_only_deserializer(SimpleStringSchema())
             .build()
         )
