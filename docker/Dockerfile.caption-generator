@@ -38,4 +38,12 @@ ENV WHISPER_MODEL_PATH=/opt/models/${WHISPER_MODEL}
 
 WORKDIR /opt/sunbird-ai/jobs/caption_generator
 
-ENTRYPOINT ["flink", "run", "-py", "caption_generator/main.py", "--config", "config.yaml"]
+# Invoked directly via python3.11, not `flink run` — `flink run` submits
+# via REST to a JobManager it expects already running (default
+# localhost:8081), which nothing in this container starts, causing a
+# deterministic "Connection refused: /0.0.0.0:8081" on every execute().
+# Running the script directly lets get_execution_environment() create a
+# real embedded local MiniCluster in-process instead, no REST/networking
+# involved — the single-process, no-separate-JM/TM model this chart
+# actually intends (see py-flink chart's templates/deployment.yaml).
+ENTRYPOINT ["python3.11", "caption_generator/main.py", "--config", "config.yaml"]
