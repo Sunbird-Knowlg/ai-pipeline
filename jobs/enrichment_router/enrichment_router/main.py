@@ -1,4 +1,5 @@
 from pyflink.common.serialization import SimpleStringSchema
+from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream.connectors.kafka import (
     KafkaOffsetsInitializer,
     KafkaRecordSerializationSchema,
@@ -26,7 +27,9 @@ class EnrichmentRouterJob(BaseFlinkJob):
             .build()
         )
 
-        main_stream = self.env.from_source(source, watermark_strategy=None, source_name="enriched-metadata")
+        main_stream = self.env.from_source(
+            source, watermark_strategy=WatermarkStrategy.no_watermarks(), source_name="enriched-metadata"
+        )
         routed = main_stream.process(RouterFunction(self.config))
 
         transcription_stream = routed.get_side_output(TRANSCRIPTION_OUT_TAG)

@@ -1,4 +1,5 @@
 from pyflink.common.serialization import SimpleStringSchema
+from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream.connectors.kafka import (
     KafkaOffsetsInitializer,
     KafkaRecordSerializationSchema,
@@ -51,7 +52,9 @@ class CaptionGeneratorJob(BaseFlinkJob):
             .set_value_only_deserializer(SimpleStringSchema())
             .build()
         )
-        return self.env.from_source(source, watermark_strategy=None, source_name=source_name)
+        return self.env.from_source(
+            source, watermark_strategy=WatermarkStrategy.no_watermarks(), source_name=source_name
+        )
 
     def _build_sink(self, topic: str) -> KafkaSink:
         return (
