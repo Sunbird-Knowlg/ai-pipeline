@@ -1,13 +1,14 @@
 name: Build
 
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
+# GITHUB_TOKEN needs packages: write to push to ghcr.io (GitHub Container Registry)
 permissions:
   contents: read
   packages: write
+
+on:
+  push:
+    tags:
+      - '*'
 
 jobs:
   build-and-push:
@@ -20,19 +21,29 @@ jobs:
           - job: caption-generator
             dockerfile: docker/Dockerfile.caption-generator
     steps:
-      - uses: actions/checkout@v4
+      # Step 1: Checkout the code
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # Step 2: Login to GHCR
+      - name: Registry Login
+        run: |
+          REPO_NAME_LOWERCASE=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "REGISTRY_URL=ghcr.io/$REPO_NAME_LOWERCASE" >> $GITHUB_ENV
 
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          push: true
-          tags: |
-            ghcr.io/sunbird/${{ matrix.job }}:latest
-            ghcr.io/sunbird/${{ matrix.job }}:${{ github.sha }}
+      # Step 3: Build Docker image
+      - name: Build Docker Image
+        run: |
+          IMAGE_NAME="${{ matrix.job }}"
+          IMAGE_TAG=$(echo "${{ github.ref_name }}_$(echo $GITHUB_SHA | cut -c1-7)" | tr '[:upper:]' '[:lower:]')
+          docker build -f ${{ matrix.dockerfile }} -t $REGISTRY_URL/${IMAGE_NAME}:${IMAGE_TAG} .
+
+          echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
+
+      # Step 4: Push Docker image
+      - name: Push Docker Image
+        run: |
+          docker push $REGISTRY_URL/${IMAGE_NAME}:${IMAGE_TAG}
+          echo "Pushed Docker image: $REGISTRY_URL/${IMAGE_NAME}:${IMAGE_TAG}"
