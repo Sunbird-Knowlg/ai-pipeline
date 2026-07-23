@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 # sunbird-ai-core is installed separately (pip install -e ../../core), not
 # declared here — see root Makefile packaging targets.
 dependencies = [
-    "apache-flink>=1.18,<1.19",
+    "apache-flink>=1.20,<1.21",
 ]
 
 [project.optional-dependencies]
