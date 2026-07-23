@@ -1,0 +1,47 @@
+image:
+  repository: sunbird/enrichment-router
+  tag: "0.1.0"
+
+parallelism: 4
+
+kafka:
+  brokers: ""
+  topics:
+    input: ""
+    transcriptionOut: ""
+    multilingualOut: ""
+
+janusgraph:
+  host: ""
+  port: 8182
+
+schema:
+  basePath: ""
+
+knowlg:
+  contentServiceUrl: ""
+  apiKeySecretRef: knowlg-api-key
+
+storage:
+  type: azure
+  authType: OIDC
+  container: ""
+
+enrichment:
+  transcript:
+    enabled: true
+    mimeTypes:
+      - video/mp4
+      - video/webm
+    languages: []
+    autoApprove:
+      source: false
+      multilingual: true
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "1"
+    memory: "2Gi"

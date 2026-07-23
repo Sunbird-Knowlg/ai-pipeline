@@ -1,0 +1,6 @@
+apiVersion: v2
+name: enrichment-router
+description: Routes content publish and transcript approval events to downstream AI job topics
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
