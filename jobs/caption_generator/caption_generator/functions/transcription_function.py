@@ -42,14 +42,14 @@ def run_transcription_pipeline(
         audio_path = os.path.join(tmp_dir, "audio.wav")
         extract_audio(video_path, audio_path)  # S3
 
-        segments, detected_language = provider.transcribe(audio_path)  # S4
+        segments, words, detected_language = provider.transcribe(audio_path)  # S4
         # This function only ever runs for the source-language transcript
         # (languageCode is unset at creation, only known after detection) —
         # use the real detected code, not the empty one read at S1.
         language_code = detected_language
 
         transcript_json = build_transcript_json(segments)  # S5
-        vtt = build_vtt(segments)
+        vtt = build_vtt(words)  # one cue per word
 
         json_key = f"content/{request.contentId}/transcripts/{language_code}/transcript.json"
         vtt_key = f"content/{request.contentId}/transcripts/{language_code}/captions.vtt"

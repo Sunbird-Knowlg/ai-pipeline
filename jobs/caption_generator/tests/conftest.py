@@ -25,6 +25,14 @@ def mock_transcription_provider():
             Segment(id=0, start=0.0, end=2.5, text="Hello children"),
             Segment(id=1, start=2.5, end=5.0, text="Welcome to the lesson"),
         ],
+        [
+            Segment(id=0, start=0.0, end=0.5, text="Hello"),
+            Segment(id=1, start=0.5, end=2.5, text="children"),
+            Segment(id=2, start=2.5, end=2.8, text="Welcome"),
+            Segment(id=3, start=2.8, end=3.2, text="to"),
+            Segment(id=4, start=3.2, end=3.6, text="the"),
+            Segment(id=5, start=3.6, end=5.0, text="lesson"),
+        ],
         "en",
     )
     return provider
