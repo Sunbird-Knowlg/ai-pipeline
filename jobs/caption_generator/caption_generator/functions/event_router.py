@@ -15,8 +15,10 @@ class EventRouter(ProcessFunction):
     """
 
     def process_element(self, value: str, ctx):
+        # PyFlink 1.20's ProcessFunction has no ctx.output() — side outputs
+        # are emitted by yielding (OutputTag, value) from this generator.
         payload = json.loads(value)
         if "targetLanguages" in payload:
-            ctx.output(MULTILINGUAL_REQUEST_TAG, value)
+            yield MULTILINGUAL_REQUEST_TAG, value
         else:
-            ctx.output(TRANSCRIPTION_REQUEST_TAG, value)
+            yield TRANSCRIPTION_REQUEST_TAG, value
