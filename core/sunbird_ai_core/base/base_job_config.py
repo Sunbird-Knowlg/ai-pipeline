@@ -16,6 +16,22 @@ class BaseJobConfig:
         return int(self._config.get("job.parallelism", 1))
 
     @property
+    def checkpointing_interval_ms(self) -> int:
+        return int(self._config.get("job.checkpointing_interval_ms", 60000))
+
+    @property
+    def checkpointing_timeout_ms(self) -> int:
+        return int(self._config.get("job.checkpointing_timeout_ms", 60000))
+
+    @property
+    def restart_attempts(self) -> int:
+        return int(self._config.get("job.restart_attempts", 3))
+
+    @property
+    def restart_delay_ms(self) -> int:
+        return int(self._config.get("job.restart_delay_ms", 10000))
+
+    @property
     def kafka_brokers(self) -> str:
         return self._config.get_required("kafka.brokers")
 
