@@ -40,16 +40,31 @@ class BlobStorageUtil:
     """
 
     def __init__(
-        self, cloud_storage_type: str, cloud_storage_auth_type: str, container: str, auth_config: dict
+        self,
+        cloud_storage_type: str,
+        cloud_storage_auth_type: str,
+        container: str,
+        auth_config: dict,
+        public_endpoint: str = "",
     ):
         self._scheme = _SCHEME_BY_STORAGE_TYPE[cloud_storage_type]
         self._container = container
+        self._public_endpoint = public_endpoint
         self._storage_options = _build_storage_options(
             cloud_storage_type, cloud_storage_auth_type, auth_config
         )
 
     def _uri(self, object_key: str) -> str:
         return f"{self._scheme}://{self._container}/{object_key}"
+
+    def _public_uri(self, object_key: str) -> str:
+        return f"https://{self._public_endpoint}/{self._container}/{object_key}"
+
+    def _own_prefixes(self) -> list[str]:
+        prefixes = [f"{self._scheme}://{self._container}/"]
+        if self._public_endpoint:
+            prefixes.append(f"https://{self._public_endpoint}/{self._container}/")
+        return prefixes
 
     def upload(self, local_path: str, object_key: str) -> None:
         with open(local_path, "rb") as src:
@@ -66,22 +81,30 @@ class BlobStorageUtil:
                 dst.write(src.read())
 
     def download_from_uri(self, uri: str, local_path: str) -> None:
-        """Downloads by full URI — our own az://<container>/<key> scheme
-        (authenticated) or an arbitrary public HTTPS URL (unauthenticated,
-        e.g. the artifactUrl stored on a Content node).
+        """Downloads by full URI — our own az://<container>/<key> scheme,
+        our own public https://<endpoint>/<container>/<key> URL (both
+        authenticated via self.download), or an arbitrary public HTTPS URL
+        (unauthenticated, e.g. the artifactUrl stored on a Content node).
         """
-        own_prefix = f"{self._scheme}://{self._container}/"
-        if uri.startswith(own_prefix):
-            self.download(uri[len(own_prefix):], local_path)
-            return
+        for prefix in self._own_prefixes():
+            if uri.startswith(prefix):
+                self.download(uri[len(prefix):], local_path)
+                return
         with fsspec.open(uri, "rb") as src, open(local_path, "wb") as dst:
             dst.write(src.read())
 
     def object_key_from_uri(self, uri: str) -> str:
-        own_prefix = f"{self._scheme}://{self._container}/"
-        if uri.startswith(own_prefix):
-            return uri[len(own_prefix):]
+        for prefix in self._own_prefixes():
+            if uri.startswith(prefix):
+                return uri[len(prefix):]
         return uri
 
     def get_uri(self, object_key: str) -> str:
+        # Public https URL, not the internal az:// scheme — this is what
+        # gets stored on Content/Enrichment/Transcript nodes as
+        # artifactUrl/captionsUrl, and needs to be directly fetchable by
+        # anything outside this job (players, frontend), matching how
+        # Content's own artifactUrl/previewUrl are already plain https URLs.
+        if self._public_endpoint:
+            return self._public_uri(object_key)
         return self._uri(object_key)

@@ -52,3 +52,28 @@ def test_object_key_from_uri_passes_through_external_url():
     )
     external = "https://other-account.blob.core.windows.net/other-container/video.mp4"
     assert util.object_key_from_uri(external) == external
+
+
+def test_get_uri_returns_public_https_when_endpoint_configured():
+    util = BlobStorageUtil(
+        cloud_storage_type="azure",
+        cloud_storage_auth_type="DEV",
+        container="test-container",
+        auth_config={},
+        public_endpoint="myaccount.blob.core.windows.net",
+    )
+    assert util.get_uri("content/do_123/captions.vtt") == (
+        "https://myaccount.blob.core.windows.net/test-container/content/do_123/captions.vtt"
+    )
+
+
+def test_object_key_from_uri_strips_own_public_https_prefix():
+    util = BlobStorageUtil(
+        cloud_storage_type="azure",
+        cloud_storage_auth_type="DEV",
+        container="test-container",
+        auth_config={},
+        public_endpoint="myaccount.blob.core.windows.net",
+    )
+    own_https = "https://myaccount.blob.core.windows.net/test-container/content/do_123/captions.vtt"
+    assert util.object_key_from_uri(own_https) == "content/do_123/captions.vtt"

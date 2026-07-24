@@ -39,6 +39,7 @@ class BaseProcessFunction(ProcessFunction):
             cloud_storage_auth_type=self._config.cloud_storage_auth_type,
             container=self._config.cloud_storage_container,
             auth_config=self._config.raw("cloud_storage_auth", {}),
+            public_endpoint=self._config.raw("cloud_storage_public_endpoint", ""),
         )
 
         self.knowlg = KnowlgClient(
