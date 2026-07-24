@@ -93,7 +93,11 @@ class JanusGraphUtil:
             traversal_step = traversal_step.property(key, serialized)
         # .next() tries to deserialize the mutated Vertex back (including
         # JanusGraph-typed properties/ids), which vanilla gremlinpython can't
-        # decode — fails with KeyError: <DataType.custom: 0>. .iterate()
-        # executes the mutation without materializing the result, which is
-        # all this method needs (return type is None).
-        traversal_step.iterate()
+        # decode — fails with KeyError: <DataType.custom: 0>. .iterate() is
+        # the usual fix but this JanusGraph's bundled TinkerPop is too old for
+        # how this gremlinpython client encodes it (client sends a "discard"
+        # bytecode step server doesn't implement — GremlinServerError 599:
+        # Could not locate method: DefaultGraphTraversal.discard()).
+        # .count().next() still runs every upstream .property() write as a
+        # side effect, but only ever deserializes a plain Long back.
+        traversal_step.count().next()
