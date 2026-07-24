@@ -31,7 +31,6 @@ def run_transcription_pipeline(
     """
     transcript_node = graph.get_node(request.transcriptId)
     assert transcript_node is not None, f"Transcript node {request.transcriptId} not found"
-    language_code = transcript_node["languageCode"]
 
     graph.update_node(request.transcriptId, {"status": "Processing"})  # S1
 
@@ -43,7 +42,11 @@ def run_transcription_pipeline(
         audio_path = os.path.join(tmp_dir, "audio.wav")
         extract_audio(video_path, audio_path)  # S3
 
-        segments = provider.transcribe(audio_path)  # S4
+        segments, detected_language = provider.transcribe(audio_path)  # S4
+        # This function only ever runs for the source-language transcript
+        # (languageCode is unset at creation, only known after detection) —
+        # use the real detected code, not the empty one read at S1.
+        language_code = detected_language
 
         transcript_json = build_transcript_json(segments)  # S5
         vtt = build_vtt(segments)
@@ -56,12 +59,14 @@ def run_transcription_pipeline(
         graph.update_node(  # S7
             request.transcriptId,
             {
+                "languageCode": language_code,
                 "artifactUrl": storage.get_uri(json_key),
                 "captionsUrl": storage.get_uri(vtt_key),
                 "generatedBy": generated_by,
                 "generatedOn": datetime.now(timezone.utc).isoformat(),
                 "status": "Live" if auto_approve else "Review",
                 "autoApproved": auto_approve,
+                "errorMessage": None,
             },
         )
         sync_enrichment_transcripts(graph, request.enrichmentId)

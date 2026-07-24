@@ -20,10 +20,13 @@ def mock_storage():
 @pytest.fixture
 def mock_transcription_provider():
     provider = Mock()
-    provider.transcribe.return_value = [
-        Segment(id=0, start=0.0, end=2.5, text="Hello children"),
-        Segment(id=1, start=2.5, end=5.0, text="Welcome to the lesson"),
-    ]
+    provider.transcribe.return_value = (
+        [
+            Segment(id=0, start=0.0, end=2.5, text="Hello children"),
+            Segment(id=1, start=2.5, end=5.0, text="Welcome to the lesson"),
+        ],
+        "en",
+    )
     return provider
 
 
