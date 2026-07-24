@@ -150,7 +150,7 @@ class MultilingualFunction(BaseProcessFunction):
                     self.logger.exception(
                         "Multilingual translation failed for %s/%s", request.contentId, target_lang
                     )
-                    self.emit_to_dlq(request, error, ctx, MULTILINGUAL_DLQ_TAG)
+                    yield from self.emit_to_dlq(request, error, ctx, MULTILINGUAL_DLQ_TAG)
 
         # M5
         transcripts = sync_enrichment_transcripts(self.graph, request.enrichmentId)

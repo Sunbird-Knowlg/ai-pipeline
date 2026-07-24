@@ -51,9 +51,12 @@ class BaseProcessFunction(ProcessFunction):
         if self.graph is not None:
             self.graph.close()
 
-    def emit_to_dlq(self, event, error: Exception, ctx, output_tag) -> None:
+    def emit_to_dlq(self, event, error: Exception, ctx, output_tag):
         """Wraps the original event with error metadata and emits it to the
-        given Flink side-output tag via ctx.output(tag, value).
+        given Flink side-output tag. PyFlink 1.20's ProcessFunction.Context
+        has no ctx.output() — side outputs are emitted by yielding
+        (output_tag, value), so callers must do `yield from
+        self.emit_to_dlq(...)` instead of calling this directly.
         """
         from sunbird_ai_core.kafka.event_schemas import DlqEnvelope
 
@@ -64,4 +67,4 @@ class BaseProcessFunction(ProcessFunction):
         )
         assert self.logger is not None, "BaseProcessFunction.open() must be called before use"
         self.logger.error("Emitting to DLQ: %s", envelope.errorMessage)
-        ctx.output(output_tag, envelope.to_json())
+        yield output_tag, envelope.to_json()

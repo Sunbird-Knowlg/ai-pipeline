@@ -105,4 +105,4 @@ class TranscriptionFunction(BaseProcessFunction):
             self.graph.update_node(
                 request.transcriptId, {"status": "Failed", "errorMessage": str(error)}
             )
-            self.emit_to_dlq(request, error, ctx, TRANSCRIPTION_DLQ_TAG)
+            yield from self.emit_to_dlq(request, error, ctx, TRANSCRIPTION_DLQ_TAG)
