@@ -91,4 +91,9 @@ class JanusGraphUtil:
         for key, value in props.items():
             serialized = json.dumps(value) if isinstance(value, _COMPLEX_TYPES) else value
             traversal_step = traversal_step.property(key, serialized)
-        traversal_step.next()
+        # .next() tries to deserialize the mutated Vertex back (including
+        # JanusGraph-typed properties/ids), which vanilla gremlinpython can't
+        # decode — fails with KeyError: <DataType.custom: 0>. .iterate()
+        # executes the mutation without materializing the result, which is
+        # all this method needs (return type is None).
+        traversal_step.iterate()
