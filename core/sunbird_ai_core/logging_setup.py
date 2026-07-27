@@ -3,9 +3,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-# Attributes every stdlib LogRecord carries — used to detect caller-supplied
-# `extra={...}` fields (anything on the record beyond this set) without
-# hardcoding a field allowlist.
+# Every stdlib LogRecord attribute — anything beyond this set is a caller-supplied extra={...} field.
 _RESERVED_RECORD_ATTRS = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__.keys())
 
 
@@ -32,16 +30,9 @@ class JsonFormatter(logging.Formatter):
 
 
 class _RawFdHandler(logging.Handler):
-    """Writes straight to the fd 1 syscall, bypassing sys.stdout.write().
-
-    PyFlink's Beam SDK worker (beam_sdk_worker_main.py) monkeypatches
-    sys.stdout.write to call logging.getLogger().info(msg) so that stray
-    print()s show up in Flink's logs. A StreamHandler(sys.stdout) attached
-    to the root logger therefore feeds every formatted record straight back
-    into the root logger as a new record — infinite synchronous recursion,
-    each layer re-escaping the previous line as its "message" field, until
-    the process runs out of stack/memory. Writing via os.write on the raw
-    fd never touches the patched .write(), so it can't loop back.
+    """Writes straight to the fd 1 syscall — never via sys.stdout.write(),
+    which PyFlink's Beam SDK worker monkeypatches back into the root logger
+    (StreamHandler(sys.stdout) here would recurse into itself infinitely).
     """
 
     def emit(self, record: logging.LogRecord) -> None:
