@@ -46,7 +46,7 @@ class JanusGraphUtil:
         """Establishes the WebSocket connection and initializes graph traversal."""
         logger.info("Opening JanusGraph connection", extra={"url": self._url})
         self._connection = DriverRemoteConnection(self._url, self._graph_name)
-        self._g = traversal().with_(self._connection)
+        self._g = traversal().with_remote(self._connection)
         logger.debug("JanusGraph connection open")
 
     def close(self) -> None:
