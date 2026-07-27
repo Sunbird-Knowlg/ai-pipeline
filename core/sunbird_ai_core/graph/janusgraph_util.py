@@ -172,7 +172,7 @@ class JanusGraphUtil:
     def update_node(self, identifier: str, props: dict[str, Any]) -> None:
         """Updates properties on a vertex identified by its unique ID.
 
-        Complex Python structures (lists, dicts) are automatically serialized 
+        Complex Python structures (lists, dicts) are automatically serialized
         to JSON strings before writing.
 
         Args:
@@ -190,3 +190,108 @@ class JanusGraphUtil:
         except Exception:
             logger.exception("update_node failed", extra={"identifier": identifier})
             raise
+
+    def get_nodes_by_object_type(self, object_type: str, limit: int = 100) -> list[dict[str, Any]]:
+        """Retrieves properties of vertices matching a functional object type.
+
+        Args:
+            object_type: The functional object type identifier (IL_FUNC_OBJECT_TYPE).
+            limit: The maximum number of vertices to return.
+
+        Returns:
+            A list of flattened property dictionaries, one per matching vertex.
+        """
+        g = self._require_g()
+        results = g.V().has(OBJECT_TYPE_KEY, object_type).limit(limit).value_map().to_list()
+        logger.debug("get_nodes_by_object_type", extra={"object_type": object_type, "count": len(results)})
+        return [self._flatten(r) for r in results]
+
+    def create_node(self, object_type: str, identifier: str, props: dict[str, Any] | None = None) -> None:
+        """Creates a new vertex with a unique identifier and functional object type.
+
+        Complex Python structures (lists, dicts) are automatically serialized
+        to JSON strings before writing, same as update_node.
+
+        Args:
+            object_type: The functional object type identifier (IL_FUNC_OBJECT_TYPE).
+            identifier: The unique identifier (IL_UNIQUE_ID) to assign the new node.
+            props: Optional dictionary of additional key-value properties to set.
+        """
+        g = self._require_g()
+        logger.info("create_node", extra={"object_type": object_type, "identifier": identifier})
+        traversal_step = (
+            g.addV()
+            .property(UNIQUE_ID_KEY, identifier)
+            .property(OBJECT_TYPE_KEY, object_type)
+        )
+        for key, value in (props or {}).items():
+            serialized = json.dumps(value) if isinstance(value, _COMPLEX_TYPES) else value
+            traversal_step = traversal_step.property(key, serialized)
+        try:
+            traversal_step.iterate()
+        except Exception:
+            logger.exception("create_node failed", extra={"object_type": object_type, "identifier": identifier})
+            raise
+
+    def delete_node(self, identifier: str) -> bool:
+        """Deletes a vertex identified by its unique ID, if it exists.
+
+        Args:
+            identifier: The unique identifier (IL_UNIQUE_ID) of the node to delete.
+
+        Returns:
+            True if a matching vertex was found and deleted, False otherwise.
+        """
+        g = self._require_g()
+        if not self.node_exists(identifier):
+            logger.debug("delete_node: not found", extra={"identifier": identifier})
+            return False
+        logger.info("delete_node", extra={"identifier": identifier})
+        g.V().has(UNIQUE_ID_KEY, identifier).drop().iterate()
+        return True
+
+    def create_relation(self, from_identifier: str, to_identifier: str, relation_label: str) -> None:
+        """Creates a directed edge between two existing vertices.
+
+        Args:
+            from_identifier: The unique identifier (IL_UNIQUE_ID) of the source node.
+            to_identifier: The unique identifier (IL_UNIQUE_ID) of the target node.
+            relation_label: The edge label to create between the two nodes.
+        """
+        g = self._require_g()
+        logger.info(
+            "create_relation",
+            extra={"from_identifier": from_identifier, "to_identifier": to_identifier, "relation_label": relation_label},
+        )
+        (
+            g.V()
+            .has(UNIQUE_ID_KEY, from_identifier)
+            .as_("from")
+            .V()
+            .has(UNIQUE_ID_KEY, to_identifier)
+            .addE(relation_label)
+            .from_("from")
+            .iterate()
+        )
+
+    def remove_relation(self, from_identifier: str, to_identifier: str, relation_label: str) -> None:
+        """Removes a directed edge between two vertices, if it exists.
+
+        Args:
+            from_identifier: The unique identifier (IL_UNIQUE_ID) of the source node.
+            to_identifier: The unique identifier (IL_UNIQUE_ID) of the target node.
+            relation_label: The edge label to remove between the two nodes.
+        """
+        g = self._require_g()
+        logger.info(
+            "remove_relation",
+            extra={"from_identifier": from_identifier, "to_identifier": to_identifier, "relation_label": relation_label},
+        )
+        (
+            g.V()
+            .has(UNIQUE_ID_KEY, from_identifier)
+            .outE(relation_label)
+            .where(__.in_v().has(UNIQUE_ID_KEY, to_identifier))
+            .drop()
+            .iterate()
+        )
