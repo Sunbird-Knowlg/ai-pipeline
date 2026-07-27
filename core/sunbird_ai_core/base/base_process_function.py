@@ -5,6 +5,7 @@ from pyflink.datastream import ProcessFunction
 from sunbird_ai_core.base.base_job_config import BaseJobConfig
 from sunbird_ai_core.graph.janusgraph_util import JanusGraphUtil
 from sunbird_ai_core.knowlg.knowlg_client import KnowlgClient
+from sunbird_ai_core.logging_setup import configure_logging
 from sunbird_ai_core.storage.blob_util import BlobStorageUtil
 
 
@@ -45,9 +46,12 @@ class BaseProcessFunction(ProcessFunction):
         Args:
             runtime_context: Flink runtime context for the running subtask.
         """
-        self.logger = logging.getLogger(self._config.job_name)
+        self.logger = configure_logging(self._config.job_name, self._config.log_level)
         self.logger.info(
-            "Opening %s task %s", self._config.job_name, runtime_context.get_index_of_this_subtask()
+            "Opening %s task %s",
+            self._config.job_name,
+            runtime_context.get_index_of_this_subtask(),
+            extra={"task_index": runtime_context.get_index_of_this_subtask()},
         )
 
         self.graph = JanusGraphUtil(

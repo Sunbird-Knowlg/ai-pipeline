@@ -24,6 +24,11 @@ class BaseJobConfig:
         return self._config.get_required("job.name")
 
     @property
+    def log_level(self) -> str:
+        """str: The configured logging level (e.g. 'INFO', 'DEBUG'), defaults to 'INFO'."""
+        return self._config.get("job.log_level", "INFO")
+
+    @property
     def parallelism(self) -> int:
         """int: The parallelism slot count for Flink operators (defaults to 1)."""
         return int(self._config.get("job.parallelism", 1))
