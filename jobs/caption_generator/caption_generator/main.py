@@ -1,3 +1,5 @@
+import logging
+
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream.connectors.kafka import (
@@ -17,9 +19,18 @@ from caption_generator.functions.event_router import (
 from caption_generator.functions.multilingual_function import MULTILINGUAL_DLQ_TAG, MultilingualFunction
 from caption_generator.functions.transcription_function import TRANSCRIPTION_DLQ_TAG, TranscriptionFunction
 
+logger = logging.getLogger(__name__)
+
 
 class CaptionGeneratorJob(BaseFlinkJob):
     def build_pipeline(self) -> None:
+        logger.info(
+            "Building caption-generator pipeline",
+            extra={
+                "transcription_in_topic": self.config.kafka_topic("transcription_in"),
+                "multilingual_in_topic": self.config.kafka_topic("multilingual_in"),
+            },
+        )
         transcription_source = self._build_source(
             self.config.kafka_topic("transcription_in"), "transcription-in"
         )
@@ -44,6 +55,7 @@ class CaptionGeneratorJob(BaseFlinkJob):
         )
 
     def _build_source(self, topic: str, source_name: str) -> KafkaSource:
+        logger.debug("Building Kafka source", extra={"topic": topic, "source_name": source_name})
         source = (
             KafkaSource.builder()
             .set_bootstrap_servers(self.config.kafka_brokers)
@@ -60,6 +72,7 @@ class CaptionGeneratorJob(BaseFlinkJob):
         )
 
     def _build_sink(self, topic: str) -> KafkaSink:
+        logger.debug("Building Kafka sink", extra={"topic": topic})
         return (
             KafkaSink.builder()
             .set_bootstrap_servers(self.config.kafka_brokers)

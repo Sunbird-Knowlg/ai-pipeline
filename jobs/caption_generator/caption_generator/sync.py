@@ -1,6 +1,9 @@
+import logging
 from datetime import datetime, timezone
 
 from sunbird_ai_core.graph.janusgraph_util import JanusGraphUtil
+
+logger = logging.getLogger(__name__)
 
 
 def sync_enrichment_transcripts(graph: JanusGraphUtil, enrichment_id: str) -> list[dict]:
@@ -9,6 +12,7 @@ def sync_enrichment_transcripts(graph: JanusGraphUtil, enrichment_id: str) -> li
     Transcript's config.json. Returns the raw (unfiltered) transcript nodes
     so callers can still check identifiers/status directly.
     """
+    logger.info("Syncing enrichment transcripts", extra={"enrichment_id": enrichment_id})
     relation_fields = graph.schema_registry.get_relation_fields("Transcript")
     # "transcripts" is the schema relation *name*, not the JanusGraph edge
     # label — all associatedTo-type relations share the "associatedTo" edge
@@ -16,6 +20,10 @@ def sync_enrichment_transcripts(graph: JanusGraphUtil, enrichment_id: str) -> li
     transcripts = graph.get_related_nodes(enrichment_id, "associatedTo", direction="out")
 
     snapshot = [{field: t.get(field) for field in relation_fields} for t in transcripts]
+    logger.debug(
+        "Snapshot built",
+        extra={"enrichment_id": enrichment_id, "transcript_count": len(transcripts)},
+    )
 
     graph.update_node(
         enrichment_id,
@@ -38,10 +46,12 @@ def is_ecar_ready(transcripts: list[dict], allow_failed_languages: bool = True) 
     generation the same way an in-flight one does.
     """
     if not transcripts:
+        logger.debug("is_ecar_ready: no transcripts")
         return False
 
     source = next((t for t in transcripts if t.get("sourceLanguage") is True), None)
     if source is None or source.get("status") != "Live":
+        logger.debug("is_ecar_ready: source language not Live", extra={"source_status": source.get("status") if source else None})
         return False
 
     for transcript in transcripts:
@@ -49,8 +59,11 @@ def is_ecar_ready(transcripts: list[dict], allow_failed_languages: bool = True) 
             continue
         status = transcript.get("status")
         if status in _BLOCKING_STATUSES:
+            logger.debug("is_ecar_ready: blocking status found", extra={"status": status})
             return False
         if status == "Failed" and not allow_failed_languages:
+            logger.debug("is_ecar_ready: failed language blocks (allow_failed_languages=False)")
             return False
 
+    logger.debug("is_ecar_ready: ready")
     return True

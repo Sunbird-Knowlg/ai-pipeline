@@ -1,6 +1,9 @@
 import json
+import logging
 
 from caption_generator.segment import Segment, segments_from_dicts, segments_to_dicts
+
+logger = logging.getLogger(__name__)
 
 
 def _format_timestamp(seconds: float) -> str:
@@ -15,6 +18,7 @@ def _format_timestamp(seconds: float) -> str:
 
 
 def build_vtt(segments: list[Segment]) -> str:
+    logger.debug("Building VTT", extra={"segment_count": len(segments)})
     lines = ["WEBVTT", ""]
     for segment in segments:
         lines.append(f"{_format_timestamp(segment.start)} --> {_format_timestamp(segment.end)}")
@@ -45,9 +49,14 @@ def build_karaoke_vtt(sentence_segments: list[Segment], words_per_sentence: list
 
 
 def build_transcript_json(segments: list[Segment]) -> str:
+    logger.debug("Building transcript JSON", extra={"segment_count": len(segments)})
     return json.dumps({"segments": segments_to_dicts(segments)})
 
 
 def parse_transcript_json(raw: str) -> list[Segment]:
-    payload = json.loads(raw)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.exception("Failed to parse transcript JSON")
+        raise
     return segments_from_dicts(payload["segments"])

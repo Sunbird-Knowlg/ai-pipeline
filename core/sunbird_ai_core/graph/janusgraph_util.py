@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Any
 
 from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
@@ -11,6 +12,8 @@ UNIQUE_ID_KEY = "IL_UNIQUE_ID"
 OBJECT_TYPE_KEY = "IL_FUNC_OBJECT_TYPE"
 
 _COMPLEX_TYPES = (list, dict)
+
+logger = logging.getLogger(__name__)
 
 
 class JanusGraphUtil:
@@ -41,12 +44,15 @@ class JanusGraphUtil:
 
     def open(self) -> None:
         """Establishes the WebSocket connection and initializes graph traversal."""
+        logger.info("Opening JanusGraph connection", extra={"url": self._url})
         self._connection = DriverRemoteConnection(self._url, self._graph_name)
         self._g = traversal().with_(self._connection)
+        logger.debug("JanusGraph connection open")
 
     def close(self) -> None:
         """Closes the WebSocket connection and resets traversal states."""
         if self._connection is not None:
+            logger.info("Closing JanusGraph connection")
             self._connection.close()
             self._connection = None
             self._g = None
@@ -91,8 +97,10 @@ class JanusGraphUtil:
             A flattened dictionary of vertex properties, or None if not found.
         """
         g = self._require_g()
+        logger.debug("get_node", extra={"identifier": identifier})
         results = g.V().has(UNIQUE_ID_KEY, identifier).value_map().to_list()
         if not results:
+            logger.debug("get_node: not found", extra={"identifier": identifier})
             return None
         return self._flatten(results[0])
 
@@ -120,6 +128,7 @@ class JanusGraphUtil:
             A flattened dictionary of the matching vertex's properties, or None.
         """
         g = self._require_g()
+        logger.debug("find_by_property", extra={"object_type": object_type, "key": key, "value": value})
         results = (
             g.V()
             .has(OBJECT_TYPE_KEY, object_type)
@@ -128,6 +137,7 @@ class JanusGraphUtil:
             .to_list()
         )
         if not results:
+            logger.debug("find_by_property: not found", extra={"object_type": object_type, "key": key, "value": value})
             return None
         return self._flatten(results[0])
 
@@ -153,6 +163,10 @@ class JanusGraphUtil:
             .value_map()
             .to_list()
         )
+        logger.debug(
+            "get_related_nodes",
+            extra={"identifier": identifier, "relation_label": relation_label, "direction": direction, "count": len(results)},
+        )
         return [self._flatten(r) for r in results]
 
     def update_node(self, identifier: str, props: dict[str, Any]) -> None:
@@ -166,8 +180,13 @@ class JanusGraphUtil:
             props: A dictionary of key-value property mutations to apply.
         """
         g = self._require_g()
+        logger.info("update_node", extra={"identifier": identifier, "props": list(props.keys())})
         traversal_step = g.V().has(UNIQUE_ID_KEY, identifier)
         for key, value in props.items():
             serialized = json.dumps(value) if isinstance(value, _COMPLEX_TYPES) else value
             traversal_step = traversal_step.property(key, serialized)
-        traversal_step.iterate()
+        try:
+            traversal_step.iterate()
+        except Exception:
+            logger.exception("update_node failed", extra={"identifier": identifier})
+            raise

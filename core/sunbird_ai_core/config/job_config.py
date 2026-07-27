@@ -1,7 +1,10 @@
+import logging
 import os
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 ENV_PREFIX = "SUNBIRD_AI_"
 
@@ -22,8 +25,10 @@ class JobConfig:
         Args:
             config_path: The filesystem path to the YAML configuration file.
         """
+        logger.info("Loading job config", extra={"config_path": config_path})
         with open(config_path, "r") as f:
             self._data: dict[str, Any] = yaml.safe_load(f) or {}
+        logger.debug("Job config loaded", extra={"config_path": config_path, "top_level_keys": list(self._data.keys())})
 
     def get(self, dotted_key: str, default: Any = None) -> Any:
         """Retrieves a configuration value by its dotted path, checking for env overrides first.
@@ -43,6 +48,7 @@ class JobConfig:
         """
         env_key = ENV_PREFIX + dotted_key.upper().replace(".", "_")
         if env_key in os.environ:
+            logger.debug("Config key overridden by env var", extra={"dotted_key": dotted_key, "env_key": env_key})
             return os.environ[env_key]
 
         node: Any = self._data
@@ -66,5 +72,6 @@ class JobConfig:
         """
         value = self.get(dotted_key)
         if value is None:
+            logger.error("Missing required config key", extra={"dotted_key": dotted_key})
             raise KeyError(f"Missing required config key: {dotted_key}")
         return value

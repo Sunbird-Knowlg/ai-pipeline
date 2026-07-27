@@ -1,6 +1,9 @@
+import logging
 from typing import Any
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 class KnowlgClient:
@@ -70,8 +73,14 @@ class KnowlgClient:
             requests.exceptions.HTTPError: If the HTTP request returns an error status.
         """
         path = self._resolve_path(api_key)
-        response = requests.post(f"{self._base_url}{path}", json=payload, headers=self._headers(), timeout=30)
-        response.raise_for_status()
+        url = f"{self._base_url}{path}"
+        logger.info("POST %s", url, extra={"api_key": api_key})
+        try:
+            response = requests.post(url, json=payload, headers=self._headers(), timeout=30)
+            response.raise_for_status()
+        except requests.exceptions.HTTPError:
+            logger.exception("knowlg POST failed", extra={"api_key": api_key, "url": url})
+            raise
         return response.json()
 
     def get(self, api_key: str, identifier: str) -> dict[str, Any]:
@@ -88,6 +97,12 @@ class KnowlgClient:
             requests.exceptions.HTTPError: If the HTTP request returns an error status.
         """
         path = self._resolve_path(api_key, identifier=identifier)
-        response = requests.get(f"{self._base_url}{path}", headers=self._headers(), timeout=30)
-        response.raise_for_status()
+        url = f"{self._base_url}{path}"
+        logger.info("GET %s", url, extra={"api_key": api_key, "identifier": identifier})
+        try:
+            response = requests.get(url, headers=self._headers(), timeout=30)
+            response.raise_for_status()
+        except requests.exceptions.HTTPError:
+            logger.exception("knowlg GET failed", extra={"api_key": api_key, "url": url})
+            raise
         return response.json()

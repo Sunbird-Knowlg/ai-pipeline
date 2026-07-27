@@ -1,4 +1,8 @@
+import logging
+
 import fsspec
+
+logger = logging.getLogger(__name__)
 
 _SCHEME_BY_STORAGE_TYPE = {
     "azure": "az",
@@ -117,6 +121,7 @@ class BlobStorageUtil:
             local_path: The filesystem path of the source file.
             object_key: The destination key path in the container.
         """
+        logger.info("upload", extra={"object_key": object_key, "local_path": local_path})
         with open(local_path, "rb") as src:
             with fsspec.open(self._uri(object_key), "wb", **self._storage_options) as dst:
                 dst.write(src.read())
@@ -128,6 +133,7 @@ class BlobStorageUtil:
             data: The raw binary data to write.
             object_key: The destination key path in the container.
         """
+        logger.info("upload_bytes", extra={"object_key": object_key, "size_bytes": len(data)})
         with fsspec.open(self._uri(object_key), "wb", **self._storage_options) as dst:
             dst.write(data)
 
@@ -138,6 +144,7 @@ class BlobStorageUtil:
             object_key: The relative path of the cloud object.
             local_path: The target destination path on the local filesystem.
         """
+        logger.info("download", extra={"object_key": object_key, "local_path": local_path})
         with fsspec.open(self._uri(object_key), "rb", **self._storage_options) as src:
             with open(local_path, "wb") as dst:
                 dst.write(src.read())
@@ -157,6 +164,7 @@ class BlobStorageUtil:
             if uri.startswith(prefix):
                 self.download(uri[len(prefix):], local_path)
                 return
+        logger.info("download_from_uri: external URL", extra={"uri": uri, "local_path": local_path})
         with fsspec.open(uri, "rb") as src, open(local_path, "wb") as dst:
             dst.write(src.read())
 

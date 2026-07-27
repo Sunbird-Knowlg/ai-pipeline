@@ -1,9 +1,12 @@
 import json
+import logging
 
 import litellm
 
 from caption_generator.providers.multilingual.base import MultilingualProvider
 from caption_generator.segment import Segment
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
     "You translate video caption segments from {source_lang} to {target_lang}. "
@@ -31,27 +34,40 @@ class LiteLLMProvider(MultilingualProvider):
 
     def translate(self, segments: list[Segment], source_lang: str, target_lang: str) -> list[Segment]:
         input_payload = [{"id": s.id, "text": s.text} for s in segments]
-
-        response = litellm.completion(
-            model=self._model,
-            api_key=self._api_key,
-            api_base=self._api_base or None,
-            api_version=self._api_version or None,
-            messages=[
-                {
-                    "role": "system",
-                    "content": _SYSTEM_PROMPT.format(source_lang=source_lang, target_lang=target_lang),
-                },
-                {"role": "user", "content": json.dumps(input_payload)},
-            ],
+        logger.info(
+            "Translating segment batch",
+            extra={"model": self._model, "source_lang": source_lang, "target_lang": target_lang, "segment_count": len(segments)},
         )
+
+        try:
+            response = litellm.completion(
+                model=self._model,
+                api_key=self._api_key,
+                api_base=self._api_base or None,
+                api_version=self._api_version or None,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": _SYSTEM_PROMPT.format(source_lang=source_lang, target_lang=target_lang),
+                    },
+                    {"role": "user", "content": json.dumps(input_payload)},
+                ],
+            )
+        except Exception:
+            logger.exception("LiteLLM translation call failed", extra={"model": self._model, "target_lang": target_lang})
+            raise
 
         translated = json.loads(response.choices[0].message.content)
         translated_by_id = {item["id"]: item["text"] for item in translated}
 
         if set(translated_by_id.keys()) != {s.id for s in segments}:
+            logger.error(
+                "Translated segment ids do not match input segment ids",
+                extra={"expected_ids": [s.id for s in segments], "received_ids": list(translated_by_id.keys())},
+            )
             raise ValueError("Translated segment ids do not match input segment ids")
 
+        logger.debug("Translation batch complete", extra={"target_lang": target_lang, "segment_count": len(segments)})
         return [
             Segment(id=s.id, start=s.start, end=s.end, text=translated_by_id[s.id]) for s in segments
         ]

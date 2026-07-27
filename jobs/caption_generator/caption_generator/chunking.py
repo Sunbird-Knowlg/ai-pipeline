@@ -1,4 +1,8 @@
+import logging
+
 from caption_generator.segment import Segment
+
+logger = logging.getLogger(__name__)
 
 
 def chunk_segments(segments: list[Segment], batch_size: int, overlap: int) -> list[list[Segment]]:
@@ -17,6 +21,10 @@ def chunk_segments(segments: list[Segment], batch_size: int, overlap: int) -> li
         if i + batch_size >= len(segments):
             break
         i += step
+    logger.debug(
+        "Chunked segments",
+        extra={"segment_count": len(segments), "batch_count": len(batches), "batch_size": batch_size, "overlap": overlap},
+    )
     return batches
 
 
@@ -30,4 +38,6 @@ def merge_translated_batches(batches: list[list[Segment]]) -> list[Segment]:
         for segment in batch:
             if segment.id not in seen:
                 seen[segment.id] = segment
-    return [seen[i] for i in sorted(seen)]
+    merged = [seen[i] for i in sorted(seen)]
+    logger.debug("Merged translated batches", extra={"batch_count": len(batches), "merged_count": len(merged)})
+    return merged

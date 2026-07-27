@@ -32,20 +32,24 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(name: str, level: str = "INFO") -> logging.Logger:
-    """Returns a logger with a JSON-formatted stdout handler attached.
+    """Attaches a JSON-formatted stdout handler to the ROOT logger (once,
+    idempotently) and returns a named logger for the caller's own use.
 
-    Idempotent — safe to call more than once for the same name (e.g. once
-    per TaskManager subtask) without stacking duplicate handlers, which
-    would otherwise print every line multiple times.
+    Handler goes on the root, not on the `name` logger, so that every
+    module's own `logging.getLogger(__name__)` call anywhere in the process
+    — a completely separate logger from `name` in the hierarchy — still
+    inherits it via normal propagation. Call this once per process (e.g.
+    once per TaskManager subtask in BaseProcessFunction.open()); every
+    other file just does `logging.getLogger(__name__)` and logs normally,
+    no per-class wiring needed.
     """
-    logger = logging.getLogger(name)
-    logger.setLevel(level.upper())
-    logger.propagate = False  # avoid double-printing via the root logger's own handlers
+    root = logging.getLogger()
+    root.setLevel(level.upper())
 
-    if not any(isinstance(h, logging.StreamHandler) and getattr(h, "_sunbird_json", False) for h in logger.handlers):
+    if not any(getattr(h, "_sunbird_json", False) for h in root.handlers):
         handler = logging.StreamHandler(sys.stdout)
         handler.setFormatter(JsonFormatter())
         handler._sunbird_json = True
-        logger.addHandler(handler)
+        root.addHandler(handler)
 
-    return logger
+    return logging.getLogger(name)

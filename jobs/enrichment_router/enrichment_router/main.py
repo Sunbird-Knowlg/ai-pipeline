@@ -1,3 +1,5 @@
+import logging
+
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream.connectors.kafka import (
@@ -15,9 +17,19 @@ from enrichment_router.functions.router_function import (
     RouterFunction,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class EnrichmentRouterJob(BaseFlinkJob):
     def build_pipeline(self) -> None:
+        logger.info(
+            "Building enrichment-router pipeline",
+            extra={
+                "input_topic": self.config.kafka_topic("input"),
+                "transcription_out_topic": self.config.kafka_topic("transcription_out"),
+                "multilingual_out_topic": self.config.kafka_topic("multilingual_out"),
+            },
+        )
         source = (
             KafkaSource.builder()
             .set_bootstrap_servers(self.config.kafka_brokers)
@@ -45,6 +57,7 @@ class EnrichmentRouterJob(BaseFlinkJob):
         multilingual_stream.sink_to(multilingual_sink)
 
     def _build_sink(self, topic: str) -> KafkaSink:
+        logger.debug("Building Kafka sink", extra={"topic": topic})
         return (
             KafkaSink.builder()
             .set_bootstrap_servers(self.config.kafka_brokers)

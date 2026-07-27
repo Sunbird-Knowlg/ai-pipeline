@@ -1,7 +1,11 @@
+import logging
+
 from faster_whisper import WhisperModel
 
 from caption_generator.providers.transcription.base import TranscriptionProvider
 from caption_generator.segment import Segment
+
+logger = logging.getLogger(__name__)
 
 
 class FasterWhisperProvider(TranscriptionProvider):
@@ -10,9 +14,11 @@ class FasterWhisperProvider(TranscriptionProvider):
     """
 
     def __init__(self, model: str, device: str = "cpu", compute_type: str = "int8"):
+        logger.info("Loading whisper model", extra={"model": model, "device": device, "compute_type": compute_type})
         self._model = WhisperModel(model, device=device, compute_type=compute_type)
 
     def transcribe(self, audio_path: str) -> tuple[list[Segment], list[Segment], str]:
+        logger.info("Transcribing audio", extra={"audio_path": audio_path})
         # word_timestamps=True adds a .words list (per-word start/end) to
         # each segment — needed for word-level VTT cues; sentence-level
         # segments are still returned separately for the transcript.json /
@@ -37,4 +43,13 @@ class FasterWhisperProvider(TranscriptionProvider):
             segments.append(Segment(id=i, start=seg.start, end=seg.end, text=seg.text.strip()))
             for word in seg.words:
                 words.append(Segment(id=len(words), start=word.start, end=word.end, text=word.word.strip()))
+        logger.info(
+            "Transcription complete",
+            extra={
+                "audio_path": audio_path,
+                "detected_language": info.language,
+                "segment_count": len(segments),
+                "word_count": len(words),
+            },
+        )
         return segments, words, info.language

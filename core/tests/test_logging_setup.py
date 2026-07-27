@@ -31,24 +31,32 @@ def test_json_formatter_merges_extra_fields():
     assert payload["content_id"] == "do_123"
 
 
-def test_configure_logging_does_not_duplicate_handlers():
-    logger = configure_logging("test-idempotent-job")
-    handler_count_after_first = len(logger.handlers)
+def test_configure_logging_does_not_duplicate_root_handler():
+    configure_logging("test-idempotent-job")
+    root = logging.getLogger()
+    handler_count_after_first = sum(1 for h in root.handlers if getattr(h, "_sunbird_json", False))
 
-    logger_again = configure_logging("test-idempotent-job")
+    configure_logging("test-idempotent-job")
 
-    assert logger is logger_again
-    assert len(logger_again.handlers) == handler_count_after_first
+    handler_count_after_second = sum(1 for h in root.handlers if getattr(h, "_sunbird_json", False))
+    assert handler_count_after_second == handler_count_after_first == 1
 
 
-def test_configure_logging_emits_valid_json_line():
-    logger = configure_logging("test-emit-job")
+def test_configure_logging_makes_arbitrary_module_logger_emit_json():
+    configure_logging("test-emit-job")
+    root = logging.getLogger()
+    json_handler = next(h for h in root.handlers if getattr(h, "_sunbird_json", False))
+
     stream = io.StringIO()
-    logger.handlers[0].stream = stream
+    json_handler.stream = stream
 
-    logger.info("test message", extra={"transcript_id": "do_456"})
+    # Any unrelated module logger — not the "test-emit-job" logger itself —
+    # must still emit JSON via root propagation, with zero per-module setup.
+    other_module_logger = logging.getLogger("some.totally.unrelated.module")
+    other_module_logger.info("test message", extra={"transcript_id": "do_456"})
 
     line = stream.getvalue().strip()
     payload = json.loads(line)
     assert payload["message"] == "test message"
     assert payload["transcript_id"] == "do_456"
+    assert payload["logger"] == "some.totally.unrelated.module"
