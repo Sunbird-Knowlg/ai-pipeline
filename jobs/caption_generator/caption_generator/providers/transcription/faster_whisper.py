@@ -17,7 +17,20 @@ class FasterWhisperProvider(TranscriptionProvider):
         # each segment — needed for word-level VTT cues; sentence-level
         # segments are still returned separately for the transcript.json /
         # translation-chunking path, which needs sentence context, not words.
-        raw_segments, info = self._model.transcribe(audio_path, vad_filter=True, word_timestamps=True)
+        raw_segments, info = self._model.transcribe(
+            audio_path,
+            vad_filter=True,
+            word_timestamps=True,
+            # Default language_detection_segments=1 only uses the first ~30s
+            # of (VAD-filtered) speech for the language guess and returns it
+            # even below the confidence threshold if there's no second
+            # window to fall back to. Using more windows + a higher
+            # confidence bar means it keeps trying subsequent ~30s windows
+            # until one is actually confident, falling back to a majority
+            # vote across all of them only if none ever are.
+            language_detection_segments=3,
+            language_detection_threshold=0.7,
+        )
         segments = []
         words = []
         for i, seg in enumerate(raw_segments):
