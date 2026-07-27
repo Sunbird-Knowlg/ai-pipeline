@@ -1,6 +1,16 @@
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any
+
+
+def _known_fields_only(cls, payload: dict[str, Any]) -> dict[str, Any]:
+    """Drops any payload key that isn't a declared field of cls.
+
+    Keeps from_json forward-compatible: a producer adding a new field to
+    the event doesn't break every consumer still on the old dataclass shape.
+    """
+    known = {f.name for f in fields(cls)}
+    return {k: v for k, v in payload.items() if k in known}
 
 
 @dataclass
@@ -76,7 +86,7 @@ class MediaTranscriptionRequest:
         Returns:
             An instance of MediaTranscriptionRequest.
         """
-        return cls(**json.loads(raw))
+        return cls(**_known_fields_only(cls, json.loads(raw)))
 
     def to_json(self) -> str:
         """Serializes the MediaTranscriptionRequest instance to a JSON string.
@@ -114,7 +124,7 @@ class MediaMultilingualRequest:
         Returns:
             An instance of MediaMultilingualRequest.
         """
-        return cls(**json.loads(raw))
+        return cls(**_known_fields_only(cls, json.loads(raw)))
 
     def to_json(self) -> str:
         """Serializes the MediaMultilingualRequest instance to a JSON string.
@@ -144,7 +154,10 @@ class DlqEnvelope:
     def to_json(self) -> str:
         """Serializes the DlqEnvelope instance to a JSON string.
 
+        Uses default=str so a non-JSON-native value anywhere in the original
+        event (this is the failure-capture path — it must not itself fail).
+
         Returns:
             A JSON-serialized string representation of the DLQ envelope.
         """
-        return json.dumps(asdict(self))
+        return json.dumps(asdict(self), default=str)
