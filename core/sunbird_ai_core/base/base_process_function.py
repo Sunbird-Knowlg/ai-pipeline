@@ -9,12 +9,26 @@ from sunbird_ai_core.storage.blob_util import BlobStorageUtil
 
 
 class BaseProcessFunction(ProcessFunction):
-    """Common lifecycle for job process functions: one JanusGraphUtil,
-    BlobStorageUtil, KnowlgClient per TaskManager, initialized in open(),
-    torn down in close(). Subclasses implement process_element().
+    """Abstract base process function managing the lifecycle of external services.
+
+    This class provides automatic initialization and teardown of connections to 
+    JanusGraph, Cloud Blob Storage, and Knowlg API clients per Flink TaskManager subtask. 
+    Subclasses are expected to override PyFlink's standard `process_element` 
+    method to implement their stream transformation logic.
+
+    Attributes:
+        graph (JanusGraphUtil | None): Connection utility for interacting with JanusGraph.
+        storage (BlobStorageUtil | None): Client utility for reading/writing cloud storage.
+        knowlg (KnowlgClient | None): API client for communicating with the Knowlg service.
+        logger (logging.Logger | None): Subtask-specific logger instance.
     """
 
     def __init__(self, config: BaseJobConfig):
+        """Initializes the base process function with job configuration.
+
+        Args:
+            config: Loaded job configuration settings.
+        """
         self._config = config
         self.graph: JanusGraphUtil | None = None
         self.storage: BlobStorageUtil | None = None
@@ -22,6 +36,15 @@ class BaseProcessFunction(ProcessFunction):
         self.logger: logging.Logger | None = None
 
     def open(self, runtime_context) -> None:
+        """Initializes external service connections when the subtask starts.
+
+        This method is called by Flink before any stream processing begins on 
+        the task manager slot. It establishes connections to JanusGraph, cloud 
+        storage, and the Knowlg client.
+
+        Args:
+            runtime_context: Flink runtime context for the running subtask.
+        """
         self.logger = logging.getLogger(self._config.job_name)
         self.logger.info(
             "Opening %s task %s", self._config.job_name, runtime_context.get_index_of_this_subtask()
@@ -49,15 +72,29 @@ class BaseProcessFunction(ProcessFunction):
         )
 
     def close(self) -> None:
+        """Cleans up and closes active connections when the subtask stops.
+
+        This method is called by Flink when the operator's execution finishes.
+        """
         if self.graph is not None:
             self.graph.close()
 
     def emit_to_dlq(self, event, error: Exception, ctx, output_tag):
-        """Wraps the original event with error metadata and emits it to the
-        given Flink side-output tag. PyFlink 1.20's ProcessFunction.Context
-        has no ctx.output() — side outputs are emitted by yielding
-        (output_tag, value), so callers must do `yield from
-        self.emit_to_dlq(...)` instead of calling this directly.
+        """Wraps a failed stream event with metadata and sends it to a Dead Letter Queue (DLQ).
+
+        Due to PyFlink 1.20's `ProcessFunction.Context` lacking a direct `.output()` 
+        method, side outputs must be yielded. Consequently, callers of this method 
+        must use the `yield from` syntax (e.g., `yield from self.emit_to_dlq(...)`).
+
+        Args:
+            event: The original input record/event that failed processing.
+            error: The Exception that caused the failure.
+            ctx: The PyFlink processing context.
+            output_tag: The Flink OutputTag used to route records to the DLQ stream.
+
+        Yields:
+            tuple[OutputTag, str]: A tuple containing the OutputTag and the JSON-serialized
+            DlqEnvelope containing the original event and error information.
         """
         from sunbird_ai_core.kafka.event_schemas import DlqEnvelope
 
