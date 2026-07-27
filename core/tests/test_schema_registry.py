@@ -3,6 +3,7 @@ from unittest.mock import Mock, patch
 
 import jsonschema
 import pytest
+import requests
 from sunbird_ai_core.graph.schema_registry import SchemaRegistry
 
 SAMPLE_SCHEMA = {
@@ -62,6 +63,27 @@ def test_validate_raises_on_invalid_payload(mock_get):
 
     with pytest.raises(jsonschema.ValidationError):
         registry.validate("Transcript", {})
+
+
+@patch("sunbird_ai_core.graph.schema_registry.requests.get")
+def test_fetch_raises_on_connection_error(mock_get):
+    mock_get.side_effect = requests.exceptions.ConnectionError("refused")
+    registry = SchemaRegistry("https://blob.example.com/schemas/local")
+
+    with pytest.raises(requests.exceptions.ConnectionError):
+        registry.get_schema("Transcript", "1.0")
+
+
+@patch("sunbird_ai_core.graph.schema_registry.requests.get")
+def test_fetch_raises_on_invalid_json_body(mock_get):
+    response = Mock()
+    response.text = "<html>not json</html>"
+    response.raise_for_status = Mock()
+    mock_get.return_value = response
+    registry = SchemaRegistry("https://blob.example.com/schemas/local")
+
+    with pytest.raises(json.JSONDecodeError):
+        registry.get_schema("Transcript", "1.0")
 
 
 @patch("sunbird_ai_core.graph.schema_registry.requests.get")

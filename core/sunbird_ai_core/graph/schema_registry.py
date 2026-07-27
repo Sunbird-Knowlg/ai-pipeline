@@ -44,17 +44,23 @@ class SchemaRegistry:
             The parsed JSON document.
 
         Raises:
-            requests.exceptions.HTTPError: If the HTTP request returns an error status.
+            requests.exceptions.RequestException: If the request fails
+                (HTTP error status, connection error, or timeout).
+            json.JSONDecodeError: If the response body is not valid JSON.
         """
         url = f"{self._base_path}/{object_type.lower()}/{version}/{filename}"
         logger.info("Fetching schema registry file", extra={"url": url})
         try:
             response = requests.get(url, timeout=10)
             response.raise_for_status()
-        except requests.exceptions.HTTPError:
+        except requests.exceptions.RequestException:
             logger.exception("Schema registry fetch failed", extra={"url": url})
             raise
-        return json.loads(response.text)
+        try:
+            return json.loads(response.text)
+        except json.JSONDecodeError:
+            logger.exception("Schema registry file is not valid JSON", extra={"url": url})
+            raise
 
     def get_schema(self, object_type: str, version: str = "1.0") -> dict[str, Any]:
         """Retrieves an object type's JSON Schema, caching it for process lifetime.

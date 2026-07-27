@@ -1,6 +1,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
+import requests
 from sunbird_ai_core.knowlg.knowlg_client import KnowlgClient
 
 APIS = {
@@ -53,3 +54,28 @@ def test_no_auth_header_when_api_key_not_set():
 
 def test_auth_header_present_when_api_key_set():
     assert _client()._headers()["Authorization"] == "Bearer secret"
+
+
+def test_get_url_encodes_path_traversal_attempt():
+    assert _client()._resolve_path("content_read", identifier="../../etc/passwd") == (
+        "/content/v4/read/..%2F..%2Fetc%2Fpasswd"
+    )
+
+
+@patch("sunbird_ai_core.knowlg.knowlg_client.requests.get")
+def test_get_raises_on_connection_error(mock_get):
+    mock_get.side_effect = requests.exceptions.ConnectionError("refused")
+
+    with pytest.raises(requests.exceptions.ConnectionError):
+        _client().get("content_read", "do_123")
+
+
+@patch("sunbird_ai_core.knowlg.knowlg_client.requests.post")
+def test_post_raises_value_error_on_non_json_body(mock_post):
+    mock_response = Mock()
+    mock_response.raise_for_status = Mock()
+    mock_response.json.side_effect = ValueError("not json")
+    mock_post.return_value = mock_response
+
+    with pytest.raises(ValueError):
+        _client().post("transcript_create", {"name": "x"})

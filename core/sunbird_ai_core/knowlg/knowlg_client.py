@@ -1,5 +1,6 @@
 import logging
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -44,6 +45,9 @@ class KnowlgClient:
     def _resolve_path(self, api_key: str, **path_params: str) -> str:
         """Resolves and formats the path template associated with an API key.
 
+        Path parameter values are URL-encoded before substitution, so an
+        identifier containing e.g. '/' or '..' can't alter the resolved path.
+
         Args:
             api_key: The routing key (e.g., 'content_read').
             **path_params: Keyword arguments to substitute in path templates.
@@ -57,7 +61,9 @@ class KnowlgClient:
         if api_key not in self._apis:
             raise KeyError(f"Unknown knowlg API key: {api_key}")
         path = self._apis[api_key]
-        return path.format(**path_params) if path_params else path
+        if not path_params:
+            return path
+        return path.format(**{k: quote(str(v), safe="") for k, v in path_params.items()})
 
     def post(self, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Executes a JSON POST request to a resolved Knowlg endpoint.
@@ -70,7 +76,9 @@ class KnowlgClient:
             The parsed JSON response dictionary.
 
         Raises:
-            requests.exceptions.HTTPError: If the HTTP request returns an error status.
+            requests.exceptions.RequestException: If the request fails
+                (HTTP error status, connection error, or timeout).
+            ValueError: If the response body is not valid JSON.
         """
         path = self._resolve_path(api_key)
         url = f"{self._base_url}{path}"
@@ -78,10 +86,14 @@ class KnowlgClient:
         try:
             response = requests.post(url, json=payload, headers=self._headers(), timeout=30)
             response.raise_for_status()
-        except requests.exceptions.HTTPError:
+        except requests.exceptions.RequestException:
             logger.exception("knowlg POST failed", extra={"api_key": api_key, "url": url})
             raise
-        return response.json()
+        try:
+            return response.json()
+        except ValueError:
+            logger.exception("knowlg POST returned non-JSON body", extra={"api_key": api_key, "url": url})
+            raise
 
     def get(self, api_key: str, identifier: str) -> dict[str, Any]:
         """Executes a GET request to a resolved endpoint, formatting the identifier path parameter.
@@ -94,7 +106,9 @@ class KnowlgClient:
             The parsed JSON response dictionary.
 
         Raises:
-            requests.exceptions.HTTPError: If the HTTP request returns an error status.
+            requests.exceptions.RequestException: If the request fails
+                (HTTP error status, connection error, or timeout).
+            ValueError: If the response body is not valid JSON.
         """
         path = self._resolve_path(api_key, identifier=identifier)
         url = f"{self._base_url}{path}"
@@ -102,7 +116,11 @@ class KnowlgClient:
         try:
             response = requests.get(url, headers=self._headers(), timeout=30)
             response.raise_for_status()
-        except requests.exceptions.HTTPError:
+        except requests.exceptions.RequestException:
             logger.exception("knowlg GET failed", extra={"api_key": api_key, "url": url})
             raise
-        return response.json()
+        try:
+            return response.json()
+        except ValueError:
+            logger.exception("knowlg GET returned non-JSON body", extra={"api_key": api_key, "url": url})
+            raise
