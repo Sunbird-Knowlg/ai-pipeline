@@ -14,13 +14,25 @@ _COMPLEX_TYPES = (list, dict)
 
 
 class JanusGraphUtil:
-    """gremlinpython wrapper over Gremlin Server WebSocket — same access
-    pattern as the Scala DriverRemoteConnection used in knowledge-platform-jobs,
-    just from Python. One connection per TaskManager: open() in job open(),
-    close() in job close().
+    """Gremlin Server WebSocket wrapper for performing graph operations.
+
+    This utility establishes a websocket connection (`DriverRemoteConnection`) 
+    to a Gremlin Server to query and mutate JanusGraph databases. It mirrors 
+    the connection and lifecycle pattern used by Scala graph drivers.
+
+    Attributes:
+        schema_registry (SchemaRegistry): Registry helper for handling graph schemas.
     """
 
     def __init__(self, host: str, port: int, schema_base_path: str, graph_name: str = "g"):
+        """Initializes the graph utility settings.
+
+        Args:
+            host: Hostname or IP address of the Gremlin Server.
+            port: WebSocket port of the Gremlin Server.
+            schema_base_path: Filesystem path to the directory containing graph schemas.
+            graph_name: The traversal source name registered on the server (defaults to "g").
+        """
         self._url = f"ws://{host}:{port}/gremlin"
         self._connection: DriverRemoteConnection | None = None
         self._g = None
@@ -28,26 +40,56 @@ class JanusGraphUtil:
         self.schema_registry = SchemaRegistry(schema_base_path)
 
     def open(self) -> None:
+        """Establishes the WebSocket connection and initializes graph traversal."""
         self._connection = DriverRemoteConnection(self._url, self._graph_name)
         self._g = traversal().with_(self._connection)
 
     def close(self) -> None:
+        """Closes the WebSocket connection and resets traversal states."""
         if self._connection is not None:
             self._connection.close()
             self._connection = None
             self._g = None
 
     def _require_g(self):
+        """Ensures that the WebSocket connection is open.
+
+        Returns:
+            The active graph traversal source.
+
+        Raises:
+            AssertionError: If open() was not called before invoking this helper.
+        """
         assert self._g is not None, "JanusGraphUtil.open() must be called before use"
         return self._g
 
     def _flatten(self, value_map: dict) -> dict[str, Any]:
+        """Flattens list-wrapped property values returned by Gremlin.
+
+        Gremlin's `value_map()` returns property values inside list wrappers 
+        to support multi-valued attributes. This helper converts single-element 
+        lists to standard scalar values.
+
+        Args:
+            value_map: Raw dictionary returned from a Gremlin value map.
+
+        Returns:
+            A flattened dictionary with scalar values where applicable.
+        """
         return {
             k: (v[0] if isinstance(v, list) and len(v) == 1 else v)
             for k, v in value_map.items()
         }
 
     def get_node(self, identifier: str) -> dict[str, Any] | None:
+        """Retrieves a vertex's properties by its system unique identifier.
+
+        Args:
+            identifier: The unique identifier of the node (IL_UNIQUE_ID).
+
+        Returns:
+            A flattened dictionary of vertex properties, or None if not found.
+        """
         g = self._require_g()
         results = g.V().has(UNIQUE_ID_KEY, identifier).value_map().to_list()
         if not results:
@@ -55,10 +97,28 @@ class JanusGraphUtil:
         return self._flatten(results[0])
 
     def node_exists(self, identifier: str) -> bool:
+        """Checks if a vertex with the given identifier exists.
+
+        Args:
+            identifier: The unique identifier of the node (IL_UNIQUE_ID).
+
+        Returns:
+            True if the vertex exists, False otherwise.
+        """
         g = self._require_g()
         return g.V().has(UNIQUE_ID_KEY, identifier).count().next() > 0
 
     def find_by_property(self, object_type: str, key: str, value: Any) -> dict[str, Any] | None:
+        """Finds a vertex of a given object type matching a key-value property pair.
+
+        Args:
+            object_type: The functional object type identifier (IL_FUNC_OBJECT_TYPE).
+            key: The property key to filter by.
+            value: The target value of the property.
+
+        Returns:
+            A flattened dictionary of the matching vertex's properties, or None.
+        """
         g = self._require_g()
         results = (
             g.V()
@@ -74,6 +134,16 @@ class JanusGraphUtil:
     def get_related_nodes(
         self, identifier: str, relation_label: str, direction: str = "out"
     ) -> list[dict[str, Any]]:
+        """Retrieves properties of vertices connected to a node via a specific relation.
+
+        Args:
+            identifier: The unique identifier (IL_UNIQUE_ID) of the origin node.
+            relation_label: The edge label representing the relationship.
+            direction: The direction of the edge relation traversal ('out' or 'in').
+
+        Returns:
+            A list of flattened property dictionaries for all connected vertices.
+        """
         g = self._require_g()
         traversal_step = __.out(relation_label) if direction == "out" else __.in_(relation_label)
         results = (
@@ -86,18 +156,18 @@ class JanusGraphUtil:
         return [self._flatten(r) for r in results]
 
     def update_node(self, identifier: str, props: dict[str, Any]) -> None:
+        """Updates properties on a vertex identified by its unique ID.
+
+        Complex Python structures (lists, dicts) are automatically serialized 
+        to JSON strings before writing.
+
+        Args:
+            identifier: The unique identifier (IL_UNIQUE_ID) of the node to update.
+            props: A dictionary of key-value property mutations to apply.
+        """
         g = self._require_g()
         traversal_step = g.V().has(UNIQUE_ID_KEY, identifier)
         for key, value in props.items():
             serialized = json.dumps(value) if isinstance(value, _COMPLEX_TYPES) else value
             traversal_step = traversal_step.property(key, serialized)
-        # .next() tries to deserialize the mutated Vertex back (including
-        # JanusGraph-typed properties/ids), which vanilla gremlinpython can't
-        # decode — fails with KeyError: <DataType.custom: 0>. .iterate() is
-        # the usual fix but this JanusGraph's bundled TinkerPop is too old for
-        # how this gremlinpython client encodes it (client sends a "discard"
-        # bytecode step server doesn't implement — GremlinServerError 599:
-        # Could not locate method: DefaultGraphTraversal.discard()).
-        # .count().next() still runs every upstream .property() write as a
-        # side effect, but only ever deserializes a plain Long back.
-        traversal_step.count().next()
+        traversal_step.iterate()

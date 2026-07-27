@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Core utilities for Sunbird AI Flink jobs — graph access, blob storage, config, Kafka event schemas"
 requires-python = ">=3.11"
 dependencies = [
-    "gremlinpython>=3.7.0",
+    "gremlinpython>=3.7.0,<3.8.0",
     "fsspec>=2024.6.0",
     "adlfs>=2024.4.0",
     "s3fs>=2024.6.0",
