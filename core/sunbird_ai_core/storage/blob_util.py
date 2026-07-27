@@ -1,6 +1,13 @@
 import logging
+import shutil
 
 import fsspec
+
+_ALLOWED_EXTERNAL_SCHEMES = ("http://", "https://")
+
+# Bytes per chunk when streaming uploads/downloads — keeps memory flat
+# regardless of source/artifact size (audio/video files can be large).
+_COPY_BUFFER_SIZE = 1024 * 1024
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +131,7 @@ class BlobStorageUtil:
         logger.info("upload", extra={"object_key": object_key, "local_path": local_path})
         with open(local_path, "rb") as src:
             with fsspec.open(self._uri(object_key), "wb", **self._storage_options) as dst:
-                dst.write(src.read())
+                shutil.copyfileobj(src, dst, length=_COPY_BUFFER_SIZE)
 
     def upload_bytes(self, data: bytes, object_key: str) -> None:
         """Uploads raw bytes to cloud storage, overwriting in place if it exists.
@@ -147,26 +154,35 @@ class BlobStorageUtil:
         logger.info("download", extra={"object_key": object_key, "local_path": local_path})
         with fsspec.open(self._uri(object_key), "rb", **self._storage_options) as src:
             with open(local_path, "wb") as dst:
-                dst.write(src.read())
+                shutil.copyfileobj(src, dst, length=_COPY_BUFFER_SIZE)
 
     def download_from_uri(self, uri: str, local_path: str) -> None:
         """Downloads a file to a local path by parsing its full URI.
 
-        This method automatically detects if the URI belongs to its own container 
-        (in which case it uses authenticated credentials) or if it is an arbitrary 
-        public HTTPS URL (in which case it downloads it anonymously).
+        This method automatically detects if the URI belongs to its own container
+        (in which case it uses authenticated credentials) or if it is an arbitrary
+        public HTTPS URL (in which case it downloads it anonymously). Any other
+        scheme (e.g. a bare local path, or file://) is rejected — uri commonly
+        comes from event/content metadata, so treating it as trusted enough to
+        resolve to an arbitrary local file or internal-network URL isn't safe.
 
         Args:
             uri: The full URL or internal URI to download from.
             local_path: The target destination path on the local filesystem.
+
+        Raises:
+            ValueError: If uri isn't this container's own URI and doesn't use
+                an allowed external scheme (http/https).
         """
         for prefix in self._own_prefixes():
             if uri.startswith(prefix):
                 self.download(uri[len(prefix):], local_path)
                 return
+        if not uri.startswith(_ALLOWED_EXTERNAL_SCHEMES):
+            raise ValueError(f"Refusing to download from disallowed scheme: {uri!r}")
         logger.info("download_from_uri: external URL", extra={"uri": uri, "local_path": local_path})
         with fsspec.open(uri, "rb") as src, open(local_path, "wb") as dst:
-            dst.write(src.read())
+            shutil.copyfileobj(src, dst, length=_COPY_BUFFER_SIZE)
 
     def object_key_from_uri(self, uri: str) -> str:
         """Extracts the relative object key from a full URI if it belongs to this container.
