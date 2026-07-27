@@ -24,7 +24,10 @@ class JsonFormatter(logging.Formatter):
             payload["exception"] = self.formatException(record.exc_info)
 
         extra = {k: v for k, v in record.__dict__.items() if k not in _RESERVED_RECORD_ATTRS}
-        payload.update(extra)
+        # Fixed fields always win — a caller passing extra={"message": ...} or
+        # similar can't overwrite the record's own timestamp/level/logger/message.
+        extra.update(payload)
+        payload = extra
 
         return json.dumps(payload, default=str)
 
@@ -37,7 +40,12 @@ class _RawFdHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            os.write(1, (self.format(record) + "\n").encode("utf-8", errors="replace"))
+            data = (self.format(record) + "\n").encode("utf-8", errors="replace")
+            # os.write() on a pipe/socket fd can write fewer bytes than
+            # requested for a large line — loop until it's all out.
+            view = memoryview(data)
+            while view:
+                view = view[os.write(1, view):]
         except Exception:
             self.handleError(record)
 

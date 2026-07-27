@@ -1,7 +1,7 @@
 import json
 import logging
 
-from sunbird_ai_core.logging_setup import JsonFormatter, configure_logging
+from sunbird_ai_core.logging_setup import JsonFormatter, _RawFdHandler, configure_logging
 
 
 def test_json_formatter_includes_standard_fields():
@@ -30,6 +30,42 @@ def test_json_formatter_merges_extra_fields():
     assert payload["content_id"] == "do_123"
 
 
+def test_json_formatter_fixed_fields_win_over_colliding_extra():
+    formatter = JsonFormatter()
+    record = logging.LogRecord(
+        name="test-job", level=logging.INFO, pathname="", lineno=0,
+        msg="real message", args=(), exc_info=None,
+    )
+    record.message = "spoofed by extra"
+
+    payload = json.loads(formatter.format(record))
+
+    assert payload["message"] == "real message"
+
+
+def test_raw_fd_handler_loops_on_partial_write(monkeypatch):
+    handler = _RawFdHandler()
+    handler.setFormatter(JsonFormatter())
+    record = logging.LogRecord(
+        name="test-job", level=logging.INFO, pathname="", lineno=0,
+        msg="x" * 100, args=(), exc_info=None,
+    )
+    expected = (handler.format(record) + "\n").encode("utf-8")
+
+    written = bytearray()
+
+    def flaky_write(fd, data):
+        chunk = bytes(data[:10])  # simulate a short write
+        written.extend(chunk)
+        return len(chunk)
+
+    monkeypatch.setattr("sunbird_ai_core.logging_setup.os.write", flaky_write)
+
+    handler.emit(record)
+
+    assert bytes(written) == expected
+
+
 def test_configure_logging_does_not_duplicate_root_handler():
     configure_logging("test-idempotent-job")
     root = logging.getLogger()
@@ -47,7 +83,12 @@ def test_configure_logging_makes_arbitrary_module_logger_emit_json(monkeypatch):
     assert any(getattr(h, "_sunbird_json", False) for h in root.handlers)
 
     written = []
-    monkeypatch.setattr("os.write", lambda fd, data: written.append(data))
+
+    def fake_write(fd, data):
+        written.append(data)
+        return len(data)
+
+    monkeypatch.setattr("os.write", fake_write)
 
     # Any unrelated module logger — not the "test-emit-job" logger itself —
     # must still emit JSON via root propagation, with zero per-module setup.

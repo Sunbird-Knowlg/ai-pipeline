@@ -60,20 +60,25 @@ class BaseProcessFunction(ProcessFunction):
             schema_base_path=self._config.schema_base_path,
         )
         self.graph.open()
+        try:
+            self.storage = BlobStorageUtil(
+                cloud_storage_type=self._config.cloud_storage_type,
+                cloud_storage_auth_type=self._config.cloud_storage_auth_type,
+                container=self._config.cloud_storage_container,
+                auth_config=self._config.raw("cloud_storage_auth", {}),
+                public_endpoint=self._config.raw("cloud_storage_public_endpoint", ""),
+            )
 
-        self.storage = BlobStorageUtil(
-            cloud_storage_type=self._config.cloud_storage_type,
-            cloud_storage_auth_type=self._config.cloud_storage_auth_type,
-            container=self._config.cloud_storage_container,
-            auth_config=self._config.raw("cloud_storage_auth", {}),
-            public_endpoint=self._config.raw("cloud_storage_public_endpoint", ""),
-        )
-
-        self.knowlg = KnowlgClient(
-            content_service_url=self._config.knowlg_content_service_url,
-            api_key=self._config.knowlg_api_key,
-            apis=self._config.knowlg_apis,
-        )
+            self.knowlg = KnowlgClient(
+                content_service_url=self._config.knowlg_content_service_url,
+                api_key=self._config.knowlg_api_key,
+                apis=self._config.knowlg_apis,
+            )
+        except Exception:
+            # Flink won't call close() for a subtask whose open() raised, so
+            # the just-opened JanusGraph websocket would otherwise leak.
+            self.graph.close()
+            raise
 
     def close(self) -> None:
         """Cleans up and closes active connections when the subtask stops.
@@ -107,6 +112,7 @@ class BaseProcessFunction(ProcessFunction):
             errorMessage=str(error),
             jobName=self._config.job_name,
         )
-        assert self.logger is not None, "BaseProcessFunction.open() must be called before use"
+        if self.logger is None:
+            raise RuntimeError("BaseProcessFunction.open() must be called before use")
         self.logger.error("Emitting to DLQ: %s", envelope.errorMessage)
         yield output_tag, envelope.to_json()
