@@ -29,6 +29,12 @@ class BaseJobConfig:
         return self._config.get("job.log_level", "INFO")
 
     @property
+    def env(self) -> str:
+        """str: The deployment environment name (e.g. 'dev', 'prod'), for
+        context.env in outgoing BE_JOB_REQUEST events — defaults to empty."""
+        return self._config.get("job.env", "")
+
+    @property
     def parallelism(self) -> int:
         """int: The parallelism slot count for Flink operators (defaults to 1)."""
         return int(self._config.get("job.parallelism", 1))

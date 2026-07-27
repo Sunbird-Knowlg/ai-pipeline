@@ -74,4 +74,5 @@ def handle_transcript_approved(
         sourceLanguage=event.data.get("languageCode", ""),
         sourceTranscriptUrl=source_transcript_url,
         targetLanguages=target_languages,
+        channel=event.data.get("channel", ""),
     )

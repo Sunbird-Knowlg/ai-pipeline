@@ -1,6 +1,7 @@
 job:
   name: enrichment-router
   parallelism: 4
+  env: ${ENV}
 
 kafka:
   brokers: ${KAFKA_BROKERS}

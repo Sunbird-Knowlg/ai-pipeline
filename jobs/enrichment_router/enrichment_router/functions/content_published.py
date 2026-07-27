@@ -60,4 +60,5 @@ def handle_content_published(
         transcriptId=source_transcript["IL_UNIQUE_ID"],
         artifactUrl=event.data.get("artifactUrl", ""),
         mimeType=mime_type,
+        channel=enrichment.get("channel", ""),
     )

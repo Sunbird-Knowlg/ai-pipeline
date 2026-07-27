@@ -13,8 +13,8 @@ MULTILINGUAL_REQUEST_TAG = OutputTag("multilingual-request", Types.STRING())
 
 class EventRouter(ProcessFunction):
     """Splits the merged transcription+multilingual request stream back into
-    two side outputs. Discriminated by shape: only MediaMultilingualRequest
-    carries targetLanguages.
+    two side outputs. Discriminated by the BE_JOB_REQUEST envelope's
+    edata.action (media-transcription-request vs media-multilingual-request).
     """
 
     def process_element(self, value: str, ctx):
@@ -25,9 +25,13 @@ class EventRouter(ProcessFunction):
         except json.JSONDecodeError:
             logger.exception("EventRouter: failed to parse event payload")
             raise
-        if "targetLanguages" in payload:
-            logger.debug("EventRouter: routing to multilingual", extra={"target_languages": payload["targetLanguages"]})
+        action = payload.get("edata", {}).get("action", "")
+        if action == "media-multilingual-request":
+            logger.debug("EventRouter: routing to multilingual", extra={"action": action})
             yield MULTILINGUAL_REQUEST_TAG, value
-        else:
-            logger.debug("EventRouter: routing to transcription")
+        elif action == "media-transcription-request":
+            logger.debug("EventRouter: routing to transcription", extra={"action": action})
             yield TRANSCRIPTION_REQUEST_TAG, value
+        else:
+            logger.error("EventRouter: unrecognized edata.action", extra={"action": action})
+            raise ValueError(f"EventRouter: unrecognized edata.action: {action!r}")
