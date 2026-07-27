@@ -19,9 +19,15 @@ class LiteLLMProvider(MultilingualProvider):
     exactly — only text is sent to and replaced from the model.
     """
 
-    def __init__(self, model: str, api_key: str):
+    def __init__(self, model: str, api_key: str, api_base: str = "", api_version: str = ""):
         self._model = model
         self._api_key = api_key
+        # Required for Azure-routed models (model="azure/<deployment>") -
+        # litellm has no way to know which Azure resource/API version to
+        # hit from the API key alone. Empty string is fine for plain OpenAI
+        # (model without an "azure/" prefix), litellm just ignores them.
+        self._api_base = api_base
+        self._api_version = api_version
 
     def translate(self, segments: list[Segment], source_lang: str, target_lang: str) -> list[Segment]:
         input_payload = [{"id": s.id, "text": s.text} for s in segments]
@@ -29,6 +35,8 @@ class LiteLLMProvider(MultilingualProvider):
         response = litellm.completion(
             model=self._model,
             api_key=self._api_key,
+            api_base=self._api_base or None,
+            api_version=self._api_version or None,
             messages=[
                 {
                     "role": "system",

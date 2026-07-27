@@ -94,6 +94,8 @@ class MultilingualFunction(BaseProcessFunction):
             self._config.raw("multilingual.provider"),
             model=self._config.raw("multilingual.model"),
             api_key=self._config.raw("multilingual.api_key"),
+            api_base=self._config.raw("multilingual.api_base", ""),
+            api_version=self._config.raw("multilingual.api_version", ""),
         )
         self._batch_size = int(self._config.raw("multilingual.batch_size", 80))
         self._overlap = int(self._config.raw("multilingual.context_overlap", 2))
