@@ -1,4 +1,3 @@
-import io
 import json
 import logging
 
@@ -42,20 +41,20 @@ def test_configure_logging_does_not_duplicate_root_handler():
     assert handler_count_after_second == handler_count_after_first == 1
 
 
-def test_configure_logging_makes_arbitrary_module_logger_emit_json():
+def test_configure_logging_makes_arbitrary_module_logger_emit_json(monkeypatch):
     configure_logging("test-emit-job")
     root = logging.getLogger()
-    json_handler = next(h for h in root.handlers if getattr(h, "_sunbird_json", False))
+    assert any(getattr(h, "_sunbird_json", False) for h in root.handlers)
 
-    stream = io.StringIO()
-    json_handler.stream = stream
+    written = []
+    monkeypatch.setattr("os.write", lambda fd, data: written.append(data))
 
     # Any unrelated module logger — not the "test-emit-job" logger itself —
     # must still emit JSON via root propagation, with zero per-module setup.
     other_module_logger = logging.getLogger("some.totally.unrelated.module")
     other_module_logger.info("test message", extra={"transcript_id": "do_456"})
 
-    line = stream.getvalue().strip()
+    line = b"".join(written).decode("utf-8").strip()
     payload = json.loads(line)
     assert payload["message"] == "test message"
     assert payload["transcript_id"] == "do_456"

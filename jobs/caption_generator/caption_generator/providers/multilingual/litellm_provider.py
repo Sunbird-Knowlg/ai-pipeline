@@ -53,8 +53,13 @@ class LiteLLMProvider(MultilingualProvider):
                     {"role": "user", "content": json.dumps(input_payload)},
                 ],
             )
-        except Exception:
-            logger.exception("LiteLLM translation call failed", extra={"model": self._model, "target_lang": target_lang})
+        except Exception as e:
+            logger.error(
+                "LiteLLM translation call failed: %s: %s",
+                type(e).__name__,
+                str(e)[:500],
+                extra={"model": self._model, "target_lang": target_lang, "segment_count": len(segments)},
+            )
             raise
 
         translated = json.loads(response.choices[0].message.content)

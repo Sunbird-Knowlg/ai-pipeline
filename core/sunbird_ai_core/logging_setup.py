@@ -1,6 +1,6 @@
 import json
 import logging
-import sys
+import os
 from datetime import datetime, timezone
 
 # Attributes every stdlib LogRecord carries — used to detect caller-supplied
@@ -31,6 +31,26 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
+class _RawFdHandler(logging.Handler):
+    """Writes straight to the fd 1 syscall, bypassing sys.stdout.write().
+
+    PyFlink's Beam SDK worker (beam_sdk_worker_main.py) monkeypatches
+    sys.stdout.write to call logging.getLogger().info(msg) so that stray
+    print()s show up in Flink's logs. A StreamHandler(sys.stdout) attached
+    to the root logger therefore feeds every formatted record straight back
+    into the root logger as a new record — infinite synchronous recursion,
+    each layer re-escaping the previous line as its "message" field, until
+    the process runs out of stack/memory. Writing via os.write on the raw
+    fd never touches the patched .write(), so it can't loop back.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            os.write(1, (self.format(record) + "\n").encode("utf-8", errors="replace"))
+        except Exception:
+            self.handleError(record)
+
+
 def configure_logging(name: str, level: str = "INFO") -> logging.Logger:
     """Attaches a JSON-formatted stdout handler to the ROOT logger (once,
     idempotently) and returns a named logger for the caller's own use.
@@ -47,7 +67,7 @@ def configure_logging(name: str, level: str = "INFO") -> logging.Logger:
     root.setLevel(level.upper())
 
     if not any(getattr(h, "_sunbird_json", False) for h in root.handlers):
-        handler = logging.StreamHandler(sys.stdout)
+        handler = _RawFdHandler()
         handler.setFormatter(JsonFormatter())
         handler._sunbird_json = True
         root.addHandler(handler)
