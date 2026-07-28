@@ -1,8 +1,8 @@
 import logging
 
 from sunbird_ai_core.graph.janusgraph_util import JanusGraphUtil
+from sunbird_ai_core.identifiers import generate_identifier
 from sunbird_ai_core.kafka.event_schemas import EnrichedMetadataEvent, MediaMultilingualRequest
-from sunbird_ai_core.knowlg.knowlg_client import KnowlgClient
 from sunbird_ai_core.languages import language_name
 
 _INACTIVE_STATUSES = {"Draft", "Failed"}
@@ -13,15 +13,21 @@ logger = logging.getLogger(__name__)
 def handle_transcript_approved(
     event: EnrichedMetadataEvent,
     graph: JanusGraphUtil,
-    knowlg: KnowlgClient,
     configured_languages: list[str],
 ) -> MediaMultilingualRequest | None:
     """Transcript approved event -> multilingual request, or None to skip.
 
     Only source-language approvals trigger multilingual. Creates a Draft
-    Transcript node (via knowlg platform, for schema validation + relation
-    wiring) for every configured language that doesn't already have an
-    active node under this Enrichment.
+    Transcript node directly via JanusGraph (mirroring
+    TranscriptManager.createTranscriptChildNode in knowledge-platform) for
+    every configured language that doesn't already have an active node
+    under this Enrichment.
+
+    knowlg's own POST /content/v4/transcript/create/:identifier can't be
+    used for this — that endpoint is hardwired for (re)generating the
+    *source* transcript (requires the content's own artifactUrl/mimeType,
+    always creates with sourceLanguage=true); there's no knowlg API for
+    "create a Draft transcript for a specific target language" today.
     """
     if not event.data.get("sourceLanguage"):
         logger.info("Skip %s: approval is not for the source language", event.id)
@@ -57,22 +63,23 @@ def handle_transcript_approved(
         logger.info("Skip %s: all configured languages already active", event.id)
         return None
 
+    channel = event.data.get("channel", "")
     for language_code in target_languages:
-        knowlg.post(
-            "transcript_create",
+        transcript_id = generate_identifier()
+        graph.create_node(
+            "Transcript",
+            transcript_id,
             {
-                "request": {
-                    "transcript": {
-                        "contentId": content_id,
-                        "enrichmentId": enrichment_id,
-                        "languageCode": language_code,
-                        "language": [language_name(language_code)],
-                        "sourceLanguage": False,
-                    }
-                }
+                "name": f"Transcript_{transcript_id}",
+                "code": transcript_id,
+                "channel": channel,
+                "languageCode": language_code,
+                "language": [language_name(language_code)],
+                "sourceLanguage": False,
+                "status": "Draft",
             },
-            identifier=content_id,
         )
+        graph.create_relation(enrichment_id, transcript_id, "associatedTo")
 
     source_transcript = next(
         (t for t in existing_transcripts if t.get("sourceLanguage") is True), None

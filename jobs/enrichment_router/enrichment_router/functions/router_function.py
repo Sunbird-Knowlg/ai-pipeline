@@ -41,8 +41,7 @@ class RouterFunction(BaseProcessFunction):
 
     def _handle_transcript_approved(self, event: EnrichedMetadataEvent):
         assert self.graph is not None, "open() must be called before process_element()"
-        assert self.knowlg is not None, "open() must be called before process_element()"
         configured_languages = self._config.raw("enrichment.transcript.languages", [])
-        request = handle_transcript_approved(event, self.graph, self.knowlg, configured_languages)
+        request = handle_transcript_approved(event, self.graph, configured_languages)
         if request is not None:
             yield MULTILINGUAL_OUT_TAG, request.to_json(env=self._config.env)
