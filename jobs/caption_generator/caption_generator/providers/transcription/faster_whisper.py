@@ -13,9 +13,18 @@ class FasterWhisperProvider(TranscriptionProvider):
     reduces output noise and processing time 20-40%.
     """
 
-    def __init__(self, model: str, device: str = "cpu", compute_type: str = "int8"):
+    def __init__(
+        self,
+        model: str,
+        device: str = "cpu",
+        compute_type: str = "int8",
+        language_detection_segments: int = 8,
+        language_detection_threshold: float = 0.7,
+    ):
         logger.info("Loading whisper model", extra={"model": model, "device": device, "compute_type": compute_type})
         self._model = WhisperModel(model, device=device, compute_type=compute_type)
+        self._language_detection_segments = language_detection_segments
+        self._language_detection_threshold = language_detection_threshold
 
     def transcribe(self, audio_path: str) -> tuple[list[Segment], list[Segment], str]:
         logger.info("Transcribing audio", extra={"audio_path": audio_path})
@@ -23,19 +32,18 @@ class FasterWhisperProvider(TranscriptionProvider):
         # each segment — needed for word-level VTT cues; sentence-level
         # segments are still returned separately for the transcript.json /
         # translation-chunking path, which needs sentence context, not words.
+        # language_detection_segments samples that many ~30s windows spread
+        # across the audio (VAD-preferring speech) and majority-votes across
+        # them instead of trusting a single window — lower-resource languages
+        # (e.g. Kannada) are more likely to get misdetected as a major
+        # language from just one or two windows, especially if those windows
+        # happen to catch music/noise rather than clear speech.
         raw_segments, info = self._model.transcribe(
             audio_path,
             vad_filter=True,
             word_timestamps=True,
-            # Default language_detection_segments=1 only uses the first ~30s
-            # of (VAD-filtered) speech for the language guess and returns it
-            # even below the confidence threshold if there's no second
-            # window to fall back to. Using more windows + a higher
-            # confidence bar means it keeps trying subsequent ~30s windows
-            # until one is actually confident, falling back to a majority
-            # vote across all of them only if none ever are.
-            language_detection_segments=3,
-            language_detection_threshold=0.7,
+            language_detection_segments=self._language_detection_segments,
+            language_detection_threshold=self._language_detection_threshold,
         )
         segments = []
         words = []

@@ -1,6 +1,12 @@
 job:
   name: caption-generator
   parallelism: 4
+  # Transcription is a long synchronous CPU call — the default 60s
+  # checkpoint timeout expires mid-transcription, and once that happens
+  # enough times in a row Flink kills the job (restart re-downloads and
+  # re-transcribes the same in-flight request, looking like an infinite loop).
+  checkpointing_interval_ms: 300000
+  checkpointing_timeout_ms: 900000
 
 kafka:
   brokers: ${KAFKA_BROKERS}
@@ -35,6 +41,11 @@ transcription:
   device: cpu
   compute_type: int8
   auto_approve: false
+  # More windows sampled + majority-voted across the audio, rather than
+  # trusting one or two — lower-resource languages are more likely to get
+  # misdetected as a major language from just a couple of windows.
+  language_detection_segments: 8
+  language_detection_threshold: 0.7
 
 multilingual:
   provider: litellm

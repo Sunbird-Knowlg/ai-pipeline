@@ -91,6 +91,8 @@ class TranscriptionFunction(BaseProcessFunction):
             model=model,
             device=self._config.raw("transcription.device", "cpu"),
             compute_type=self._config.raw("transcription.compute_type", "int8"),
+            language_detection_segments=int(self._config.raw("transcription.language_detection_segments", 8)),
+            language_detection_threshold=float(self._config.raw("transcription.language_detection_threshold", 0.7)),
         )
         self._generated_by = f"{self._config.raw('transcription.provider')}:{model}"
         self._auto_approve = bool(self._config.raw("transcription.auto_approve", False))
