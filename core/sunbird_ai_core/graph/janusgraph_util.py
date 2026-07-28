@@ -10,6 +10,13 @@ from sunbird_ai_core.graph.schema_registry import SchemaRegistry
 
 UNIQUE_ID_KEY = "IL_UNIQUE_ID"
 OBJECT_TYPE_KEY = "IL_FUNC_OBJECT_TYPE"
+# knowledge-platform's own node lookups (SearchAsyncOperations.getVertexByUniqueId,
+# Java) filter on BOTH IL_UNIQUE_ID and this "graphId" property — a vertex
+# created without it is invisible to every Scala-side read, even though it
+# genuinely exists and matches on IL_UNIQUE_ID alone. Always "domain" here,
+# matching GRAPH_ID in TranscriptManager.scala and everywhere else in the
+# platform (there's only ever been one graph).
+GRAPH_ID = "domain"
 
 _COMPLEX_TYPES = (list, dict)
 
@@ -252,6 +259,8 @@ class JanusGraphUtil:
             g.addV()
             .property(UNIQUE_ID_KEY, identifier)
             .property(OBJECT_TYPE_KEY, object_type)
+            .property("graphId", GRAPH_ID)
+            .property("IL_SYS_NODE_TYPE", "DATA_NODE")
         )
         for key, value in (props or {}).items():
             serialized = json.dumps(value) if isinstance(value, _COMPLEX_TYPES) else value

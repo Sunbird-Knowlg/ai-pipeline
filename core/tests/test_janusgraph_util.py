@@ -146,6 +146,19 @@ def test_create_node_sets_unique_id_and_object_type():
     g.iterate.assert_called_once()
 
 
+def test_create_node_sets_graph_id_for_scala_read_compatibility():
+    # knowledge-platform's own node lookups filter on IL_UNIQUE_ID AND
+    # graphId (SearchAsyncOperations.getVertexByUniqueId, Java) — a vertex
+    # missing this property is invisible to every Scala-side read even
+    # though it matches on IL_UNIQUE_ID alone.
+    util, g = _util_with_mock_g(exists=False)
+
+    util.create_node("Transcript", "do_123")
+
+    g.property.assert_any_call("graphId", "domain")
+    g.property.assert_any_call("IL_SYS_NODE_TYPE", "DATA_NODE")
+
+
 def test_upsert_node_creates_when_missing():
     util, g = _util_with_mock_g(exists=False)
 

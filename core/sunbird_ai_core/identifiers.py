@@ -19,8 +19,10 @@ def generate_identifier(
     Mirrors Identifier.getIdentifier(graphId, Identifier.getUniqueIdFromTimestamp())
     exactly, except for the trailing counter — the Java side uses an
     in-process AtomicInteger to disambiguate IDs generated in the same
-    millisecond; a random 3-digit suffix serves the same purpose here
-    without needing shared state across Flink subtasks/restarts.
+    millisecond; a random 5-digit suffix serves the same purpose here
+    without needing shared state across Flink subtasks/restarts (wide
+    enough that even many calls landing in the same millisecond, e.g. a
+    tight test loop, don't collide in practice).
 
     Args:
         graph_id: The graph name whose first two characters prefix the
@@ -36,5 +38,5 @@ def generate_identifier(
     prefix = graph_id[:2] if len(graph_id) >= 2 else graph_id
     env = environment_id // 10000000
     millis = int(time.time() * 1000) << 13
-    counter = random.randint(100, 999)
+    counter = random.randint(10000, 99999)
     return f"{prefix}_{env}{millis}{shard_id}{counter}"
