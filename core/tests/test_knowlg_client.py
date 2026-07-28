@@ -5,7 +5,7 @@ import requests
 from sunbird_ai_core.knowlg.knowlg_client import KnowlgClient
 
 APIS = {
-    "transcript_create": "/content/v4/transcript/create",
+    "transcript_create": "/content/v4/transcript/create/{identifier}",
     "content_read": "/content/v4/read/{identifier}",
 }
 
@@ -21,11 +21,11 @@ def test_post_resolves_configured_path(mock_post):
     mock_response.raise_for_status = Mock()
     mock_post.return_value = mock_response
 
-    result = _client().post("transcript_create", {"name": "x"})
+    result = _client().post("transcript_create", {"name": "x"}, identifier="do_123")
 
     mock_post.assert_called_once()
     called_url = mock_post.call_args[0][0]
-    assert called_url == "https://knowlg.example.com/content/v4/transcript/create"
+    assert called_url == "https://knowlg.example.com/content/v4/transcript/create/do_123"
     assert result == {"result": {"identifier": "do_123"}}
 
 

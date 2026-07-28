@@ -109,3 +109,21 @@ def test_created_transcript_includes_display_language_name(transcript_approved_e
 
     posted_payload = mock_knowlg.post.call_args.args[1]
     assert posted_payload["request"]["transcript"]["language"] == ["Hindi"]
+
+
+def test_transcript_create_targets_content_identifier(transcript_approved_event, mock_graph, mock_knowlg):
+    # Route is POST /content/v4/transcript/create/:identifier, where
+    # :identifier is the *content's* id, not the transcript's own id.
+    mock_graph.get_related_nodes.return_value = [
+        {
+            "IL_UNIQUE_ID": "do_t_en",
+            "languageCode": "en",
+            "sourceLanguage": True,
+            "status": "Live",
+            "artifactUrl": "https://blob/en/transcript.json",
+        },
+    ]
+
+    handle_transcript_approved(transcript_approved_event, mock_graph, mock_knowlg, ["hi"])
+
+    assert mock_knowlg.post.call_args.kwargs["identifier"] == "do_123"

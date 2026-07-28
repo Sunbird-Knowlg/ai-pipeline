@@ -22,7 +22,7 @@ knowlg:
   # No api_key — internal calls to the knowlg platform require no auth.
   content_service_url: ${CONTENT_SERVICE_URL}
   apis:
-    transcript_create: /content/v4/transcript/create
+    transcript_create: /content/v4/transcript/create/{identifier}
     content_read: /content/v4/read/{identifier}
 
 cloud_storage_type: azure

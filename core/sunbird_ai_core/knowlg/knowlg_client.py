@@ -65,12 +65,14 @@ class KnowlgClient:
             return path
         return path.format(**{k: quote(str(v), safe="") for k, v in path_params.items()})
 
-    def post(self, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def post(self, api_key: str, payload: dict[str, Any], **path_params: str) -> dict[str, Any]:
         """Executes a JSON POST request to a resolved Knowlg endpoint.
 
         Args:
             api_key: The routing key mapping to the target path template.
             payload: Dictionary containing the JSON request payload.
+            **path_params: Keyword arguments to substitute in the path
+                template (e.g. identifier=content_id), same as get().
 
         Returns:
             The parsed JSON response dictionary.
@@ -80,7 +82,7 @@ class KnowlgClient:
                 (HTTP error status, connection error, or timeout).
             ValueError: If the response body is not valid JSON.
         """
-        path = self._resolve_path(api_key)
+        path = self._resolve_path(api_key, **path_params)
         url = f"{self._base_url}{path}"
         logger.info("POST %s", url, extra={"api_key": api_key})
         try:

@@ -71,6 +71,7 @@ def handle_transcript_approved(
                     }
                 }
             },
+            identifier=content_id,
         )
 
     source_transcript = next(
