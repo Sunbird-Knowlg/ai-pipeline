@@ -1,6 +1,7 @@
 import logging
 
 from faster_whisper import WhisperModel
+from faster_whisper.audio import decode_audio
 
 from caption_generator.providers.transcription.base import TranscriptionProvider
 from caption_generator.segment import Segment
@@ -20,26 +21,49 @@ class FasterWhisperProvider(TranscriptionProvider):
         compute_type: str = "int8",
         language_detection_segments: int = 8,
         language_detection_threshold: float = 0.7,
+        candidate_languages: list[str] | None = None,
     ):
         logger.info("Loading whisper model", extra={"model": model, "device": device, "compute_type": compute_type})
         self._model = WhisperModel(model, device=device, compute_type=compute_type)
         self._language_detection_segments = language_detection_segments
         self._language_detection_threshold = language_detection_threshold
+        # Whisper's own top-1 guess is a global argmax across ~99 languages —
+        # acoustically similar languages (e.g. Kannada vs. Tamil, both
+        # Dravidian) can easily out-rank the correct one at low confidence.
+        # Restricting to the platform's actual supported languages and
+        # re-ranking within just that set is far more reliable than raising
+        # language_detection_segments further once confidence is already low
+        # (see detect_language's all_language_probs — the full distribution,
+        # not just the winner).
+        self._candidate_languages = set(candidate_languages) if candidate_languages else None
 
     def transcribe(self, audio_path: str) -> tuple[list[Segment], list[Segment], str]:
         logger.info("Transcribing audio", extra={"audio_path": audio_path})
+        audio = decode_audio(audio_path)
+
+        language = None
+        if self._candidate_languages:
+            _, _, all_language_probs = self._model.detect_language(
+                audio=audio,
+                vad_filter=True,
+                language_detection_segments=self._language_detection_segments,
+                language_detection_threshold=self._language_detection_threshold,
+            )
+            candidates = [(lang, prob) for lang, prob in all_language_probs if lang in self._candidate_languages]
+            if candidates:
+                language = max(candidates, key=lambda pair: pair[1])[0]
+                logger.info(
+                    "Restricted language detection to candidate set",
+                    extra={"audio_path": audio_path, "chosen_language": language, "top_candidates": candidates[:5]},
+                )
+
         # word_timestamps=True adds a .words list (per-word start/end) to
         # each segment — needed for word-level VTT cues; sentence-level
         # segments are still returned separately for the transcript.json /
         # translation-chunking path, which needs sentence context, not words.
-        # language_detection_segments samples that many ~30s windows spread
-        # across the audio (VAD-preferring speech) and majority-votes across
-        # them instead of trusting a single window — lower-resource languages
-        # (e.g. Kannada) are more likely to get misdetected as a major
-        # language from just one or two windows, especially if those windows
-        # happen to catch music/noise rather than clear speech.
         raw_segments, info = self._model.transcribe(
-            audio_path,
+            audio,
+            language=language,
             vad_filter=True,
             word_timestamps=True,
             language_detection_segments=self._language_detection_segments,

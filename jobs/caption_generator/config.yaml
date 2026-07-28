@@ -16,6 +16,13 @@ kafka:
     multilingual_in: ${ENV}.media.multilingual.request
     transcription_dlq: ${ENV}.media.transcription.dlq
     multilingual_dlq: ${ENV}.media.multilingual.dlq
+    # Same physical topic enrichment-router reads "input" from — auto-approving
+    # the source transcript here (transcription.auto_approve) writes the
+    # status directly to the graph, bypassing knowledge-platform's own
+    # /transcript/approve API and the "approved" event it pushes. Emitting
+    # the same event here ourselves is what lets enrichment-router still
+    # kick off multilingual generation.
+    enriched_metadata_out: ${ENV}.enriched.metadata
 
 janusgraph:
   host: ${JANUSGRAPH_HOST}

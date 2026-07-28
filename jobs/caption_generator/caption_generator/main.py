@@ -17,7 +17,11 @@ from caption_generator.functions.event_router import (
     EventRouter,
 )
 from caption_generator.functions.multilingual_function import MULTILINGUAL_DLQ_TAG, MultilingualFunction
-from caption_generator.functions.transcription_function import TRANSCRIPTION_DLQ_TAG, TranscriptionFunction
+from caption_generator.functions.transcription_function import (
+    ENRICHED_METADATA_TAG,
+    TRANSCRIPTION_DLQ_TAG,
+    TranscriptionFunction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +53,9 @@ class CaptionGeneratorJob(BaseFlinkJob):
 
         transcription_result.get_side_output(TRANSCRIPTION_DLQ_TAG).sink_to(
             self._build_sink(self.config.kafka_topic("transcription_dlq"))
+        )
+        transcription_result.get_side_output(ENRICHED_METADATA_TAG).sink_to(
+            self._build_sink(self.config.kafka_topic("enriched_metadata_out"))
         )
         multilingual_result.get_side_output(MULTILINGUAL_DLQ_TAG).sink_to(
             self._build_sink(self.config.kafka_topic("multilingual_dlq"))

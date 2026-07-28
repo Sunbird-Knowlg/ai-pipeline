@@ -3,6 +3,7 @@ import logging
 from sunbird_ai_core.graph.janusgraph_util import JanusGraphUtil
 from sunbird_ai_core.kafka.event_schemas import EnrichedMetadataEvent, MediaMultilingualRequest
 from sunbird_ai_core.knowlg.knowlg_client import KnowlgClient
+from sunbird_ai_core.languages import language_name
 
 _INACTIVE_STATUSES = {"Draft", "Failed"}
 
@@ -32,6 +33,7 @@ def handle_transcript_approved(
 
     content_id = event.data["contentId"]
     enrichment_id = event.data["enrichmentId"]
+    source_language_code = event.data.get("languageCode", "")
 
     # "transcripts" is the schema relation *name*, not the JanusGraph edge
     # label — all associatedTo-type relations share the "associatedTo" edge
@@ -43,7 +45,14 @@ def handle_transcript_approved(
         if t.get("status") not in _INACTIVE_STATUSES and not t.get("sourceLanguage")
     }
 
-    target_languages = [lang for lang in configured_languages if lang not in active_languages]
+    # Excludes the source's own language explicitly — active_languages only
+    # tracks non-source transcripts, so without this a configured_languages
+    # list that happens to include the source language (e.g. source is
+    # English and "en" is also in the configured target list) would create
+    # a duplicate transcript for a language that's already done.
+    target_languages = [
+        lang for lang in configured_languages if lang not in active_languages and lang != source_language_code
+    ]
     if not target_languages:
         logger.info("Skip %s: all configured languages already active", event.id)
         return None
@@ -57,6 +66,7 @@ def handle_transcript_approved(
                         "contentId": content_id,
                         "enrichmentId": enrichment_id,
                         "languageCode": language_code,
+                        "language": [language_name(language_code)],
                         "sourceLanguage": False,
                     }
                 }
