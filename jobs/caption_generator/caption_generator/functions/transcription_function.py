@@ -68,7 +68,7 @@ def run_transcription_pipeline(
             request.transcriptId,
             {
                 "languageCode": language_code,
-                "language": [language_name(language_code)],
+                "language": language_name(language_code),
                 "artifactUrl": storage.get_uri(json_key),
                 "captionsUrl": storage.get_uri(vtt_key),
                 "generatedBy": generated_by,

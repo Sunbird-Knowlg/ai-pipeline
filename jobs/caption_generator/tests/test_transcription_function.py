@@ -122,7 +122,7 @@ def test_pipeline_sets_language_display_name(
         )
 
     final_props = mock_graph.update_node.call_args_list[-1].args[1]
-    assert final_props["language"] == ["English"]
+    assert final_props["language"] == "English"
 
 
 def test_process_element_emits_enriched_metadata_on_auto_approve(

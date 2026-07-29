@@ -74,7 +74,7 @@ def handle_transcript_approved(
                 "code": transcript_id,
                 "channel": channel,
                 "languageCode": language_code,
-                "language": [language_name(language_code)],
+                "language": language_name(language_code),
                 "sourceLanguage": False,
                 "status": "Draft",
             },

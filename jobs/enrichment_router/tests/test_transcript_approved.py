@@ -108,7 +108,7 @@ def test_created_transcript_includes_display_language_name(transcript_approved_e
 
     object_type, transcript_id, props = mock_graph.create_node.call_args.args
     assert object_type == "Transcript"
-    assert props["language"] == ["Hindi"]
+    assert props["language"] == "Hindi"
     assert props["languageCode"] == "hi"
     assert props["sourceLanguage"] is False
     assert props["status"] == "Draft"
