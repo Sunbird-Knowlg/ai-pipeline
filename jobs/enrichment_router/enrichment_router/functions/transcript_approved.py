@@ -71,7 +71,7 @@ def handle_transcript_approved(
             transcript_id,
             {
                 "name": f"Transcript_{transcript_id}",
-                "code": transcript_id,
+                "code": f"{content_id}_{language_code}",
                 "channel": channel,
                 "languageCode": language_code,
                 "language": language_name(language_code),

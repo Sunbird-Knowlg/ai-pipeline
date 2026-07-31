@@ -67,6 +67,7 @@ def run_transcription_pipeline(
         graph.update_node(  # S7
             request.transcriptId,
             {
+                "code": f"{request.contentId}_{language_code}",
                 "languageCode": language_code,
                 "language": language_name(language_code),
                 "artifactUrl": storage.get_uri(json_key),
