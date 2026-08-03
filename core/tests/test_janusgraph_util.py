@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from gremlin_python.process.traversal import Cardinality
 from sunbird_ai_core.graph.janusgraph_util import JanusGraphUtil, UNIQUE_ID_KEY, OBJECT_TYPE_KEY
 
 
@@ -120,8 +121,8 @@ def test_update_node_sets_properties_when_node_exists():
 
     util.update_node("do_123", {"status": "Live", "segments": [{"id": 1}]})
 
-    g.property.assert_any_call("status", "Live")
-    g.property.assert_any_call("segments", '[{"id": 1}]')
+    g.property.assert_any_call(Cardinality.single, "status", "Live")
+    g.property.assert_any_call(Cardinality.single, "segments", '[{"id": 1}]')
     g.iterate.assert_called_once()
 
 
@@ -140,9 +141,9 @@ def test_create_node_sets_unique_id_and_object_type():
     util.create_node("Transcript", "do_123", {"languageCode": "en"})
 
     g.addV.assert_called_once()
-    g.property.assert_any_call(UNIQUE_ID_KEY, "do_123")
-    g.property.assert_any_call(OBJECT_TYPE_KEY, "Transcript")
-    g.property.assert_any_call("languageCode", "en")
+    g.property.assert_any_call(Cardinality.single, UNIQUE_ID_KEY, "do_123")
+    g.property.assert_any_call(Cardinality.single, OBJECT_TYPE_KEY, "Transcript")
+    g.property.assert_any_call(Cardinality.single, "languageCode", "en")
     g.iterate.assert_called_once()
 
 
@@ -155,8 +156,8 @@ def test_create_node_sets_graph_id_for_scala_read_compatibility():
 
     util.create_node("Transcript", "do_123")
 
-    g.property.assert_any_call("graphId", "domain")
-    g.property.assert_any_call("IL_SYS_NODE_TYPE", "DATA_NODE")
+    g.property.assert_any_call(Cardinality.single, "graphId", "domain")
+    g.property.assert_any_call(Cardinality.single, "IL_SYS_NODE_TYPE", "DATA_NODE")
 
 
 def test_upsert_node_creates_when_missing():
@@ -173,7 +174,7 @@ def test_upsert_node_updates_when_present():
     util.upsert_node("Transcript", "do_123", {"languageCode": "en"})
 
     g.addV.assert_not_called()
-    g.property.assert_any_call("languageCode", "en")
+    g.property.assert_any_call(Cardinality.single, "languageCode", "en")
 
 
 def test_upsert_node_no_op_when_present_and_no_props():

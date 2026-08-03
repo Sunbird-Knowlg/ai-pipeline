@@ -5,6 +5,7 @@ from typing import Any
 from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
 from gremlin_python.process.anonymous_traversal import traversal
 from gremlin_python.process.graph_traversal import __
+from gremlin_python.process.traversal import Cardinality
 
 from sunbird_ai_core.graph.schema_registry import SchemaRegistry
 
@@ -212,7 +213,13 @@ class JanusGraphUtil:
         traversal_step = g.V().has(UNIQUE_ID_KEY, identifier)
         for key, value in props.items():
             serialized = json.dumps(value) if isinstance(value, _COMPLEX_TYPES) else value
-            traversal_step = traversal_step.property(key, serialized)
+            # Without Cardinality.single, JanusGraph's default handling of an
+            # unqualified .property() call on this key accumulates a new
+            # VertexProperty instance per write instead of replacing the
+            # existing one (confirmed live: repeated writes to "language"
+            # left both the old and new value readable). Matches how the
+            # Scala/Java side always writes properties (NodeAsyncOperations.java).
+            traversal_step = traversal_step.property(Cardinality.single, key, serialized)
         try:
             traversal_step.iterate()
         except Exception:
@@ -257,14 +264,17 @@ class JanusGraphUtil:
         logger.info("create_node", extra={"object_type": object_type, "identifier": identifier})
         traversal_step = (
             g.addV()
-            .property(UNIQUE_ID_KEY, identifier)
-            .property(OBJECT_TYPE_KEY, object_type)
-            .property("graphId", GRAPH_ID)
-            .property("IL_SYS_NODE_TYPE", "DATA_NODE")
+            .property(Cardinality.single, UNIQUE_ID_KEY, identifier)
+            .property(Cardinality.single, OBJECT_TYPE_KEY, object_type)
+            .property(Cardinality.single, "graphId", GRAPH_ID)
+            .property(Cardinality.single, "IL_SYS_NODE_TYPE", "DATA_NODE")
         )
         for key, value in (props or {}).items():
             serialized = json.dumps(value) if isinstance(value, _COMPLEX_TYPES) else value
-            traversal_step = traversal_step.property(key, serialized)
+            # See update_node's comment — same accumulation risk on create too,
+            # since upsert_node's update path and any later update_node call
+            # write to the same keys a create_node call already touched.
+            traversal_step = traversal_step.property(Cardinality.single, key, serialized)
         try:
             traversal_step.iterate()
         except Exception:
