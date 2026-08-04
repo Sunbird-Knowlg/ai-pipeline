@@ -60,6 +60,22 @@ def test_enriched_metadata_event_to_json_uses_standard_envelope():
     assert "mid" in payload and "ets" in payload
 
 
+def test_enriched_metadata_event_to_json_also_carries_flat_top_level_shape():
+    # dev.knowlg.enriched.content.metadata is shared with content-embedding-job,
+    # which parses a flat {id, contentType, _schema_version, data} shape and
+    # throws on a missing top-level "id" — these siblings must be present
+    # alongside our own envelope, and "data" must be absent so their chunking
+    # stage filters the event instead of trying to embed our metadata.
+    event = EnrichedMetadataEvent(id="do_123", contentType="Transcript", action="approved", data={"languageCode": "en"})
+
+    payload = json.loads(event.to_json())
+
+    assert payload["id"] == "do_123"
+    assert payload["contentType"] == "Transcript"
+    assert payload["_schema_version"] == "1.0"
+    assert "data" not in payload
+
+
 def test_transcription_request_roundtrip():
     request = MediaTranscriptionRequest(
         contentId="do_123",

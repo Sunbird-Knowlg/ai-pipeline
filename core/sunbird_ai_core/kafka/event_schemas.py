@@ -25,9 +25,21 @@ def _known_fields_only(cls, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _wrap_be_job_request(
-    actor_id: str, action: str, object_id: str, edata: dict[str, Any], channel: str = "", env: str = ""
+    actor_id: str,
+    action: str,
+    object_id: str,
+    edata: dict[str, Any],
+    channel: str = "",
+    env: str = "",
+    extra_top_level: dict[str, Any] | None = None,
 ) -> str:
-    """Wraps an action-specific payload in the standard BE_JOB_REQUEST envelope."""
+    """Wraps an action-specific payload in the standard BE_JOB_REQUEST envelope.
+
+    extra_top_level merges additional sibling keys onto the envelope itself
+    (not into edata) — used when the same physical topic is also read by a
+    consumer expecting a different, unrelated flat shape (see
+    EnrichedMetadataEvent.to_json) rather than our envelope.
+    """
     ets = int(time.time() * 1000)
     envelope = {
         "eid": "BE_JOB_REQUEST",
@@ -38,6 +50,8 @@ def _wrap_be_job_request(
         "object": {"ver": "1.0", "id": object_id},
         "edata": {"action": action, **edata},
     }
+    if extra_top_level:
+        envelope.update(extra_top_level)
     return json.dumps(envelope, default=str)
 
 
@@ -104,6 +118,16 @@ class EnrichedMetadataEvent:
     def to_json(self) -> str:
         """Serializes the EnrichedMetadataEvent instance to the standard envelope.
 
+        This topic (dev.knowlg.enriched.content.metadata) is shared with
+        knowlg-publish/content-embedding-job's unrelated semantic-search
+        pipeline, which expects a flat {id, contentType, _schema_version,
+        data} shape at the top level and throws on a missing "id" — the
+        extra_top_level keys here are pure siblings alongside our own
+        envelope so content-embedding-job's parser stops erroring on our
+        events. Deliberately omitting "data" (defaults to {} on their side)
+        makes their chunking stage filter the event as "no usable text"
+        rather than attempting to embed our Transcript-approval metadata.
+
         Returns:
             A JSON-serialized BE_JOB_REQUEST envelope string.
         """
@@ -114,6 +138,7 @@ class EnrichedMetadataEvent:
             object_id=self.id,
             edata={"contentType": self.contentType, **data},
             channel=self.data.get("channel", ""),
+            extra_top_level={"id": self.id, "contentType": self.contentType, "_schema_version": "1.0"},
         )
 
 
