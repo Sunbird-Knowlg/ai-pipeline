@@ -15,10 +15,10 @@ knowlg:
   # No api_key — internal calls to the knowlg platform require no auth.
   content_service_url: ${CONTENT_SERVICE_URL}
   apis:
-    object_create: /content/v4/object/create/{identifier}
-    object_update: /content/v4/object/update/{identifier}/{objectIdentifier}
-    object_approve: /content/v4/object/approve/{identifier}/{objectIdentifier}
-    object_reject: /content/v4/object/reject/{identifier}/{objectIdentifier}
+    object_create: /content/v4/enrichment/object/create/{identifier}
+    object_update: /content/v4/enrichment/object/update/{identifier}/{objectIdentifier}
+    object_approve: /content/v4/enrichment/object/approve/{identifier}/{objectIdentifier}
+    object_reject: /content/v4/enrichment/object/reject/{identifier}/{objectIdentifier}
     enrichment_read: /content/v4/enrichment/read/{identifier}
     content_read: /content/v4/read/{identifier}
 
