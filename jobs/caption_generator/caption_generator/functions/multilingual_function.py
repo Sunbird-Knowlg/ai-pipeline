@@ -111,24 +111,43 @@ class MultilingualFunction(BaseProcessFunction):
         assert self.logger is not None, "open() must be called before process_element()"
 
         request = MediaMultilingualRequest.from_json(value)
+        transcript_ids: dict[str, str] = {}
 
-        # M1
-        transcript_ids = resolve_target_transcript_ids(
-            self.knowlg, request.contentId, request.targetLanguages
-        )
-        for transcript_id in transcript_ids.values():
-            self.knowlg.patch(
-                "object_update",
-                {"objectType": "Transcript", "status": "Processing"},
-                identifier=request.contentId,
-                objectIdentifier=transcript_id,
+        try:
+            # M1
+            transcript_ids = resolve_target_transcript_ids(
+                self.knowlg, request.contentId, request.targetLanguages
             )
+            for transcript_id in transcript_ids.values():
+                self.knowlg.patch(
+                    "object_update",
+                    {"objectType": "Transcript", "status": "Processing"},
+                    identifier=request.contentId,
+                    objectIdentifier=transcript_id,
+                )
 
-        # M2
-        tmp_path = tempfile.mktemp(suffix=".json")
-        self.storage.download_from_uri(request.sourceTranscriptUrl, tmp_path)
-        with open(tmp_path, "r") as f:
-            source_segments = parse_transcript_json(f.read())
+            # M2
+            tmp_path = tempfile.mktemp(suffix=".json")
+            self.storage.download_from_uri(request.sourceTranscriptUrl, tmp_path)
+            with open(tmp_path, "r") as f:
+                source_segments = parse_transcript_json(f.read())
+        except Exception as error:
+            # A bad request (e.g. empty sourceTranscriptUrl) must not kill the
+            # job — an uncaught exception here fails the whole Flink job, and
+            # since the triggering Kafka offset never commits, the same
+            # poisoned message replays and crash-loops the job forever on
+            # restart. Route it to DLQ instead, same as a per-language
+            # translation failure below.
+            self.logger.exception("Multilingual M1/M2 failed for %s: %s", request.contentId, error)
+            for transcript_id in transcript_ids.values():
+                self.knowlg.patch(
+                    "object_update",
+                    {"objectType": "Transcript", "status": "Failed", "errorMessage": str(error)},
+                    identifier=request.contentId,
+                    objectIdentifier=transcript_id,
+                )
+            yield from self.emit_to_dlq(request, error, ctx, MULTILINGUAL_DLQ_TAG)
+            return
 
         # KnowlgClient issues one stateless HTTP request per call (via
         # `requests`), so sharing it across worker threads here needs no
