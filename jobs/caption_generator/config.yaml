@@ -24,18 +24,15 @@ kafka:
     # kick off multilingual generation.
     enriched_metadata_out: ${ENV}.enriched.metadata
 
-janusgraph:
-  host: ${JANUSGRAPH_HOST}
-  port: 8182
-
-schema:
-  base_path: ${SCHEMA_BASE_PATH}
-
 knowlg:
   # No api_key — internal calls to the knowlg platform require no auth.
   content_service_url: ${CONTENT_SERVICE_URL}
   apis:
-    transcript_create: /content/v4/transcript/create/{identifier}
+    object_create: /content/v4/object/create/{identifier}
+    object_update: /content/v4/object/update/{identifier}/{objectIdentifier}
+    object_approve: /content/v4/object/approve/{identifier}/{objectIdentifier}
+    object_reject: /content/v4/object/reject/{identifier}/{objectIdentifier}
+    enrichment_read: /content/v4/enrichment/read/{identifier}
     content_read: /content/v4/read/{identifier}
 
 cloud_storage_type: azure
@@ -61,10 +58,8 @@ multilingual:
   batch_size: 80
   context_overlap: 2
   auto_approve: true
-  ecar:
-    # Source language must always be Live for ECAR generation to trigger.
-    # true (default): a permanently Failed language does not block ECAR
-    # generation — the ECAR is built from whatever languages succeeded.
-    # false: Failed is treated the same as Draft/Review/Processing — blocks
-    # generation until that language is retried/fixed.
-    allow_failed_languages: true
+  # ECAR rebuild readiness (source Live + all languages settled) is now
+  # decided and executed server-side by knowlg's object/update handling
+  # (TranscriptManager.syncAndMaybeBuildEcar) — see that service's own
+  # content.transcript.ecar.allow_failed_languages config for the equivalent
+  # knob; this job no longer builds or uploads an ECAR itself.

@@ -27,5 +27,5 @@ include = ["enrichment_router*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "integration: requires local docker-compose stack (JanusGraph, Kafka)",
+    "integration: requires local docker-compose stack (Kafka)",
 ]

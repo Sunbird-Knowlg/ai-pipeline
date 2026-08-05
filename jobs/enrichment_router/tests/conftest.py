@@ -5,11 +5,6 @@ from sunbird_ai_core.kafka.event_schemas import EnrichedMetadataEvent
 
 
 @pytest.fixture
-def mock_graph():
-    return Mock()
-
-
-@pytest.fixture
 def mock_knowlg():
     return Mock()
 

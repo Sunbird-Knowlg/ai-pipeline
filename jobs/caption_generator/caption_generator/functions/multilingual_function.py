@@ -1,32 +1,31 @@
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
 
 from pyflink.common.typeinfo import Types
 from pyflink.datastream.output_tag import OutputTag
 from sunbird_ai_core.base.base_process_function import BaseProcessFunction
-from sunbird_ai_core.graph.janusgraph_util import JanusGraphUtil
 from sunbird_ai_core.kafka.event_schemas import MediaMultilingualRequest
+from sunbird_ai_core.knowlg.knowlg_client import KnowlgClient
 from sunbird_ai_core.storage.blob_util import BlobStorageUtil
 
-from caption_generator.builders.ecar_builder import build_and_upload_ecar
 from caption_generator.builders.vtt_builder import build_transcript_json, build_vtt, parse_transcript_json
 from caption_generator.chunking import chunk_segments, merge_translated_batches
 from caption_generator.providers.multilingual.base import MultilingualProvider
 from caption_generator.segment import Segment
-from caption_generator.sync import is_ecar_ready, sync_enrichment_transcripts
 
 MULTILINGUAL_DLQ_TAG = OutputTag("multilingual-dlq", Types.STRING())
 
 
 def resolve_target_transcript_ids(
-    graph: JanusGraphUtil, enrichment_id: str, target_languages: list[str]
+    knowlg: KnowlgClient, content_id: str, target_languages: list[str]
 ) -> dict[str, str]:
-    # "transcripts" is the schema relation *name*, not the JanusGraph edge
-    # label — all associatedTo-type relations share the "associatedTo" edge
-    # label (see AssociationRelation.getRelationType in knowledge-platform).
-    transcripts = graph.get_related_nodes(enrichment_id, "associatedTo", direction="out")
-    by_language = {t["languageCode"]: t["IL_UNIQUE_ID"] for t in transcripts if not t.get("sourceLanguage")}
+    # enrichment/read is keyed by the *content* identifier, not the
+    # Enrichment node's own identifier (see ContentActor.readEnrichment ->
+    # DataNode.read on the content, TranscriptManager.fetchEnrichmentMetadata).
+    response = knowlg.get("enrichment_read", identifier=content_id)
+    enrichment = response.get("result", {}).get("enrichment", {})
+    transcripts = enrichment.get("transcripts", [])
+    by_language = {t["languageCode"]: t["identifier"] for t in transcripts if not t.get("sourceLanguage")}
     return {lang: by_language[lang] for lang in target_languages if lang in by_language}
 
 
@@ -36,7 +35,7 @@ def translate_one_language(
     source_segments: list[Segment],
     source_lang: str,
     target_lang: str,
-    graph: JanusGraphUtil,
+    knowlg: KnowlgClient,
     storage: BlobStorageUtil,
     provider: MultilingualProvider,
     batch_size: int,
@@ -61,19 +60,25 @@ def translate_one_language(
         storage.upload_bytes(transcript_json.encode("utf-8"), json_key)
         storage.upload_bytes(vtt.encode("utf-8"), vtt_key)
 
-        graph.update_node(
-            transcript_id,
+        knowlg.patch(
+            "object_update",
             {
+                "objectType": "Transcript",
                 "artifactUrl": storage.get_uri(json_key),
                 "captionsUrl": storage.get_uri(vtt_key),
                 "generatedBy": "litellm",
-                "generatedOn": datetime.now(timezone.utc).isoformat(),
                 "status": "Live" if auto_approve else "Review",
-                "autoApproved": auto_approve,
             },
+            identifier=content_id,
+            objectIdentifier=transcript_id,
         )
     except Exception as error:
-        graph.update_node(transcript_id, {"status": "Failed", "errorMessage": str(error)})
+        knowlg.patch(
+            "object_update",
+            {"objectType": "Transcript", "status": "Failed", "errorMessage": str(error)},
+            identifier=content_id,
+            objectIdentifier=transcript_id,
+        )
         raise
 
 
@@ -84,7 +89,6 @@ class MultilingualFunction(BaseProcessFunction):
         self._batch_size = None
         self._overlap = None
         self._auto_approve = None
-        self._allow_failed_languages = None
 
     def open(self, runtime_context) -> None:
         super().open(runtime_context)
@@ -100,12 +104,9 @@ class MultilingualFunction(BaseProcessFunction):
         self._batch_size = int(self._config.raw("multilingual.batch_size", 80))
         self._overlap = int(self._config.raw("multilingual.context_overlap", 2))
         self._auto_approve = bool(self._config.raw("multilingual.auto_approve", True))
-        self._allow_failed_languages = bool(
-            self._config.raw("multilingual.ecar.allow_failed_languages", True)
-        )
 
     def process_element(self, value: str, ctx):
-        assert self.graph is not None, "open() must be called before process_element()"
+        assert self.knowlg is not None, "open() must be called before process_element()"
         assert self.storage is not None, "open() must be called before process_element()"
         assert self.logger is not None, "open() must be called before process_element()"
 
@@ -113,10 +114,15 @@ class MultilingualFunction(BaseProcessFunction):
 
         # M1
         transcript_ids = resolve_target_transcript_ids(
-            self.graph, request.enrichmentId, request.targetLanguages
+            self.knowlg, request.contentId, request.targetLanguages
         )
         for transcript_id in transcript_ids.values():
-            self.graph.update_node(transcript_id, {"status": "Processing"})
+            self.knowlg.patch(
+                "object_update",
+                {"objectType": "Transcript", "status": "Processing"},
+                identifier=request.contentId,
+                objectIdentifier=transcript_id,
+            )
 
         # M2
         tmp_path = tempfile.mktemp(suffix=".json")
@@ -124,8 +130,10 @@ class MultilingualFunction(BaseProcessFunction):
         with open(tmp_path, "r") as f:
             source_segments = parse_transcript_json(f.read())
 
-        # ponytail: shares one JanusGraphUtil connection across worker threads —
-        # revisit with per-thread connections if gremlinpython isn't thread-safe under load.
+        # KnowlgClient issues one stateless HTTP request per call (via
+        # `requests`), so sharing it across worker threads here needs no
+        # per-thread connection handling, unlike the JanusGraph websocket
+        # this used to share.
         with ThreadPoolExecutor(max_workers=len(transcript_ids) or 1) as executor:
             futures = {
                 executor.submit(
@@ -135,7 +143,7 @@ class MultilingualFunction(BaseProcessFunction):
                     source_segments,
                     request.sourceLanguage,
                     target_lang,
-                    self.graph,
+                    self.knowlg,
                     self.storage,
                     self._provider,
                     self._batch_size,
@@ -154,10 +162,7 @@ class MultilingualFunction(BaseProcessFunction):
                     )
                     yield from self.emit_to_dlq(request, error, ctx, MULTILINGUAL_DLQ_TAG)
 
-        # M5
-        transcripts = sync_enrichment_transcripts(self.graph, request.enrichmentId)
-        if is_ecar_ready(transcripts, self._allow_failed_languages):
-            enrichment = self.graph.get_node(request.enrichmentId)
-            assert enrichment is not None, f"Enrichment node {request.enrichmentId} not found"
-            ecar_url = build_and_upload_ecar(request.contentId, enrichment, transcripts, self.storage)
-            self.graph.update_node(request.enrichmentId, {"transcriptUrl": ecar_url})
+        # Enrichment.transcripts re-sync and ECAR rebuild are now handled
+        # server-side by knowlg's object/update itself whenever a Transcript
+        # transitions to Live/Review (TranscriptManager.syncAndMaybeBuildEcar)
+        # — no client-side M5 step needed anymore.

@@ -1,20 +1,18 @@
 import os
 import shutil
 import tempfile
-from datetime import datetime, timezone
 
 from pyflink.common.typeinfo import Types
 from pyflink.datastream.output_tag import OutputTag
 from sunbird_ai_core.base.base_process_function import BaseProcessFunction
-from sunbird_ai_core.graph.janusgraph_util import JanusGraphUtil
 from sunbird_ai_core.kafka.event_schemas import EnrichedMetadataEvent, MediaTranscriptionRequest
+from sunbird_ai_core.knowlg.knowlg_client import KnowlgClient
 from sunbird_ai_core.languages import language_name
 from sunbird_ai_core.storage.blob_util import BlobStorageUtil
 
 from caption_generator.audio import extract_audio
 from caption_generator.builders.vtt_builder import build_transcript_json, build_vtt
 from caption_generator.providers.transcription.base import TranscriptionProvider
-from caption_generator.sync import sync_enrichment_transcripts
 
 TRANSCRIPTION_DLQ_TAG = OutputTag("transcription-dlq", Types.STRING())
 ENRICHED_METADATA_TAG = OutputTag("enriched-metadata", Types.STRING())
@@ -22,7 +20,7 @@ ENRICHED_METADATA_TAG = OutputTag("enriched-metadata", Types.STRING())
 
 def run_transcription_pipeline(
     request: MediaTranscriptionRequest,
-    graph: JanusGraphUtil,
+    knowlg: KnowlgClient,
     storage: BlobStorageUtil,
     provider: TranscriptionProvider,
     generated_by: str,
@@ -33,14 +31,16 @@ def run_transcription_pipeline(
 
     Returns the detected language code, so the caller can emit the
     Transcript-approved event on auto_approve (knowledge-platform's own
-    /transcript/approve API pushes that event; auto-approving via a direct
-    graph write here bypasses that path entirely otherwise, and
-    enrichment-router never learns to kick off multilingual generation).
+    /object/approve API pushes that event; auto-approving via the completion
+    PATCH here bypasses that path entirely otherwise, and enrichment-router
+    never learns to kick off multilingual generation).
     """
-    transcript_node = graph.get_node(request.transcriptId)
-    assert transcript_node is not None, f"Transcript node {request.transcriptId} not found"
-
-    graph.update_node(request.transcriptId, {"status": "Processing"})  # S1
+    knowlg.patch(  # S1
+        "object_update",
+        {"objectType": "Transcript", "status": "Processing"},
+        identifier=request.contentId,
+        objectIdentifier=request.transcriptId,
+    )
 
     tmp_dir = tempfile.mkdtemp(prefix=f"{request.contentId}_transcribe_")
     try:
@@ -64,22 +64,21 @@ def run_transcription_pipeline(
         storage.upload_bytes(transcript_json.encode("utf-8"), json_key)  # S6
         storage.upload_bytes(vtt.encode("utf-8"), vtt_key)
 
-        graph.update_node(  # S7
-            request.transcriptId,
+        knowlg.patch(  # S7
+            "object_update",
             {
+                "objectType": "Transcript",
                 "code": f"{request.contentId}_{language_code}",
                 "languageCode": language_code,
                 "language": language_name(language_code),
                 "artifactUrl": storage.get_uri(json_key),
                 "captionsUrl": storage.get_uri(vtt_key),
                 "generatedBy": generated_by,
-                "generatedOn": datetime.now(timezone.utc).isoformat(),
                 "status": "Live" if auto_approve else "Review",
-                "autoApproved": auto_approve,
-                "errorMessage": None,
             },
+            identifier=request.contentId,
+            objectIdentifier=request.transcriptId,
         )
-        sync_enrichment_transcripts(graph, request.enrichmentId)
         return language_code
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -110,14 +109,14 @@ class TranscriptionFunction(BaseProcessFunction):
         self._auto_approve = bool(self._config.raw("transcription.auto_approve", False))
 
     def process_element(self, value: str, ctx):
-        assert self.graph is not None, "open() must be called before process_element()"
+        assert self.knowlg is not None, "open() must be called before process_element()"
         assert self.storage is not None, "open() must be called before process_element()"
         assert self.logger is not None, "open() must be called before process_element()"
 
         request = MediaTranscriptionRequest.from_json(value)
         try:
             language_code = run_transcription_pipeline(
-                request, self.graph, self.storage, self._provider, self._generated_by, self._auto_approve
+                request, self.knowlg, self.storage, self._provider, self._generated_by, self._auto_approve
             )
             if self._auto_approve:
                 event = EnrichedMetadataEvent(
@@ -135,7 +134,10 @@ class TranscriptionFunction(BaseProcessFunction):
                 yield ENRICHED_METADATA_TAG, event.to_json()
         except Exception as error:
             self.logger.exception("Transcription failed for %s: %s", request.contentId, error)
-            self.graph.update_node(
-                request.transcriptId, {"status": "Failed", "errorMessage": str(error)}
+            self.knowlg.patch(
+                "object_update",
+                {"objectType": "Transcript", "status": "Failed", "errorMessage": str(error)},
+                identifier=request.contentId,
+                objectIdentifier=request.transcriptId,
             )
             yield from self.emit_to_dlq(request, error, ctx, TRANSCRIPTION_DLQ_TAG)

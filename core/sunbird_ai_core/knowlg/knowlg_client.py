@@ -97,12 +97,13 @@ class KnowlgClient:
             logger.exception("knowlg POST returned non-JSON body", extra={"api_key": api_key, "url": url})
             raise
 
-    def get(self, api_key: str, identifier: str) -> dict[str, Any]:
-        """Executes a GET request to a resolved endpoint, formatting the identifier path parameter.
+    def get(self, api_key: str, **path_params: str) -> dict[str, Any]:
+        """Executes a GET request to a resolved Knowlg endpoint.
 
         Args:
             api_key: The routing key mapping to the target path template.
-            identifier: The unique entity identifier to embed in the path.
+            **path_params: Keyword arguments to substitute in the path
+                template (e.g. identifier=content_id), same as post().
 
         Returns:
             The parsed JSON response dictionary.
@@ -112,9 +113,9 @@ class KnowlgClient:
                 (HTTP error status, connection error, or timeout).
             ValueError: If the response body is not valid JSON.
         """
-        path = self._resolve_path(api_key, identifier=identifier)
+        path = self._resolve_path(api_key, **path_params)
         url = f"{self._base_url}{path}"
-        logger.info("GET %s", url, extra={"api_key": api_key, "identifier": identifier})
+        logger.info("GET %s", url, extra={"api_key": api_key})
         try:
             response = requests.get(url, headers=self._headers(), timeout=30)
             response.raise_for_status()
@@ -125,4 +126,37 @@ class KnowlgClient:
             return response.json()
         except ValueError:
             logger.exception("knowlg GET returned non-JSON body", extra={"api_key": api_key, "url": url})
+            raise
+
+    def patch(self, api_key: str, payload: dict[str, Any], **path_params: str) -> dict[str, Any]:
+        """Executes a JSON PATCH request to a resolved Knowlg endpoint.
+
+        Args:
+            api_key: The routing key mapping to the target path template.
+            payload: Dictionary containing the JSON request payload.
+            **path_params: Keyword arguments to substitute in the path
+                template (e.g. identifier=content_id, objectIdentifier=transcript_id),
+                same as post().
+
+        Returns:
+            The parsed JSON response dictionary.
+
+        Raises:
+            requests.exceptions.RequestException: If the request fails
+                (HTTP error status, connection error, or timeout).
+            ValueError: If the response body is not valid JSON.
+        """
+        path = self._resolve_path(api_key, **path_params)
+        url = f"{self._base_url}{path}"
+        logger.info("PATCH %s", url, extra={"api_key": api_key})
+        try:
+            response = requests.patch(url, json=payload, headers=self._headers(), timeout=30)
+            response.raise_for_status()
+        except requests.exceptions.RequestException:
+            logger.exception("knowlg PATCH failed", extra={"api_key": api_key, "url": url})
+            raise
+        try:
+            return response.json()
+        except ValueError:
+            logger.exception("knowlg PATCH returned non-JSON body", extra={"api_key": api_key, "url": url})
             raise

@@ -36,10 +36,58 @@ def test_get_substitutes_identifier(mock_get):
     mock_response.raise_for_status = Mock()
     mock_get.return_value = mock_response
 
-    _client().get("content_read", "do_123")
+    _client().get("content_read", identifier="do_123")
 
     called_url = mock_get.call_args[0][0]
     assert called_url == "https://knowlg.example.com/content/v4/read/do_123"
+
+
+@patch("sunbird_ai_core.knowlg.knowlg_client.requests.get")
+def test_get_substitutes_multiple_path_params(mock_get):
+    mock_response = Mock()
+    mock_response.json.return_value = {"result": {}}
+    mock_response.raise_for_status = Mock()
+    mock_get.return_value = mock_response
+
+    apis = {"object_read": "/content/v4/object/read/{identifier}/{objectIdentifier}"}
+    client = KnowlgClient(content_service_url="https://knowlg.example.com/", apis=apis)
+
+    client.get("object_read", identifier="do_123", objectIdentifier="do_456")
+
+    called_url = mock_get.call_args[0][0]
+    assert called_url == "https://knowlg.example.com/content/v4/object/read/do_123/do_456"
+
+
+@patch("sunbird_ai_core.knowlg.knowlg_client.requests.patch")
+def test_patch_resolves_configured_path(mock_patch):
+    mock_response = Mock()
+    mock_response.json.return_value = {"result": {"transcriptId": "do_456"}}
+    mock_response.raise_for_status = Mock()
+    mock_patch.return_value = mock_response
+
+    apis = {"object_update": "/content/v4/object/update/{identifier}/{objectIdentifier}"}
+    client = KnowlgClient(content_service_url="https://knowlg.example.com/", apis=apis)
+
+    result = client.patch(
+        "object_update", {"status": "Processing"}, identifier="do_123", objectIdentifier="do_456"
+    )
+
+    mock_patch.assert_called_once()
+    called_url = mock_patch.call_args[0][0]
+    assert called_url == "https://knowlg.example.com/content/v4/object/update/do_123/do_456"
+    assert result == {"result": {"transcriptId": "do_456"}}
+
+
+@patch("sunbird_ai_core.knowlg.knowlg_client.requests.patch")
+def test_patch_raises_on_connection_error(mock_patch):
+    mock_patch.side_effect = requests.exceptions.ConnectionError("refused")
+    apis = {"object_update": "/content/v4/object/update/{identifier}/{objectIdentifier}"}
+    client = KnowlgClient(content_service_url="https://knowlg.example.com/", apis=apis)
+
+    with pytest.raises(requests.exceptions.ConnectionError):
+        client.patch(
+            "object_update", {"status": "Processing"}, identifier="do_123", objectIdentifier="do_456"
+        )
 
 
 def test_unknown_api_key_raises():
@@ -67,7 +115,7 @@ def test_get_raises_on_connection_error(mock_get):
     mock_get.side_effect = requests.exceptions.ConnectionError("refused")
 
     with pytest.raises(requests.exceptions.ConnectionError):
-        _client().get("content_read", "do_123")
+        _client().get("content_read", identifier="do_123")
 
 
 @patch("sunbird_ai_core.knowlg.knowlg_client.requests.post")

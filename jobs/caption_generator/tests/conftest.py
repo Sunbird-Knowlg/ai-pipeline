@@ -6,7 +6,7 @@ from sunbird_ai_core.kafka.event_schemas import MediaMultilingualRequest, MediaT
 
 
 @pytest.fixture
-def mock_graph():
+def mock_knowlg():
     return Mock()
 
 

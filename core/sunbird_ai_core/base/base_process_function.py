@@ -3,7 +3,6 @@ import logging
 from pyflink.datastream import ProcessFunction
 
 from sunbird_ai_core.base.base_job_config import BaseJobConfig
-from sunbird_ai_core.graph.janusgraph_util import JanusGraphUtil
 from sunbird_ai_core.knowlg.knowlg_client import KnowlgClient
 from sunbird_ai_core.logging_setup import configure_logging
 from sunbird_ai_core.storage.blob_util import BlobStorageUtil
@@ -12,13 +11,12 @@ from sunbird_ai_core.storage.blob_util import BlobStorageUtil
 class BaseProcessFunction(ProcessFunction):
     """Abstract base process function managing the lifecycle of external services.
 
-    This class provides automatic initialization and teardown of connections to 
-    JanusGraph, Cloud Blob Storage, and Knowlg API clients per Flink TaskManager subtask. 
-    Subclasses are expected to override PyFlink's standard `process_element` 
+    This class provides automatic initialization and teardown of connections to
+    Cloud Blob Storage and Knowlg API clients per Flink TaskManager subtask.
+    Subclasses are expected to override PyFlink's standard `process_element`
     method to implement their stream transformation logic.
 
     Attributes:
-        graph (JanusGraphUtil | None): Connection utility for interacting with JanusGraph.
         storage (BlobStorageUtil | None): Client utility for reading/writing cloud storage.
         knowlg (KnowlgClient | None): API client for communicating with the Knowlg service.
         logger (logging.Logger | None): Subtask-specific logger instance.
@@ -31,7 +29,6 @@ class BaseProcessFunction(ProcessFunction):
             config: Loaded job configuration settings.
         """
         self._config = config
-        self.graph: JanusGraphUtil | None = None
         self.storage: BlobStorageUtil | None = None
         self.knowlg: KnowlgClient | None = None
         self.logger: logging.Logger | None = None
@@ -39,9 +36,9 @@ class BaseProcessFunction(ProcessFunction):
     def open(self, runtime_context) -> None:
         """Initializes external service connections when the subtask starts.
 
-        This method is called by Flink before any stream processing begins on 
-        the task manager slot. It establishes connections to JanusGraph, cloud 
-        storage, and the Knowlg client.
+        This method is called by Flink before any stream processing begins on
+        the task manager slot. It establishes connections to cloud storage and
+        the Knowlg client.
 
         Args:
             runtime_context: Flink runtime context for the running subtask.
@@ -54,45 +51,35 @@ class BaseProcessFunction(ProcessFunction):
             extra={"task_index": runtime_context.get_index_of_this_subtask()},
         )
 
-        self.graph = JanusGraphUtil(
-            host=self._config.janusgraph_host,
-            port=self._config.janusgraph_port,
-            schema_base_path=self._config.schema_base_path,
+        self.storage = BlobStorageUtil(
+            cloud_storage_type=self._config.cloud_storage_type,
+            cloud_storage_auth_type=self._config.cloud_storage_auth_type,
+            container=self._config.cloud_storage_container,
+            auth_config=self._config.raw("cloud_storage_auth", {}),
+            public_endpoint=self._config.raw("cloud_storage_public_endpoint", ""),
         )
-        self.graph.open()
-        try:
-            self.storage = BlobStorageUtil(
-                cloud_storage_type=self._config.cloud_storage_type,
-                cloud_storage_auth_type=self._config.cloud_storage_auth_type,
-                container=self._config.cloud_storage_container,
-                auth_config=self._config.raw("cloud_storage_auth", {}),
-                public_endpoint=self._config.raw("cloud_storage_public_endpoint", ""),
-            )
 
-            self.knowlg = KnowlgClient(
-                content_service_url=self._config.knowlg_content_service_url,
-                api_key=self._config.knowlg_api_key,
-                apis=self._config.knowlg_apis,
-            )
-        except Exception:
-            # Flink won't call close() for a subtask whose open() raised, so
-            # the just-opened JanusGraph websocket would otherwise leak.
-            self.graph.close()
-            raise
+        self.knowlg = KnowlgClient(
+            content_service_url=self._config.knowlg_content_service_url,
+            api_key=self._config.knowlg_api_key,
+            apis=self._config.knowlg_apis,
+        )
 
     def close(self) -> None:
-        """Cleans up and closes active connections when the subtask stops.
+        """Cleans up active connections when the subtask stops.
 
         This method is called by Flink when the operator's execution finishes.
+        KnowlgClient (requests-per-call, stateless) and BlobStorageUtil hold no
+        persistent connections that need explicit teardown, so this is
+        currently a no-op — kept as a method so subclasses/Flink's lifecycle
+        contract have a stable hook to call without needing to know that.
         """
-        if self.graph is not None:
-            self.graph.close()
 
     def emit_to_dlq(self, event, error: Exception, ctx, output_tag):
         """Wraps a failed stream event with metadata and sends it to a Dead Letter Queue (DLQ).
 
-        Due to PyFlink 1.20's `ProcessFunction.Context` lacking a direct `.output()` 
-        method, side outputs must be yielded. Consequently, callers of this method 
+        Due to PyFlink 1.20's `ProcessFunction.Context` lacking a direct `.output()`
+        method, side outputs must be yielded. Consequently, callers of this method
         must use the `yield from` syntax (e.g., `yield from self.emit_to_dlq(...)`).
 
         Args:

@@ -4,9 +4,9 @@ from sunbird_ai_core.config.job_config import JobConfig
 class BaseJobConfig:
     """Typed configuration reader and facade for Sunbird AI Flink jobs.
 
-    This class wraps a raw `JobConfig` instance, providing clean, type-hinted 
-    properties and helper methods to retrieve standard configurations used by 
-    most Flink stream processing jobs (such as Kafka, JanusGraph, Knowlg APIs, 
+    This class wraps a raw `JobConfig` instance, providing clean, type-hinted
+    properties and helper methods to retrieve standard configurations used by
+    most Flink stream processing jobs (such as Kafka, Knowlg APIs,
     and Cloud Storage settings).
     """
 
@@ -79,21 +79,6 @@ class BaseJobConfig:
             The resolved Kafka topic name.
         """
         return self._config.get_required(f"kafka.topics.{topic_key}")
-
-    @property
-    def janusgraph_host(self) -> str:
-        """str: The hostname or IP address of the JanusGraph instance."""
-        return self._config.get_required("janusgraph.host")
-
-    @property
-    def janusgraph_port(self) -> int:
-        """int: The connection port for the JanusGraph server (defaults to 8182)."""
-        return int(self._config.get("janusgraph.port", 8182))
-
-    @property
-    def schema_base_path(self) -> str:
-        """str: The base directory path containing schema definition files."""
-        return self._config.get_required("schema.base_path")
 
     @property
     def knowlg_content_service_url(self) -> str:

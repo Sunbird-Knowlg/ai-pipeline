@@ -1,8 +1,7 @@
 import logging
 
-from sunbird_ai_core.graph.janusgraph_util import JanusGraphUtil
-from sunbird_ai_core.identifiers import generate_identifier
 from sunbird_ai_core.kafka.event_schemas import EnrichedMetadataEvent, MediaMultilingualRequest
+from sunbird_ai_core.knowlg.knowlg_client import KnowlgClient
 from sunbird_ai_core.languages import language_name
 
 _INACTIVE_STATUSES = {"Draft", "Failed"}
@@ -12,22 +11,23 @@ logger = logging.getLogger(__name__)
 
 def handle_transcript_approved(
     event: EnrichedMetadataEvent,
-    graph: JanusGraphUtil,
+    knowlg: KnowlgClient,
     configured_languages: list[str],
 ) -> MediaMultilingualRequest | None:
     """Transcript approved event -> multilingual request, or None to skip.
 
-    Only source-language approvals trigger multilingual. Creates a Draft
-    Transcript node directly via JanusGraph (mirroring
-    TranscriptManager.createTranscriptChildNode in knowledge-platform) for
-    every configured language that doesn't already have an active node
-    under this Enrichment.
+    Only source-language approvals trigger multilingual. For every configured
+    language that doesn't already have an active Transcript node under this
+    content's Enrichment, calls knowlg's generic POST /content/v4/object/create
+    API to create a target-language Draft Transcript (server-side, via
+    TranscriptManager.createTargetDraft in knowledge-platform).
 
-    knowlg's own POST /content/v4/transcript/create/:identifier can't be
-    used for this — that endpoint is hardwired for (re)generating the
-    *source* transcript (requires the content's own artifactUrl/mimeType,
-    always creates with sourceLanguage=true); there's no knowlg API for
-    "create a Draft transcript for a specific target language" today.
+    This replaces the direct JanusGraph node/relation writes this job used to
+    make for the same purpose — knowlg's object/create dispatch now handles
+    that Draft creation itself (idempotently: calling it again for a language
+    that already has a Transcript just returns the existing one), so this job
+    no longer needs to construct identifiers, edges, or schema metadata by
+    hand.
     """
     if not event.data.get("sourceLanguage"):
         logger.info("Skip %s: approval is not for the source language", event.id)
@@ -41,10 +41,9 @@ def handle_transcript_approved(
     enrichment_id = event.data["enrichmentId"]
     source_language_code = event.data.get("languageCode", "")
 
-    # "transcripts" is the schema relation *name*, not the JanusGraph edge
-    # label — all associatedTo-type relations share the "associatedTo" edge
-    # label (see AssociationRelation.getRelationType in knowledge-platform).
-    existing_transcripts = graph.get_related_nodes(enrichment_id, "associatedTo", direction="out")
+    response = knowlg.get("enrichment_read", identifier=content_id)
+    enrichment = response.get("result", {}).get("enrichment", {})
+    existing_transcripts = enrichment.get("transcripts", [])
     active_languages = {
         t["languageCode"]
         for t in existing_transcripts
@@ -63,23 +62,16 @@ def handle_transcript_approved(
         logger.info("Skip %s: all configured languages already active", event.id)
         return None
 
-    channel = event.data.get("channel", "")
     for language_code in target_languages:
-        transcript_id = generate_identifier()
-        graph.create_node(
-            "Transcript",
-            transcript_id,
+        knowlg.post(
+            "object_create",
             {
-                "name": f"Transcript_{transcript_id}",
-                "code": f"{content_id}_{language_code}",
-                "channel": channel,
+                "objectType": "Transcript",
                 "languageCode": language_code,
                 "language": language_name(language_code),
-                "sourceLanguage": False,
-                "status": "Draft",
             },
+            identifier=content_id,
         )
-        graph.create_relation(enrichment_id, transcript_id, "associatedTo")
 
     source_transcript = next(
         (t for t in existing_transcripts if t.get("sourceLanguage") is True), None

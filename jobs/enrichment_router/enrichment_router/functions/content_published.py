@@ -1,7 +1,8 @@
 import logging
 
-from sunbird_ai_core.graph.janusgraph_util import JanusGraphUtil
+import requests
 from sunbird_ai_core.kafka.event_schemas import EnrichedMetadataEvent, MediaTranscriptionRequest
+from sunbird_ai_core.knowlg.knowlg_client import KnowlgClient
 
 _ACTIVE_STATUSES = {"Processing", "Review", "Live"}
 
@@ -9,16 +10,23 @@ logger = logging.getLogger(__name__)
 
 
 def handle_content_published(
-    event: EnrichedMetadataEvent, graph: JanusGraphUtil, mime_types: list[str]
+    event: EnrichedMetadataEvent, knowlg: KnowlgClient, mime_types: list[str]
 ) -> MediaTranscriptionRequest | None:
-    """Content published event -> transcription request, or None to skip.
+    """Converts a content published event to a transcription request if conditions are met.
 
-    Skip reasons (all valid, all safe to replay):
-      - mimeType not a configured video type
-      - no Enrichment node for this content (creator never called transcript create)
-      - no source-language Transcript node under the Enrichment
-      - source Transcript already Processing/Review/Live
-      - source Transcript already has a captionsUrl (creator uploaded VTT manually)
+    Checks whether the content has a video mime type, has an Enrichment node with a
+    source-language Transcript node, and that Transcript is not already actively being
+    processed or manually captioned. Skips if any of these conditions are unmet — all skip
+    reasons are valid and safe to replay.
+
+    Args:
+        event: The enriched metadata event from the published content.
+        knowlg: Knowlg HTTP client for reading the content's Enrichment/Transcript state.
+        mime_types: List of configured video mime types that should trigger transcription.
+
+    Returns:
+        A MediaTranscriptionRequest populated with content/enrichment/transcript IDs and
+        metadata, or None if the event should be skipped.
     """
     content_id = event.id
     mime_type = event.data.get("mimeType")
@@ -27,16 +35,22 @@ def handle_content_published(
         logger.info("Skip %s: mimeType %s not configured for transcription", content_id, mime_type)
         return None
 
-    enrichment = graph.find_by_property("Enrichment", "contentId", content_id)
+    # knowlg's enrichment/read raises a client error (ERR_NO_ENRICHMENT_FOUND)
+    # rather than returning an empty body when the content has no Enrichment
+    # node yet (creator never called object/create) — treated the same as
+    # any other skip: safe to replay once the content does have one.
+    try:
+        response = knowlg.get("enrichment_read", identifier=content_id)
+    except requests.exceptions.RequestException:
+        logger.info("Skip %s: no Enrichment node found", content_id)
+        return None
+    enrichment = response.get("result", {}).get("enrichment")
     if enrichment is None:
         logger.info("Skip %s: no Enrichment node found", content_id)
         return None
 
-    enrichment_id = enrichment["IL_UNIQUE_ID"]
-    # "transcripts" is the schema relation *name*, not the JanusGraph edge
-    # label — all associatedTo-type relations share the "associatedTo" edge
-    # label (see AssociationRelation.getRelationType in knowledge-platform).
-    transcripts = graph.get_related_nodes(enrichment_id, "associatedTo", direction="out")
+    enrichment_id = enrichment["identifier"]
+    transcripts = enrichment.get("transcripts", [])
     source_transcript = next((t for t in transcripts if t.get("sourceLanguage") is True), None)
     if source_transcript is None:
         logger.info(
@@ -57,7 +71,7 @@ def handle_content_published(
     return MediaTranscriptionRequest(
         contentId=content_id,
         enrichmentId=enrichment_id,
-        transcriptId=source_transcript["IL_UNIQUE_ID"],
+        transcriptId=source_transcript["identifier"],
         artifactUrl=event.data.get("artifactUrl", ""),
         mimeType=mime_type,
         channel=enrichment.get("channel", ""),

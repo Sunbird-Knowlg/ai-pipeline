@@ -33,15 +33,15 @@ class RouterFunction(BaseProcessFunction):
             self.logger.exception("Failed routing event %s: %s", event.id, error)
 
     def _handle_content_published(self, event: EnrichedMetadataEvent):
-        assert self.graph is not None, "open() must be called before process_element()"
+        assert self.knowlg is not None, "open() must be called before process_element()"
         mime_types = self._config.raw("enrichment.transcript.mime_types", [])
-        request = handle_content_published(event, self.graph, mime_types)
+        request = handle_content_published(event, self.knowlg, mime_types)
         if request is not None:
             yield TRANSCRIPTION_OUT_TAG, request.to_json(env=self._config.env)
 
     def _handle_transcript_approved(self, event: EnrichedMetadataEvent):
-        assert self.graph is not None, "open() must be called before process_element()"
+        assert self.knowlg is not None, "open() must be called before process_element()"
         configured_languages = self._config.raw("enrichment.transcript.languages", [])
-        request = handle_transcript_approved(event, self.graph, configured_languages)
+        request = handle_transcript_approved(event, self.knowlg, configured_languages)
         if request is not None:
             yield MULTILINGUAL_OUT_TAG, request.to_json(env=self._config.env)
