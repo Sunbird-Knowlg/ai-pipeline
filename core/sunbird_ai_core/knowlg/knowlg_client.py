@@ -70,7 +70,10 @@ class KnowlgClient:
 
         Args:
             api_key: The routing key mapping to the target path template.
-            payload: Dictionary containing the JSON request payload.
+            payload: Dictionary of object fields (e.g. objectType, status) —
+                wrapped as {"request": {"object": payload}} before sending,
+                matching every knowlg v4 controller's requestBody()/"object"
+                envelope convention. Callers pass the bare object fields.
             **path_params: Keyword arguments to substitute in the path
                 template (e.g. identifier=content_id), same as get().
 
@@ -86,7 +89,7 @@ class KnowlgClient:
         url = f"{self._base_url}{path}"
         logger.info("POST %s", url, extra={"api_key": api_key})
         try:
-            response = requests.post(url, json=payload, headers=self._headers(), timeout=30)
+            response = requests.post(url, json={"request": {"object": payload}}, headers=self._headers(), timeout=30)
             response.raise_for_status()
         except requests.exceptions.RequestException:
             logger.exception("knowlg POST failed", extra={"api_key": api_key, "url": url})
@@ -133,7 +136,9 @@ class KnowlgClient:
 
         Args:
             api_key: The routing key mapping to the target path template.
-            payload: Dictionary containing the JSON request payload.
+            payload: Dictionary of object fields (e.g. objectType, status) —
+                wrapped as {"request": {"object": payload}} before sending,
+                same convention as post().
             **path_params: Keyword arguments to substitute in the path
                 template (e.g. identifier=content_id, objectIdentifier=transcript_id),
                 same as post().
@@ -150,7 +155,7 @@ class KnowlgClient:
         url = f"{self._base_url}{path}"
         logger.info("PATCH %s", url, extra={"api_key": api_key})
         try:
-            response = requests.patch(url, json=payload, headers=self._headers(), timeout=30)
+            response = requests.patch(url, json={"request": {"object": payload}}, headers=self._headers(), timeout=30)
             response.raise_for_status()
         except requests.exceptions.RequestException:
             logger.exception("knowlg PATCH failed", extra={"api_key": api_key, "url": url})

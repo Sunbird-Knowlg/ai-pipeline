@@ -26,6 +26,7 @@ def test_post_resolves_configured_path(mock_post):
     mock_post.assert_called_once()
     called_url = mock_post.call_args[0][0]
     assert called_url == "https://knowlg.example.com/content/v4/transcript/create/do_123"
+    assert mock_post.call_args.kwargs["json"] == {"request": {"object": {"name": "x"}}}
     assert result == {"result": {"identifier": "do_123"}}
 
 
@@ -75,6 +76,7 @@ def test_patch_resolves_configured_path(mock_patch):
     mock_patch.assert_called_once()
     called_url = mock_patch.call_args[0][0]
     assert called_url == "https://knowlg.example.com/content/v4/object/update/do_123/do_456"
+    assert mock_patch.call_args.kwargs["json"] == {"request": {"object": {"status": "Processing"}}}
     assert result == {"result": {"transcriptId": "do_456"}}
 
 
