@@ -27,7 +27,16 @@ logger = logging.getLogger(__name__)
 
 
 class CaptionGeneratorJob(BaseFlinkJob):
+    """Flink job that merges the transcription and multilingual request
+    topics, routes each event via EventRouter, and runs TranscriptionFunction
+    or MultilingualFunction, sinking DLQ and enriched-metadata side outputs.
+    """
+
     def build_pipeline(self) -> None:
+        """Wires the merged request sources, EventRouter, transcription and
+        multilingual process functions, and their DLQ/output sinks into a
+        single pipeline.
+        """
         logger.info(
             "Building caption-generator pipeline",
             extra={
@@ -62,6 +71,15 @@ class CaptionGeneratorJob(BaseFlinkJob):
         )
 
     def _build_source(self, topic: str, source_name: str) -> KafkaSource:
+        """Builds a KafkaSource consuming `topic` from the last committed offset.
+
+        Args:
+            topic: The Kafka topic to consume.
+            source_name: The Flink source operator name.
+
+        Returns:
+            A DataStream reading string values from the configured source.
+        """
         logger.debug("Building Kafka source", extra={"topic": topic, "source_name": source_name})
         source = (
             KafkaSource.builder()
@@ -79,6 +97,14 @@ class CaptionGeneratorJob(BaseFlinkJob):
         )
 
     def _build_sink(self, topic: str) -> KafkaSink:
+        """Builds a KafkaSink that writes plain string values to `topic`.
+
+        Args:
+            topic: The destination Kafka topic name.
+
+        Returns:
+            A configured KafkaSink instance.
+        """
         logger.debug("Building Kafka sink", extra={"topic": topic})
         return (
             KafkaSink.builder()

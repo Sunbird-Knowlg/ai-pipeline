@@ -39,7 +39,14 @@ LANGUAGE_NAMES = {
 
 
 def language_name(code: str) -> str:
-    """Returns the full English name for an ISO 639-1 code, or the code
-    itself if unknown (never raises — always safe to embed in a
-    `language` array field)."""
+    """Resolves an ISO 639-1 code to its full English language name.
+
+    Never raises — always safe to embed in a `language` array field.
+
+    Args:
+        code: The ISO 639-1 language code (e.g. 'en', 'hi').
+
+    Returns:
+        The full English name for the code, or the code itself if unknown.
+    """
     return LANGUAGE_NAMES.get(code, code)

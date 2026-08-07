@@ -1,3 +1,8 @@
+"""Transcription pipeline (S1-S7): downloads the source media, extracts
+audio, runs a transcription provider, uploads captions/transcript JSON, and
+updates the Transcript node.
+"""
+
 import os
 import shutil
 import tempfile
@@ -26,14 +31,36 @@ def run_transcription_pipeline(
     generated_by: str,
     auto_approve: bool,
 ) -> str:
-    """S1-S7 of the transcription path. Raises on any failure — caller is
-    responsible for marking the Transcript node Failed and routing to DLQ.
+    """Runs S1-S7 of the transcription path for one MediaTranscriptionRequest.
 
-    Returns the detected language code, so the caller can emit the
-    Transcript-approved event on auto_approve (knowledge-platform's own
-    /object/approve API pushes that event; auto-approving via the completion
-    PATCH here bypasses that path entirely otherwise, and enrichment-router
-    never learns to kick off multilingual generation).
+    Marks the Transcript node Processing, downloads and transcribes the
+    source media, uploads the resulting transcript.json/VTT captions, and
+    updates the Transcript node with the result. Raises on any failure —
+    the caller is responsible for marking the Transcript node Failed and
+    routing to DLQ.
+
+    Args:
+        request: The transcription request naming the content/transcript
+            and the source media artifact URL.
+        knowlg: Knowlg HTTP client for updating the Transcript node.
+        storage: Blob storage client for downloading media and uploading
+            generated captions/transcript JSON.
+        provider: The transcription provider used to transcribe the audio.
+        generated_by: Value recorded on the Transcript node's generatedBy
+            field (e.g. "faster_whisper:base").
+        auto_approve: Whether to mark the Transcript node Live (True) or
+            Review (False) on completion.
+
+    Returns:
+        The detected language code, so the caller can emit the
+        Transcript-approved event on auto_approve (knowledge-platform's own
+        /object/approve API pushes that event; auto-approving via the
+        completion PATCH here bypasses that path otherwise, and
+        enrichment-router never learns to kick off multilingual generation).
+
+    Raises:
+        Exception: Propagates any error from downloading, extracting audio,
+            transcribing, uploading, or updating knowlg.
     """
     knowlg.patch(  # S1
         "object_update",
@@ -85,6 +112,11 @@ def run_transcription_pipeline(
 
 
 class TranscriptionFunction(BaseProcessFunction):
+    """Flink process function that runs run_transcription_pipeline for each
+    transcription-request event and emits a Transcript-approved event on
+    auto_approve, or routes failures to the transcription DLQ.
+    """
+
     def __init__(self, config):
         super().__init__(config)
         self._provider = None
@@ -92,6 +124,9 @@ class TranscriptionFunction(BaseProcessFunction):
         self._auto_approve = None
 
     def open(self, runtime_context) -> None:
+        """Builds the configured transcription provider in addition to the
+        base storage/knowlg clients.
+        """
         super().open(runtime_context)
         from caption_generator.providers.factory import build_transcription_provider
 
@@ -109,6 +144,22 @@ class TranscriptionFunction(BaseProcessFunction):
         self._auto_approve = bool(self._config.raw("transcription.auto_approve", False))
 
     def process_element(self, value: str, ctx):
+        """Transcribes one media-transcription-request event.
+
+        On success, emits an enriched-metadata Transcript-approved event if
+        auto_approve is configured. On failure, marks the Transcript node
+        Failed and routes the request to the transcription DLQ.
+
+        Args:
+            value: The raw JSON string of a MediaTranscriptionRequest event.
+            ctx: The PyFlink processing context, passed through to
+                emit_to_dlq on failure.
+
+        Yields:
+            tuple[OutputTag, str]: An (ENRICHED_METADATA_TAG, event JSON)
+            pair on auto-approved success, or (TRANSCRIPTION_DLQ_TAG,
+            DLQ envelope JSON) on failure.
+        """
         assert self.knowlg is not None, "open() must be called before process_element()"
         assert self.storage is not None, "open() must be called before process_element()"
         assert self.logger is not None, "open() must be called before process_element()"

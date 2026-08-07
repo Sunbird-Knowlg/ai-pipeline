@@ -3,6 +3,16 @@ from dataclasses import asdict, dataclass
 
 @dataclass
 class Segment:
+    """A single timed caption/transcript unit (sentence or word level).
+
+    Attributes:
+        id: Stable position index, used to align a segment across
+            translation batches and to detect duplicates from batch overlap.
+        start: Start time in seconds.
+        end: End time in seconds.
+        text: The transcribed or translated text for this span.
+    """
+
     id: int
     start: float
     end: float

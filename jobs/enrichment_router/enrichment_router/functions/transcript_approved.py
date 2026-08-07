@@ -28,6 +28,17 @@ def handle_transcript_approved(
     that already has a Transcript just returns the existing one), so this job
     no longer needs to construct identifiers, edges, or schema metadata by
     hand.
+
+    Args:
+        event: The Transcript-approved enriched.metadata event.
+        knowlg: Knowlg HTTP client for reading Enrichment state and creating
+            target-language Transcript nodes.
+        configured_languages: The full list of target languages this
+            deployment should generate multilingual transcripts for.
+
+    Returns:
+        A MediaMultilingualRequest naming the target languages that still
+        need translation, or None if the event should be skipped.
     """
     if not event.data.get("sourceLanguage"):
         logger.info("Skip %s: approval is not for the source language", event.id)
@@ -50,11 +61,8 @@ def handle_transcript_approved(
         if t.get("status") not in _INACTIVE_STATUSES and not t.get("sourceLanguage")
     }
 
-    # Excludes the source's own language explicitly — active_languages only
-    # tracks non-source transcripts, so without this a configured_languages
-    # list that happens to include the source language (e.g. source is
-    # English and "en" is also in the configured target list) would create
-    # a duplicate transcript for a language that's already done.
+    # Excludes the source's own language explicitly, since active_languages
+    # only tracks non-source transcripts and could otherwise re-create one.
     target_languages = [
         lang for lang in configured_languages if lang not in active_languages and lang != source_language_code
     ]

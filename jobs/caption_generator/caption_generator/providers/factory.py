@@ -17,6 +17,19 @@ _MULTILINGUAL_PROVIDERS = {
 
 
 def build_transcription_provider(provider_name: str, **kwargs) -> TranscriptionProvider:
+    """Instantiates the configured transcription provider by name.
+
+    Args:
+        provider_name: The registered provider key (currently only
+            "faster_whisper").
+        **kwargs: Forwarded to the provider's constructor.
+
+    Returns:
+        An instantiated TranscriptionProvider.
+
+    Raises:
+        ValueError: If provider_name is not registered.
+    """
     if provider_name not in _TRANSCRIPTION_PROVIDERS:
         logger.error("Unknown transcription provider requested", extra={"provider_name": provider_name})
         raise ValueError(f"Unknown transcription provider: {provider_name}")
@@ -25,6 +38,18 @@ def build_transcription_provider(provider_name: str, **kwargs) -> TranscriptionP
 
 
 def build_multilingual_provider(provider_name: str, **kwargs) -> MultilingualProvider:
+    """Instantiates the configured multilingual provider by name.
+
+    Args:
+        provider_name: The registered provider key (currently only "litellm").
+        **kwargs: Forwarded to the provider's constructor.
+
+    Returns:
+        An instantiated MultilingualProvider.
+
+    Raises:
+        ValueError: If provider_name is not registered.
+    """
     if provider_name not in _MULTILINGUAL_PROVIDERS:
         logger.error("Unknown multilingual provider requested", extra={"provider_name": provider_name})
         raise ValueError(f"Unknown multilingual provider: {provider_name}")

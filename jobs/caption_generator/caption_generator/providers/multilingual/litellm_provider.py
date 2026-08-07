@@ -23,16 +23,43 @@ class LiteLLMProvider(MultilingualProvider):
     """
 
     def __init__(self, model: str, api_key: str, api_base: str = "", api_version: str = ""):
+        """Initializes the provider with LiteLLM connection settings.
+
+        Args:
+            model: The LiteLLM model string (e.g. "gpt-4o", or
+                "azure/<deployment>" for Azure-routed models).
+            api_key: The API key for the target provider.
+            api_base: Required for Azure-routed models — litellm can't infer
+                the Azure resource from the API key alone. Ignored by
+                litellm for plain (non-"azure/"-prefixed) models.
+            api_version: Required alongside api_base for Azure-routed models.
+        """
         self._model = model
         self._api_key = api_key
-        # Required for Azure-routed models (model="azure/<deployment>") -
-        # litellm has no way to know which Azure resource/API version to
-        # hit from the API key alone. Empty string is fine for plain OpenAI
-        # (model without an "azure/" prefix), litellm just ignores them.
         self._api_base = api_base
         self._api_version = api_version
 
     def translate(self, segments: list[Segment], source_lang: str, target_lang: str) -> list[Segment]:
+        """Translates one batch of segments via a single LiteLLM completion call.
+
+        Preserves id/start/end exactly — only text is sent to and replaced
+        from the model.
+
+        Args:
+            segments: The segments to translate, in order.
+            source_lang: The source language code.
+            target_lang: The target language code.
+
+        Returns:
+            A new list of segments, same ids/timings/order as the input,
+            with text translated to target_lang.
+
+        Raises:
+            Exception: If the underlying LiteLLM completion call fails.
+            json.JSONDecodeError: If the model's response isn't valid JSON.
+            ValueError: If the translated segment ids don't match the input
+                segment ids.
+        """
         input_payload = [{"id": s.id, "text": s.text} for s in segments]
         logger.info(
             "Translating segment batch",

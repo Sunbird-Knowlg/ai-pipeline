@@ -18,8 +18,23 @@ class EventRouter(ProcessFunction):
     """
 
     def process_element(self, value: str, ctx):
-        # PyFlink 1.20's ProcessFunction has no ctx.output() — side outputs
-        # are emitted by yielding (OutputTag, value) from this generator.
+        """Routes one merged request event to its transcription or multilingual side output.
+
+        PyFlink 1.20's ProcessFunction has no ctx.output() — side outputs
+        are emitted by yielding (OutputTag, value) from this generator.
+
+        Args:
+            value: The raw JSON string of a BE_JOB_REQUEST envelope.
+            ctx: The PyFlink processing context (unused).
+
+        Yields:
+            tuple[OutputTag, str]: A (TRANSCRIPTION_REQUEST_TAG or
+            MULTILINGUAL_REQUEST_TAG, value) pair.
+
+        Raises:
+            json.JSONDecodeError: If value is not valid JSON.
+            ValueError: If edata.action is not a recognized request type.
+        """
         try:
             payload = json.loads(value)
         except json.JSONDecodeError:

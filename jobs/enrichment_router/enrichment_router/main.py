@@ -21,7 +21,14 @@ logger = logging.getLogger(__name__)
 
 
 class EnrichmentRouterJob(BaseFlinkJob):
+    """Flink job that reads enriched.metadata and routes it into transcription
+    and multilingual job-request streams via RouterFunction's side outputs.
+    """
+
     def build_pipeline(self) -> None:
+        """Wires the enriched.metadata source, RouterFunction, and the
+        transcription/multilingual Kafka sinks into a single pipeline.
+        """
         logger.info(
             "Building enrichment-router pipeline",
             extra={
@@ -57,6 +64,14 @@ class EnrichmentRouterJob(BaseFlinkJob):
         multilingual_stream.sink_to(multilingual_sink)
 
     def _build_sink(self, topic: str) -> KafkaSink:
+        """Builds a KafkaSink that writes plain string values to `topic`.
+
+        Args:
+            topic: The destination Kafka topic name.
+
+        Returns:
+            A configured KafkaSink instance.
+        """
         logger.debug("Building Kafka sink", extra={"topic": topic})
         return (
             KafkaSink.builder()

@@ -16,11 +16,23 @@ class RouterFunction(BaseProcessFunction):
     """
 
     def process_element(self, value: str, ctx):
-        # PyFlink 1.20's ProcessFunction has no ctx.output() — side outputs
-        # are emitted by yielding (OutputTag, value) from this generator
-        # (confirmed against pyflink.fn_execution.datastream.process.
-        # input_handler._emit_results, the only place that consumes what
-        # this function yields).
+        """Routes one enriched.metadata event to the appropriate side output.
+
+        Content-published events are dispatched to transcription; approved
+        source-language Transcript events are dispatched to multilingual.
+        Any other combination is silently ignored. Errors are caught and
+        logged rather than propagated, since PyFlink 1.20's ProcessFunction
+        has no ctx.output() — side outputs are emitted by yielding
+        (OutputTag, value) from this generator.
+
+        Args:
+            value: The raw JSON string of the enriched.metadata event.
+            ctx: The PyFlink processing context (unused).
+
+        Yields:
+            tuple[OutputTag, str]: A (TRANSCRIPTION_OUT_TAG or
+            MULTILINGUAL_OUT_TAG, JSON payload) pair for the routed request.
+        """
         assert self.logger is not None, "open() must be called before process_element()"
         event = EnrichedMetadataEvent.from_json(value)
 

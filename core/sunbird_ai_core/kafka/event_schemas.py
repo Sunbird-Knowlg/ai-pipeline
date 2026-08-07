@@ -5,11 +5,8 @@ from dataclasses import asdict, dataclass, field, fields
 from typing import Any
 
 # Standard BE_JOB_REQUEST envelope used platform-wide for job-to-job Kafka
-# events (see e.g. VideoEnrichmentHelper.getStreamingEvent in
-# knowledge-platform-jobs, TranscriptManager.pushEnrichedMetadataApprovedEvent
-# in knowledge-platform) — eid/ets/mid/actor/context/object wrap an
-# action-specific edata payload, rather than each job inventing its own flat
-# shape.
+# events (see knowledge-platform's TranscriptManager) — wraps an
+# action-specific edata payload instead of each job inventing its own shape.
 _PDATA_ID = "org.ekstep.platform"
 _PDATA_VER = "1.0"
 

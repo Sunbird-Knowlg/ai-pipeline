@@ -5,8 +5,17 @@ logger = logging.getLogger(__name__)
 
 
 def extract_audio(video_path: str, audio_path: str) -> None:
-    """Audio-only extraction is 10-20x smaller than video — cuts both
-    download size on retry and faster-whisper processing time.
+    """Extracts mono 16kHz PCM audio from a video file using ffmpeg.
+
+    Audio-only extraction is 10-20x smaller than video — cuts both download
+    size on retry and faster-whisper processing time.
+
+    Args:
+        video_path: Path to the source video file.
+        audio_path: Destination path for the extracted WAV audio.
+
+    Raises:
+        RuntimeError: If the ffmpeg subprocess exits with a non-zero status.
     """
     logger.info("Extracting audio", extra={"video_path": video_path, "audio_path": audio_path})
     result = subprocess.run(

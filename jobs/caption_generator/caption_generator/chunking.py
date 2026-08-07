@@ -1,3 +1,7 @@
+"""Splits segments into overlapping batches for translation, and merges the
+translated batches back into a single deduplicated sequence.
+"""
+
 import logging
 
 from caption_generator.segment import Segment
@@ -6,8 +10,20 @@ logger = logging.getLogger(__name__)
 
 
 def chunk_segments(segments: list[Segment], batch_size: int, overlap: int) -> list[list[Segment]]:
-    """Splits into batches of batch_size, each overlapping the last `overlap`
-    segments of the previous batch for translation continuity at boundaries.
+    """Splits segments into batches for the multilingual provider to translate.
+
+    Each batch overlaps the last `overlap` segments of the previous batch, so
+    the model sees trailing context and translation stays continuous across
+    batch boundaries.
+
+    Args:
+        segments: The full ordered list of segments to split.
+        batch_size: Maximum number of segments per batch.
+        overlap: Number of trailing segments repeated at the start of the
+            next batch.
+
+    Returns:
+        A list of segment batches. Empty if segments is empty.
     """
     if not segments:
         return []
@@ -29,9 +45,18 @@ def chunk_segments(segments: list[Segment], batch_size: int, overlap: int) -> li
 
 
 def merge_translated_batches(batches: list[list[Segment]]) -> list[Segment]:
-    """Dedupes overlapping segments across batches, keeping the first
+    """Merges translated batches back into a single ordered segment list.
+
+    Dedupes overlapping segments across batches, keeping the first
     occurrence — later occurrences are just context copies for the LLM,
     not a second authoritative translation.
+
+    Args:
+        batches: Translated segment batches, as produced against the output
+            of chunk_segments.
+
+    Returns:
+        The merged segments, ordered by segment id.
     """
     seen: dict[int, Segment] = {}
     for batch in batches:
