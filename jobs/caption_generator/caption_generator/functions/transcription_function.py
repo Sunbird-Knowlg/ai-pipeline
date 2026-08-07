@@ -118,6 +118,7 @@ class TranscriptionFunction(BaseProcessFunction):
     """
 
     def __init__(self, config):
+        """Stores config; provider/settings are built later in open()."""
         super().__init__(config)
         self._provider = None
         self._generated_by = None
