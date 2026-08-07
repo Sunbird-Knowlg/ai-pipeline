@@ -61,6 +61,13 @@ def configure_logging(name: str, level: str = "INFO") -> logging.Logger:
     once per TaskManager subtask in BaseProcessFunction.open()); every
     other file just does `logging.getLogger(__name__)` and logs normally,
     no per-class wiring needed.
+
+    Args:
+        name: The logger name to return (e.g. the calling job's name).
+        level: The root logger's level, e.g. "INFO" or "DEBUG".
+
+    Returns:
+        A logger with the given name, inheriting the configured root handler.
     """
     root = logging.getLogger()
     root.setLevel(level.upper())

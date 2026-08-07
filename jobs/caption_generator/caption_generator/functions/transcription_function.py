@@ -127,6 +127,9 @@ class TranscriptionFunction(BaseProcessFunction):
     def open(self, runtime_context) -> None:
         """Builds the configured transcription provider in addition to the
         base storage/knowlg clients.
+
+        Args:
+            runtime_context: Flink runtime context for the running subtask.
         """
         super().open(runtime_context)
         from caption_generator.providers.factory import build_transcription_provider
