@@ -30,44 +30,52 @@ def handle_content_published(
     """
     content_id = event.id
     mime_type = event.data.get("mimeType")
+    extra = {"content_id": content_id, "mime_type": mime_type}
+    logger.info("Evaluating content-published event", extra=extra)
 
     if mime_type not in mime_types:
-        logger.info("Skip %s: mimeType %s not configured for transcription", content_id, mime_type)
+        logger.info("Skip: mimeType not configured for transcription", extra=extra)
         return None
+    logger.info("mimeType eligible for transcription", extra=extra)
 
     # knowlg's enrichment/read raises a client error (ERR_NO_ENRICHMENT_FOUND)
     # rather than returning an empty body when the content has no Enrichment
     # node yet (creator never called object/create) — treated the same as
     # any other skip: safe to replay once the content does have one.
+    logger.info("Reading Enrichment node", extra=extra)
     try:
         response = knowlg.get("enrichment_read", identifier=content_id)
     except requests.exceptions.RequestException:
-        logger.info("Skip %s: no Enrichment node found", content_id)
+        logger.info("Skip: no Enrichment node found", extra=extra)
         return None
     enrichment = response.get("result", {}).get("enrichment")
     if enrichment is None:
-        logger.info("Skip %s: no Enrichment node found", content_id)
+        logger.info("Skip: no Enrichment node found", extra=extra)
         return None
 
     enrichment_id = enrichment["identifier"]
+    extra["enrichment_id"] = enrichment_id
+    logger.info("Found Enrichment node", extra=extra)
     transcripts = enrichment.get("transcripts", [])
     source_transcript = next((t for t in transcripts if t.get("sourceLanguage") is True), None)
     if source_transcript is None:
-        logger.info(
-            "Skip %s: no source-language Transcript node under Enrichment %s", content_id, enrichment_id
-        )
+        logger.info("Skip: no source-language Transcript node under Enrichment", extra=extra)
         return None
 
     if source_transcript.get("status") in _ACTIVE_STATUSES:
-        logger.info(
-            "Skip %s: source Transcript already %s", content_id, source_transcript.get("status")
-        )
+        logger.info("Skip: source Transcript already active", extra={**extra, "status": source_transcript.get("status")})
         return None
+    logger.info("Source Transcript not active", extra=extra)
 
     if source_transcript.get("captionsUrl"):
-        logger.info("Skip %s: source Transcript already has captionsUrl (manual upload)", content_id)
+        logger.info("Skip: source Transcript already has captionsUrl (manual upload)", extra=extra)
         return None
+    logger.info("No manual captionsUrl present", extra=extra)
 
+    logger.info(
+        "Dispatching transcription request",
+        extra={**extra, "transcript_id": source_transcript["identifier"]},
+    )
     return MediaTranscriptionRequest(
         contentId=content_id,
         enrichmentId=enrichment_id,

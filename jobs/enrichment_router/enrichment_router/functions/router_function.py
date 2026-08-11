@@ -35,14 +35,22 @@ class RouterFunction(BaseProcessFunction):
         """
         assert self.logger is not None, "open() must be called before process_element()"
         event = EnrichedMetadataEvent.from_json(value)
+        extra = {"event_id": event.id, "content_type": event.contentType, "action": event.action}
+        self.logger.info("Routing event", extra=extra)
 
         try:
+            routed = False
             if event.contentType == "Content":
-                yield from self._handle_content_published(event)
+                for out in self._handle_content_published(event):
+                    routed = True
+                    yield out
             elif event.contentType == "Transcript" and event.action == "approved":
-                yield from self._handle_transcript_approved(event)
-        except Exception as error:
-            self.logger.exception("Failed routing event %s: %s", event.id, error)
+                for out in self._handle_transcript_approved(event):
+                    routed = True
+                    yield out
+            self.logger.info("Routed event" if routed else "Ignored event", extra={**extra, "routed": routed})
+        except Exception:
+            self.logger.exception("Failed routing event", extra=extra)
 
     def _handle_content_published(self, event: EnrichedMetadataEvent):
         """Dispatches a content-published event to transcription, if eligible.

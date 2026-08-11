@@ -3,7 +3,9 @@ Transcript nodes, downloads the source transcript, translates it per
 target language in parallel, and updates each Transcript node.
 """
 
+import logging
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pyflink.common.typeinfo import Types
@@ -22,7 +24,7 @@ MULTILINGUAL_DLQ_TAG = OutputTag("multilingual-dlq", Types.STRING())
 
 
 def resolve_target_transcript_ids(
-    knowlg: KnowlgClient, content_id: str, target_languages: list[str]
+    knowlg: KnowlgClient, content_id: str, target_languages: list[str], logger: logging.Logger
 ) -> dict[str, str]:
     """Maps each requested target language to its existing Transcript node id.
 
@@ -37,11 +39,14 @@ def resolve_target_transcript_ids(
         only languages from target_languages that already have a
         non-source-language Transcript node.
     """
+    logger.info("Reading Enrichment state", extra={"content_id": content_id})
     response = knowlg.get("enrichment_read", identifier=content_id)
     enrichment = response.get("result", {}).get("enrichment", {})
     transcripts = enrichment.get("transcripts", [])
     by_language = {t["languageCode"]: t["identifier"] for t in transcripts if not t.get("sourceLanguage")}
-    return {lang: by_language[lang] for lang in target_languages if lang in by_language}
+    resolved = {lang: by_language[lang] for lang in target_languages if lang in by_language}
+    logger.info("Resolved target Transcript ids", extra={"content_id": content_id, "resolved_languages": list(resolved.keys())})
+    return resolved
 
 
 def translate_one_language(
@@ -56,6 +61,7 @@ def translate_one_language(
     batch_size: int,
     overlap: int,
     auto_approve: bool,
+    logger: logging.Logger,
 ) -> None:
     """Runs M3-M4 (chunk, translate, upload) for a single target language.
 
@@ -75,26 +81,40 @@ def translate_one_language(
         overlap: Trailing segments repeated across batch boundaries.
         auto_approve: Whether to mark the Transcript node Live (True) or
             Review (False) on completion.
+        logger: Logger for step-by-step progress, tagged with content id and
+            target language.
 
     Raises:
         Exception: Propagates any error from translation, upload, or the
             knowlg update, after marking the Transcript node Failed.
     """
+    extra = {"content_id": content_id, "transcript_id": transcript_id, "target_lang": target_lang}
+    started_at = time.perf_counter()
+    logger.info("Translation started", extra=extra)
     try:
         batches = chunk_segments(source_segments, batch_size, overlap)  # M3
-        translated_batches = [
-            provider.translate(batch, source_lang, target_lang) for batch in batches  # M4
-        ]
+        logger.info("Chunked segments", extra={**extra, "batch_count": len(batches)})
+
+        translated_batches = []
+        for i, batch in enumerate(batches):  # M4
+            logger.info("Translating batch", extra={**extra, "batch_index": i, "batch_count": len(batches)})
+            translated_batches.append(provider.translate(batch, source_lang, target_lang))
+            logger.info("Translated batch", extra={**extra, "batch_index": i, "batch_count": len(batches)})
         merged = merge_translated_batches(translated_batches)
+        logger.info("Merged translated batches", extra=extra)
 
         transcript_json = build_transcript_json(merged)
         vtt = build_vtt(merged)
+        logger.info("Built transcript JSON and VTT", extra=extra)
 
         json_key = f"content/{content_id}/transcripts/{target_lang}/transcript.json"
         vtt_key = f"content/{content_id}/transcripts/{target_lang}/captions.vtt"
+        logger.info("Uploading transcript and captions", extra=extra)
         storage.upload_bytes(transcript_json.encode("utf-8"), json_key)
         storage.upload_bytes(vtt.encode("utf-8"), vtt_key)
+        logger.info("Uploaded transcript and captions", extra=extra)
 
+        logger.info("Updating Transcript node", extra=extra)
         knowlg.patch(
             "object_update",
             {
@@ -107,7 +127,12 @@ def translate_one_language(
             identifier=content_id,
             objectIdentifier=transcript_id,
         )
+        logger.info(
+            "Translation completed",
+            extra={**extra, "duration_ms": round((time.perf_counter() - started_at) * 1000)},
+        )
     except Exception as error:
+        logger.info("Marking Transcript Failed", extra=extra)
         knowlg.patch(
             "object_update",
             {"objectType": "Transcript", "status": "Failed", "errorMessage": str(error)},
@@ -177,13 +202,21 @@ class MultilingualFunction(BaseProcessFunction):
 
         request = MediaMultilingualRequest.from_json(value)
         transcript_ids: dict[str, str] = {}
+        self.logger.info(
+            "Multilingual request started",
+            extra={"content_id": request.contentId, "target_languages": request.targetLanguages},
+        )
 
         try:
             # M1
             transcript_ids = resolve_target_transcript_ids(
-                self.knowlg, request.contentId, request.targetLanguages
+                self.knowlg, request.contentId, request.targetLanguages, self.logger
             )
             for transcript_id in transcript_ids.values():
+                self.logger.info(
+                    "Marking Transcript Processing",
+                    extra={"content_id": request.contentId, "transcript_id": transcript_id},
+                )
                 self.knowlg.patch(
                     "object_update",
                     {"objectType": "Transcript", "status": "Processing"},
@@ -192,14 +225,20 @@ class MultilingualFunction(BaseProcessFunction):
                 )
 
             # M2
+            self.logger.info("Downloading source transcript", extra={"content_id": request.contentId})
             tmp_path = tempfile.mktemp(suffix=".json")
             self.storage.download_from_uri(request.sourceTranscriptUrl, tmp_path)
+            self.logger.info("Downloaded source transcript", extra={"content_id": request.contentId})
             with open(tmp_path, "r") as f:
                 source_segments = parse_transcript_json(f.read())
+            self.logger.info(
+                "Parsed source transcript",
+                extra={"content_id": request.contentId, "segment_count": len(source_segments)},
+            )
         except Exception as error:
             # An uncaught exception here fails the whole Flink job and the
             # poisoned message crash-loops it forever; route to DLQ instead.
-            self.logger.exception("Multilingual M1/M2 failed for %s: %s", request.contentId, error)
+            self.logger.exception("Multilingual M1/M2 failed", extra={"content_id": request.contentId})
             for transcript_id in transcript_ids.values():
                 self.knowlg.patch(
                     "object_update",
@@ -229,6 +268,7 @@ class MultilingualFunction(BaseProcessFunction):
                     self._batch_size,
                     self._overlap,
                     self._auto_approve,
+                    self.logger,
                 ): target_lang
                 for target_lang, transcript_id in transcript_ids.items()
             }
@@ -238,9 +278,15 @@ class MultilingualFunction(BaseProcessFunction):
                     future.result()
                 except Exception as error:
                     self.logger.exception(
-                        "Multilingual translation failed for %s/%s", request.contentId, target_lang
+                        "Multilingual translation failed",
+                        extra={"content_id": request.contentId, "target_lang": target_lang},
                     )
                     yield from self.emit_to_dlq(request, error, ctx, MULTILINGUAL_DLQ_TAG)
+
+        self.logger.info(
+            "Multilingual request completed",
+            extra={"content_id": request.contentId, "target_languages": list(transcript_ids.keys())},
+        )
 
         # Enrichment.transcripts re-sync and ECAR rebuild are now handled
         # server-side by knowlg's object/update itself whenever a Transcript
