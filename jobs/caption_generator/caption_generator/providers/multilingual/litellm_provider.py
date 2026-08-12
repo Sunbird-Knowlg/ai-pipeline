@@ -8,6 +8,12 @@ from caption_generator.segment import Segment
 
 logger = logging.getLogger(__name__)
 
+# reasoning_effort below is only a valid param for reasoning models (verified:
+# azure/gpt-5-mini supports it, azure/gpt-4o-mini does not) - litellm raises
+# UnsupportedParamsError for it otherwise, not a silent no-op. This makes any
+# future non-reasoning model swap fail safe (param dropped) instead of erroring.
+litellm.drop_params = True
+
 _SYSTEM_PROMPT = (
     "You translate video caption segments from {source_lang} to {target_lang}. "
     "You are given a JSON array of segments, each with an id and text. "
@@ -44,7 +50,10 @@ class LiteLLMProvider(MultilingualProvider):
                 max_tokens) since reasoning models like gpt-5-mini spend part
                 of this budget on hidden reasoning tokens before the visible
                 JSON reply — too low a value truncates the reply mid-string,
-                which fails json.loads below.
+                which fails json.loads below. Reasoning effort is separately
+                capped via reasoning_effort below — without that, reasoning
+                can consume the ENTIRE budget and return an empty string
+                instead of a truncated one, also failing json.loads.
         """
         self._model = model
         self._api_key = api_key
@@ -86,6 +95,11 @@ class LiteLLMProvider(MultilingualProvider):
                 api_base=self._api_base or None,
                 api_version=self._api_version or None,
                 max_completion_tokens=self._max_completion_tokens,
+                # A straight translation task needs no deep reasoning —
+                # capping this keeps hidden reasoning tokens from eating the
+                # whole max_completion_tokens budget and leaving nothing for
+                # the actual reply.
+                reasoning_effort="minimal",
                 messages=[
                     {
                         "role": "system",
