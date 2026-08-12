@@ -155,6 +155,7 @@ class MultilingualFunction(BaseProcessFunction):
         self._batch_size = None
         self._overlap = None
         self._auto_approve = None
+        self._max_concurrency = None
 
     def open(self, runtime_context) -> None:
         """Builds the configured multilingual provider and batching settings
@@ -172,8 +173,10 @@ class MultilingualFunction(BaseProcessFunction):
             api_key=self._config.raw("multilingual.api_key"),
             api_base=self._config.raw("multilingual.api_base", ""),
             api_version=self._config.raw("multilingual.api_version", ""),
+            max_completion_tokens=int(self._config.raw("multilingual.max_completion_tokens", 4000)),
         )
-        self._batch_size = int(self._config.raw("multilingual.batch_size", 80))
+        self._batch_size = int(self._config.raw("multilingual.batch_size", 20))
+        self._max_concurrency = int(self._config.raw("multilingual.max_concurrency", 2))
         self._overlap = int(self._config.raw("multilingual.context_overlap", 2))
         self._auto_approve = bool(self._config.raw("multilingual.auto_approve", True))
 
@@ -253,7 +256,10 @@ class MultilingualFunction(BaseProcessFunction):
         # `requests`), so sharing it across worker threads here needs no
         # per-thread connection handling, unlike the JanusGraph websocket
         # this used to share.
-        with ThreadPoolExecutor(max_workers=len(transcript_ids) or 1) as executor:
+        # Capped well below the LLM deployment's request-per-minute quota —
+        # translating every target language fully in parallel (one worker
+        # per language) can burst past it and trigger 429s.
+        with ThreadPoolExecutor(max_workers=min(len(transcript_ids) or 1, self._max_concurrency)) as executor:
             futures = {
                 executor.submit(
                     translate_one_language,

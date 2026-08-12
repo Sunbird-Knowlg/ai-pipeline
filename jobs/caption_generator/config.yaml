@@ -53,7 +53,14 @@ multilingual:
   provider: litellm
   model: ${LLM_MODEL}
   api_key: ${LLM_API_KEY}
-  batch_size: 80
+  # Reasoning models (e.g. gpt-5-mini) spend part of this budget on hidden
+  # reasoning tokens before the visible reply - too low truncates the
+  # translated JSON mid-string. batch_size/max_concurrency both sized down
+  # to stay under a tight LLM deployment quota (seen live: 15 req/min,
+  # 40k tokens/min) — fewer segments per call, fewer calls in flight.
+  max_completion_tokens: 4000
+  batch_size: 20
+  max_concurrency: 2
   context_overlap: 2
   auto_approve: true
   # ECAR rebuild readiness (source Live + all languages settled) is now

@@ -22,7 +22,14 @@ class LiteLLMProvider(MultilingualProvider):
     exactly — only text is sent to and replaced from the model.
     """
 
-    def __init__(self, model: str, api_key: str, api_base: str = "", api_version: str = ""):
+    def __init__(
+        self,
+        model: str,
+        api_key: str,
+        api_base: str = "",
+        api_version: str = "",
+        max_completion_tokens: int = 4000,
+    ):
         """Initializes the provider with LiteLLM connection settings.
 
         Args:
@@ -33,11 +40,17 @@ class LiteLLMProvider(MultilingualProvider):
                 the Azure resource from the API key alone. Ignored by
                 litellm for plain (non-"azure/"-prefixed) models.
             api_version: Required alongside api_base for Azure-routed models.
+            max_completion_tokens: Passed as max_completion_tokens (not
+                max_tokens) since reasoning models like gpt-5-mini spend part
+                of this budget on hidden reasoning tokens before the visible
+                JSON reply — too low a value truncates the reply mid-string,
+                which fails json.loads below.
         """
         self._model = model
         self._api_key = api_key
         self._api_base = api_base
         self._api_version = api_version
+        self._max_completion_tokens = max_completion_tokens
 
     def translate(self, segments: list[Segment], source_lang: str, target_lang: str) -> list[Segment]:
         """Translates one batch of segments via a single LiteLLM completion call.
@@ -72,6 +85,7 @@ class LiteLLMProvider(MultilingualProvider):
                 api_key=self._api_key,
                 api_base=self._api_base or None,
                 api_version=self._api_version or None,
+                max_completion_tokens=self._max_completion_tokens,
                 messages=[
                     {
                         "role": "system",
