@@ -13,7 +13,7 @@ def _patch_calls(mock_knowlg):
 
 
 def test_pipeline_success_marks_review_by_default(
-    mock_knowlg, mock_storage, mock_transcription_provider, transcription_request
+    mock_knowlg, mock_storage, mock_transcription_provider, transcription_request, mock_logger
 ):
     with patch("caption_generator.functions.transcription_function.extract_audio"):
         run_transcription_pipeline(
@@ -23,6 +23,7 @@ def test_pipeline_success_marks_review_by_default(
             mock_transcription_provider,
             generated_by="faster-whisper:large-v3-turbo",
             auto_approve=False,
+            logger=mock_logger,
         )
 
     mock_transcription_provider.transcribe.assert_called_once()
@@ -42,7 +43,7 @@ def test_pipeline_success_marks_review_by_default(
 
 
 def test_pipeline_marks_live_when_auto_approve(
-    mock_knowlg, mock_storage, mock_transcription_provider, transcription_request
+    mock_knowlg, mock_storage, mock_transcription_provider, transcription_request, mock_logger
 ):
     with patch("caption_generator.functions.transcription_function.extract_audio"):
         run_transcription_pipeline(
@@ -52,6 +53,7 @@ def test_pipeline_marks_live_when_auto_approve(
             mock_transcription_provider,
             generated_by="faster-whisper:large-v3-turbo",
             auto_approve=True,
+            logger=mock_logger,
         )
 
     final_props = mock_knowlg.patch.call_args_list[-1].args[1]
@@ -59,7 +61,7 @@ def test_pipeline_marks_live_when_auto_approve(
 
 
 def test_pipeline_uses_language_code_in_object_keys(
-    mock_knowlg, mock_storage, mock_transcription_provider, transcription_request
+    mock_knowlg, mock_storage, mock_transcription_provider, transcription_request, mock_logger
 ):
     with patch("caption_generator.functions.transcription_function.extract_audio"):
         run_transcription_pipeline(
@@ -69,6 +71,7 @@ def test_pipeline_uses_language_code_in_object_keys(
             mock_transcription_provider,
             generated_by="faster-whisper:large-v3-turbo",
             auto_approve=False,
+            logger=mock_logger,
         )
 
     upload_keys = [call.args[1] for call in mock_storage.upload_bytes.call_args_list]
@@ -77,7 +80,7 @@ def test_pipeline_uses_language_code_in_object_keys(
 
 
 def test_pipeline_returns_detected_language_code(
-    mock_knowlg, mock_storage, mock_transcription_provider, transcription_request
+    mock_knowlg, mock_storage, mock_transcription_provider, transcription_request, mock_logger
 ):
     with patch("caption_generator.functions.transcription_function.extract_audio"):
         language_code = run_transcription_pipeline(
@@ -87,13 +90,14 @@ def test_pipeline_returns_detected_language_code(
             mock_transcription_provider,
             generated_by="faster-whisper:large-v3-turbo",
             auto_approve=False,
+            logger=mock_logger,
         )
 
     assert language_code == "en"
 
 
 def test_pipeline_sets_language_display_name(
-    mock_knowlg, mock_storage, mock_transcription_provider, transcription_request
+    mock_knowlg, mock_storage, mock_transcription_provider, transcription_request, mock_logger
 ):
     with patch("caption_generator.functions.transcription_function.extract_audio"):
         run_transcription_pipeline(
@@ -103,6 +107,7 @@ def test_pipeline_sets_language_display_name(
             mock_transcription_provider,
             generated_by="faster-whisper:large-v3-turbo",
             auto_approve=False,
+            logger=mock_logger,
         )
 
     final_props = mock_knowlg.patch.call_args_list[-1].args[1]

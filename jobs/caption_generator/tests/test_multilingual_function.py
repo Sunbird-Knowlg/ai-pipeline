@@ -8,7 +8,7 @@ from caption_generator.functions.multilingual_function import (
 )
 
 
-def test_resolve_target_transcript_ids_excludes_source_language(mock_knowlg):
+def test_resolve_target_transcript_ids_excludes_source_language(mock_knowlg, mock_logger):
     mock_knowlg.get.return_value = {
         "result": {
             "enrichment": {
@@ -22,13 +22,13 @@ def test_resolve_target_transcript_ids_excludes_source_language(mock_knowlg):
         }
     }
 
-    result = resolve_target_transcript_ids(mock_knowlg, "do_123", ["hi", "ta", "fr"])
+    result = resolve_target_transcript_ids(mock_knowlg, "do_123", ["hi", "ta", "fr"], mock_logger)
 
     assert result == {"hi": "do_t_hi", "ta": "do_t_ta"}
     mock_knowlg.get.assert_called_once_with("enrichment_read", identifier="do_123")
 
 
-def test_translate_one_language_success(mock_knowlg, mock_storage, sample_segments):
+def test_translate_one_language_success(mock_knowlg, mock_storage, sample_segments, mock_logger):
     provider = Mock()
     provider.translate.side_effect = lambda segments, src, tgt: segments
 
@@ -44,6 +44,7 @@ def test_translate_one_language_success(mock_knowlg, mock_storage, sample_segmen
         batch_size=80,
         overlap=2,
         auto_approve=False,
+        logger=mock_logger,
     )
 
     assert mock_storage.upload_bytes.call_count == 2
@@ -55,7 +56,7 @@ def test_translate_one_language_success(mock_knowlg, mock_storage, sample_segmen
     assert final_call.kwargs == {"identifier": "do_123", "objectIdentifier": "do_t_hi"}
 
 
-def test_translate_one_language_marks_failed_on_error(mock_knowlg, mock_storage, sample_segments):
+def test_translate_one_language_marks_failed_on_error(mock_knowlg, mock_storage, sample_segments, mock_logger):
     provider = Mock()
     provider.translate.side_effect = RuntimeError("LLM timeout")
 
@@ -72,6 +73,7 @@ def test_translate_one_language_marks_failed_on_error(mock_knowlg, mock_storage,
             batch_size=80,
             overlap=2,
             auto_approve=False,
+            logger=mock_logger,
         )
 
     mock_knowlg.patch.assert_called_once_with(

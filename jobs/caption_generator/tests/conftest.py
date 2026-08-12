@@ -11,6 +11,11 @@ def mock_knowlg():
 
 
 @pytest.fixture
+def mock_logger():
+    return Mock()
+
+
+@pytest.fixture
 def mock_storage():
     storage = Mock()
     storage.get_uri.side_effect = lambda key: f"az://test-container/{key}"

@@ -79,7 +79,6 @@ ai-pipeline/
 │   └── caption_generator/       # transcription + multilingual translation job
 │       └── scripts/transcribe_local.py   # standalone dev utility, no Flink/Kafka/JanusGraph needed
 ├── docker/                     # Dockerfiles for both jobs + docker-compose.yml for local dev
-├── deploy/                     # Helm chart values (Chart.yaml/values.yaml) per job — see Packaging & Deployment
 ├── Makefile                    # install/test/lint/package/submit targets
 └── pyproject.toml              # root-level: pytest + ruff config only, no real package here
 ```
@@ -166,7 +165,7 @@ make submit-capgen     # flink run -py .../main.py -pyfs artifacts/caption-gener
 
 `docker/Dockerfile.enrichment-router` and `docker/Dockerfile.caption-generator` build container images on top of the official `flink` image, installing Python 3.11 and both packages (`caption-generator`'s image additionally installs `ffmpeg`).
 
-`deploy/<job>/Chart.yaml` + `values.yaml` hold Helm chart **values** for each job (Kafka topics, JanusGraph host, cloud storage settings, resource requests/limits) — the real, deployable Helm charts live in the separate `sunbird-spark-installer` repository; the skeletons here just document the configuration surface each job expects at deploy time.
+The real, deployable Helm charts live in the separate `sunbird-spark-installer` repository, under `helmcharts/knowledgebb/charts/py-flink/values.yaml` — that file's `py_flink_jobs.<job>.config` block is what's actually rendered into each job's ConfigMap in the cluster. `jobs/<job>/config.yaml` in this repo is the local-dev counterpart, kept deliberately in sync with only the config keys that job's code actually reads (see the comments on each `knowlg.apis`/`cloud_storage_*`/etc. block for which keys are load-bearing vs. unused) — when adding or removing a config key here, mirror the same change in that chart's `values.yaml`.
 
 ## Contributing
 

@@ -6,17 +6,25 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# Every job that patches an Enrichment child object (Transcript today) hits
+# this same path - not deployment-specific, so it's fixed here instead of
+# duplicated across every job's config.yaml/values.yaml.
+_HARDCODED_APIS = {
+    "object_update": "/content/v4/enrichment/object/update/{identifier}/{objectIdentifier}",
+}
+
 
 class KnowlgClient:
     """Config-driven HTTP client for communicating with the Knowlg platform.
 
-    This client decouples application code from hardcoded endpoint paths by 
+    This client decouples application code from hardcoded endpoint paths by
     resolving URLs dynamically from a routing configuration dictionary.
 
     Attributes:
         _base_url (str): The normalized target base URL of the Knowlg Content Service.
         _api_key (str): Optional bearer authorization token for secure gateways.
-        _apis (dict[str, str]): Routing table mapping API keys to path templates.
+        _apis (dict[str, str]): Routing table mapping API keys to path templates,
+            merged with `_HARDCODED_APIS` (which always wins on key collision).
     """
 
     def __init__(self, content_service_url: str, apis: dict[str, str], api_key: str = ""):
@@ -29,7 +37,7 @@ class KnowlgClient:
         """
         self._base_url = content_service_url.rstrip("/")
         self._api_key = api_key
-        self._apis = apis
+        self._apis = {**apis, **_HARDCODED_APIS}
 
     def _headers(self) -> dict[str, str]:
         """Constructs standard request headers, appending authorization if available.

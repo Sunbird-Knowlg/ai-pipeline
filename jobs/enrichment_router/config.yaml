@@ -13,26 +13,17 @@ kafka:
 
 knowlg:
   # No api_key — internal calls to the knowlg platform require no auth.
+  # object_update is hardcoded in KnowlgClient (shared by every job), not
+  # listed here. Only object_create and enrichment_read are actually called
+  # by this job — content_read/object_approve/object_reject are unused here.
   content_service_url: ${CONTENT_SERVICE_URL}
   apis:
     object_create: /content/v4/enrichment/object/create/{identifier}
-    object_update: /content/v4/enrichment/object/update/{identifier}/{objectIdentifier}
-    object_approve: /content/v4/enrichment/object/approve/{identifier}/{objectIdentifier}
-    object_reject: /content/v4/enrichment/object/reject/{identifier}/{objectIdentifier}
     enrichment_read: /content/v4/enrichment/read/{identifier}
-    content_read: /content/v4/read/{identifier}
-
-cloud_storage_type: azure
-cloud_storage_auth_type: OIDC
-cloud_storage_container: ${STORAGE_CONTAINER}
 
 enrichment:
   transcript:
-    enabled: true
     mime_types:
       - video/mp4
       - video/webm
     languages: []
-    auto_approve:
-      source: false
-      multilingual: true
