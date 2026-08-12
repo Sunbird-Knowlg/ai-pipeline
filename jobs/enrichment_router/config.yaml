@@ -21,6 +21,19 @@ knowlg:
     object_create: /content/v4/enrichment/object/create/{identifier}
     enrichment_read: /content/v4/enrichment/read/{identifier}
 
+# BaseProcessFunction.open() always builds a BlobStorageUtil regardless of
+# whether the job calls it. cloud_storage_type/auth_type/container are
+# get_required in BaseJobConfig; cloud_storage_auth.account_name is also
+# required eagerly for OIDC/IAM (_build_storage_options in blob_util.py) -
+# none of these three lines are actually optional despite this job never
+# touching self.storage afterward. Only cloud_storage_public_endpoint is
+# genuinely safe to omit (lazy, guarded default "").
+cloud_storage_type: azure
+cloud_storage_auth_type: OIDC
+cloud_storage_container: ${STORAGE_CONTAINER}
+cloud_storage_auth:
+  account_name: ${STORAGE_ACCOUNT_NAME}
+
 enrichment:
   transcript:
     mime_types:
