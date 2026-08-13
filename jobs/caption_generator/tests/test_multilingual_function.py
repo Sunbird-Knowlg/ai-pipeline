@@ -30,7 +30,7 @@ def test_resolve_target_transcript_ids_excludes_source_language(mock_knowlg, moc
 
 def test_translate_one_language_success(mock_knowlg, mock_storage, sample_segments, mock_logger):
     provider = Mock()
-    provider.translate.side_effect = lambda segments, src, tgt: segments
+    provider.translate.side_effect = lambda segments, src, tgt: (segments, False)
 
     translate_one_language(
         content_id="do_123",
@@ -54,6 +54,35 @@ def test_translate_one_language_success(mock_knowlg, mock_storage, sample_segmen
     assert final_props["status"] == "Review"
     assert final_props["generatedBy"] == "litellm"
     assert final_call.kwargs == {"identifier": "do_123", "objectIdentifier": "do_t_hi"}
+
+
+def test_translate_one_language_forces_review_on_partial_fallback(
+    mock_knowlg, mock_storage, sample_segments, mock_logger
+):
+    """auto_approve=True must NOT result in Live if any batch had a
+    fallback — a caption track partially in the wrong language going live
+    silently is worse than one flagged for Review.
+    """
+    provider = Mock()
+    provider.translate.side_effect = lambda segments, src, tgt: (segments, True)
+
+    translate_one_language(
+        content_id="do_123",
+        transcript_id="do_t_hi",
+        source_segments=sample_segments,
+        source_lang="en",
+        target_lang="hi",
+        knowlg=mock_knowlg,
+        storage=mock_storage,
+        provider=provider,
+        batch_size=80,
+        overlap=2,
+        auto_approve=True,
+        logger=mock_logger,
+    )
+
+    final_props = mock_knowlg.patch.call_args.args[1]
+    assert final_props["status"] == "Review"
 
 
 def test_translate_one_language_marks_failed_on_error(mock_knowlg, mock_storage, sample_segments, mock_logger):
