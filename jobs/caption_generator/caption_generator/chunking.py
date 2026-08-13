@@ -24,9 +24,20 @@ def chunk_segments(segments: list[Segment], batch_size: int, overlap: int) -> li
 
     Returns:
         A list of segment batches. Empty if segments is empty.
+
+    Raises:
+        ValueError: If overlap >= batch_size (or batch_size <= 0) — step
+            would be <= 0 and the loop below would never advance past the
+            first batch, appending forever for any transcript longer than
+            batch_size.
     """
     if not segments:
         return []
+
+    if batch_size <= 0 or overlap >= batch_size:
+        raise ValueError(
+            f"overlap ({overlap}) must be < batch_size ({batch_size}), and batch_size must be > 0"
+        )
 
     step = batch_size - overlap
     batches = []
