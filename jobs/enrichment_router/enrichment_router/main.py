@@ -3,6 +3,7 @@ import logging
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream.connectors.kafka import (
+    DeliveryGuarantee,
     KafkaOffsetResetStrategy,
     KafkaOffsetsInitializer,
     KafkaRecordSerializationSchema,
@@ -86,6 +87,14 @@ class EnrichmentRouterJob(BaseFlinkJob):
                 .set_value_serialization_schema(SimpleStringSchema())
                 .build()
             )
+            # Default is NONE - a JobManager restart mid-processing (or any
+            # at-least-once redelivery of the source event) could otherwise
+            # re-emit the same MediaTranscriptionRequest/MediaMultilingualRequest
+            # a second time before downstream state (Transcript status) has
+            # moved off Draft, since there's no other producer-side backstop.
+            # AT_LEAST_ONCE ties emission to Flink's own checkpoint boundary
+            # instead of firing on every raw processing attempt.
+            .set_delivery_guarantee(DeliveryGuarantee.AT_LEAST_ONCE)
             .build()
         )
 
