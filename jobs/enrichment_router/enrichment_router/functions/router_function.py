@@ -45,7 +45,12 @@ class RouterFunction(BaseProcessFunction):
             self.logger.info("Routing event", extra=extra)
 
             routed = False
-            if event.contentType == "Content" and event.action == "publish":
+            # action=="" covers the legacy flat-shape event (no "action" key
+            # at all - real producers haven't migrated to the envelope shape
+            # yet), which must still be treated as a publish trigger. Only
+            # an explicit non-publish action (from an envelope-shape event's
+            # edata.action, e.g. "retire"/"update") should be excluded.
+            if event.contentType == "Content" and event.action in ("", "publish"):
                 for out in self._handle_content_published(event):
                     routed = True
                     yield out

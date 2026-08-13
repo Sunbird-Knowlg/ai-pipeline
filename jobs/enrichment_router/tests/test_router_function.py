@@ -36,6 +36,25 @@ def test_content_event_ignored_when_action_is_not_publish(mock_knowlg):
     mock_knowlg.get.assert_not_called()
 
 
+def test_content_event_evaluated_when_action_is_missing(mock_knowlg):
+    """Legacy flat-shape producers (real ones on the actual topic) never send
+    an "action" key at all - EnrichedMetadataEvent.from_json defaults it to
+    "". This must still be treated as a publish trigger, not ignored.
+    """
+    func = _func(knowlg=mock_knowlg, config=Mock(env="dev", raw=lambda key, default=None: ["video/mp4"]))
+    mock_knowlg.get.return_value = {"result": {"enrichment": None}}
+    event = {
+        "id": "do_123",
+        "contentType": "Content",
+        "data": {"mimeType": "video/mp4"},
+    }
+
+    results = list(func.process_element(json.dumps(event), ctx=MagicMock()))
+
+    mock_knowlg.get.assert_called_once()
+    assert results == []
+
+
 def test_content_event_evaluated_when_action_is_publish(mock_knowlg, content_published_event):
     func = _func(knowlg=mock_knowlg, config=Mock(env="dev", raw=lambda key, default=None: ["video/mp4"]))
     mock_knowlg.get.return_value = {"result": {"enrichment": None}}
