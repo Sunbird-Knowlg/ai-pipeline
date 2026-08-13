@@ -21,10 +21,11 @@ def test_translate_exact_match(mock_completion):
     mock_completion.return_value = _mock_response({"0": "Bonjour", "1": "Monde"})
     segments = [Segment(id=0, start=0.0, end=1.0, text="Hello"), Segment(id=1, start=1.0, end=2.0, text="World")]
 
-    result = _provider().translate(segments, "en", "fr")
+    result, had_fallback = _provider().translate(segments, "en", "fr")
 
     assert [s.text for s in result] == ["Bonjour", "Monde"]
     assert [s.id for s in result] == [0, 1]
+    assert had_fallback is False
 
 
 @patch("caption_generator.providers.multilingual.litellm_provider.litellm.completion")
@@ -32,10 +33,11 @@ def test_translate_falls_back_to_original_text_for_missing_ids(mock_completion):
     mock_completion.return_value = _mock_response({"0": "Bonjour"})
     segments = [Segment(id=0, start=0.0, end=1.0, text="Hello"), Segment(id=1, start=1.0, end=2.0, text="World")]
 
-    result = _provider().translate(segments, "en", "fr")
+    result, had_fallback = _provider().translate(segments, "en", "fr")
 
     assert result[0].text == "Bonjour"
     assert result[1].text == "World"  # untranslated fallback, not dropped/raised
+    assert had_fallback is True
 
 
 @patch("caption_generator.providers.multilingual.litellm_provider.litellm.completion")
@@ -43,15 +45,25 @@ def test_translate_ignores_extra_ids(mock_completion):
     mock_completion.return_value = _mock_response({"0": "Bonjour", "99": "phantom"})
     segments = [Segment(id=0, start=0.0, end=1.0, text="Hello")]
 
-    result = _provider().translate(segments, "en", "fr")
+    result, had_fallback = _provider().translate(segments, "en", "fr")
 
     assert len(result) == 1
     assert result[0].text == "Bonjour"
+    assert had_fallback is False
 
 
 @patch("caption_generator.providers.multilingual.litellm_provider.litellm.completion")
-def test_translate_raises_when_response_completely_unusable(mock_completion):
+def test_translate_raises_when_response_has_no_overlap(mock_completion):
     mock_completion.return_value = _mock_response({})
+    segments = [Segment(id=0, start=0.0, end=1.0, text="Hello")]
+
+    with pytest.raises(ValueError):
+        _provider().translate(segments, "en", "fr")
+
+
+@patch("caption_generator.providers.multilingual.litellm_provider.litellm.completion")
+def test_translate_raises_when_ids_dont_overlap_at_all(mock_completion):
+    mock_completion.return_value = _mock_response({"99": "phantom"})
     segments = [Segment(id=0, start=0.0, end=1.0, text="Hello")]
 
     with pytest.raises(ValueError):
