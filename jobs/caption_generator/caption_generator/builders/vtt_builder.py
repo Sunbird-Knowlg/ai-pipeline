@@ -12,17 +12,22 @@ logger = logging.getLogger(__name__)
 
 
 def _format_timestamp(seconds: float) -> str:
-    """Formats seconds as a WebVTT `HH:MM:SS.mmm` timestamp, rounding
-    millisecond overflow (e.g. 999.6ms) up into the next whole second.
+    """Formats seconds as a WebVTT `HH:MM:SS.mmm` timestamp.
+
+    Rounds to the nearest millisecond first, then derives hours/minutes/
+    seconds/millis from that single integer via successive divmod — this is
+    what makes the carry correct at every boundary. Patching a
+    seconds-rounds-up-to-60 case by hand (the previous approach) only
+    bumped whole_secs, not minutes/hours, so a segment landing within
+    ~0.5ms of a minute/hour rollover produced invalid values like
+    "00:00:60.000" or "00:59:60.000".
     """
-    hours, remainder = divmod(seconds, 3600)
-    minutes, secs = divmod(remainder, 60)
-    whole_secs = int(secs)
-    millis = round((secs - whole_secs) * 1000)
-    if millis == 1000:
-        millis = 0
-        whole_secs += 1
-    return f"{int(hours):02d}:{int(minutes):02d}:{whole_secs:02d}.{millis:03d}"
+    total_millis = round(seconds * 1000)
+    millis = total_millis % 1000
+    total_secs = total_millis // 1000
+    hours, remainder_secs = divmod(total_secs, 3600)
+    minutes, whole_secs = divmod(remainder_secs, 60)
+    return f"{hours:02d}:{minutes:02d}:{whole_secs:02d}.{millis:03d}"
 
 
 def build_vtt(segments: list[Segment]) -> str:
