@@ -16,10 +16,12 @@ litellm.drop_params = True
 
 _SYSTEM_PROMPT = (
     "You translate video caption segments from {source_lang} to {target_lang}. "
-    "You are given a JSON array of segments, each with an id and text. "
-    "Return ONLY a JSON array of the same length, same ids, in the same order, "
-    "with text translated to {target_lang}. Do not merge, split, or reorder segments. "
-    "Preserve tone and meaning; keep translations natural and concise."
+    "You are given a JSON object mapping segment id -> text. "
+    "Return ONLY a JSON object with the exact same keys, each value replaced by "
+    "its translation to {target_lang}. Never add, remove, or rename keys — one "
+    "translated value per input key, nothing else. Do not merge or split segments; "
+    "each key's translation must stand alone. Preserve tone and meaning; keep "
+    "translations natural and concise."
 )
 
 
@@ -79,10 +81,16 @@ class LiteLLMProvider(MultilingualProvider):
         Raises:
             Exception: If the underlying LiteLLM completion call fails.
             json.JSONDecodeError: If the model's response isn't valid JSON.
-            ValueError: If the translated segment ids don't match the input
-                segment ids.
+            ValueError: If the response has no usable translations at all
+                (every id missing) — a partial response (some ids missing)
+                falls back to the original text for those instead of failing
+                the whole batch.
         """
-        input_payload = [{"id": s.id, "text": s.text} for s in segments]
+        # Keyed by str(id) rather than an array of {id, text} objects — a
+        # dict survives the model reordering/dropping/adding entries far
+        # more gracefully than an array, where any length/order slip corrupts
+        # every subsequent item's id association.
+        input_payload = {str(s.id): s.text for s in segments}
         logger.info(
             "Translating segment batch",
             extra={"model": self._model, "source_lang": source_lang, "target_lang": target_lang, "segment_count": len(segments)},
@@ -100,6 +108,10 @@ class LiteLLMProvider(MultilingualProvider):
                 # whole max_completion_tokens budget and leaving nothing for
                 # the actual reply.
                 reasoning_effort="minimal",
+                # Forces a valid JSON object reply (no prose wrapper, no
+                # markdown fencing) instead of relying on the model to follow
+                # "return only JSON" in plain text.
+                response_format={"type": "json_object"},
                 messages=[
                     {
                         "role": "system",
@@ -117,17 +129,35 @@ class LiteLLMProvider(MultilingualProvider):
             )
             raise
 
-        translated = json.loads(response.choices[0].message.content)
-        translated_by_id = {item["id"]: item["text"] for item in translated}
+        translated_by_id = json.loads(response.choices[0].message.content)
 
-        if set(translated_by_id.keys()) != {s.id for s in segments}:
-            logger.error(
-                "Translated segment ids do not match input segment ids",
-                extra={"expected_ids": [s.id for s in segments], "received_ids": list(translated_by_id.keys())},
+        expected_ids = {str(s.id) for s in segments}
+        received_ids = set(translated_by_id.keys())
+        if not received_ids:
+            raise ValueError(f"Translation response had no usable ids (target_lang={target_lang})")
+
+        missing_ids = expected_ids - received_ids
+        extra_ids = received_ids - expected_ids
+        if missing_ids or extra_ids:
+            # Logged in the message text itself, not just extra= — extra
+            # fields have not been reliably showing up in this deployment's
+            # stdout, and this is exactly the detail needed to tell an
+            # occasional model slip from a systemic prompt/parsing bug.
+            logger.warning(
+                "Translated segment ids partially mismatched (target_lang=%s, missing=%s, extra=%s) "
+                "- falling back to original text for missing ids",
+                target_lang,
+                sorted(missing_ids),
+                sorted(extra_ids),
             )
-            raise ValueError("Translated segment ids do not match input segment ids")
 
         logger.debug("Translation batch complete", extra={"target_lang": target_lang, "segment_count": len(segments)})
         return [
-            Segment(id=s.id, start=s.start, end=s.end, text=translated_by_id[s.id]) for s in segments
+            Segment(
+                id=s.id,
+                start=s.start,
+                end=s.end,
+                text=translated_by_id.get(str(s.id), s.text),
+            )
+            for s in segments
         ]
