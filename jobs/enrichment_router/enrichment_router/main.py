@@ -13,6 +13,7 @@ from sunbird_ai_core.base.base_flink_job import BaseFlinkJob
 
 from enrichment_router.functions.router_function import (
     MULTILINGUAL_OUT_TAG,
+    ROUTER_DLQ_TAG,
     TRANSCRIPTION_OUT_TAG,
     RouterFunction,
 )
@@ -56,12 +57,15 @@ class EnrichmentRouterJob(BaseFlinkJob):
 
         transcription_stream = routed.get_side_output(TRANSCRIPTION_OUT_TAG)
         multilingual_stream = routed.get_side_output(MULTILINGUAL_OUT_TAG)
+        dlq_stream = routed.get_side_output(ROUTER_DLQ_TAG)
 
         transcription_sink = self._build_sink(self.config.kafka_topic("transcription_out"))
         multilingual_sink = self._build_sink(self.config.kafka_topic("multilingual_out"))
+        dlq_sink = self._build_sink(self.config.kafka_topic("router_dlq"))
 
         transcription_stream.sink_to(transcription_sink)
         multilingual_stream.sink_to(multilingual_sink)
+        dlq_stream.sink_to(dlq_sink)
 
     def _build_sink(self, topic: str) -> KafkaSink:
         """Builds a KafkaSink that writes plain string values to `topic`.
