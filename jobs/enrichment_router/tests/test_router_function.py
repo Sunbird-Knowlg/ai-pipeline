@@ -1,7 +1,7 @@
 import json
 from unittest.mock import MagicMock, Mock
 
-from enrichment_router.functions.router_function import ROUTER_DLQ_TAG, RouterFunction
+from enrichment_router.functions.router_function import RouterFunction
 
 
 def _func(knowlg=None, config=None):
@@ -12,15 +12,13 @@ def _func(knowlg=None, config=None):
     return func
 
 
-def test_malformed_value_routes_to_dlq_instead_of_raising():
+def test_malformed_value_logs_and_drops_instead_of_raising():
     func = _func()
 
     results = list(func.process_element("not json", ctx=MagicMock()))
 
-    assert len(results) == 1
-    tag, payload = results[0]
-    assert tag is ROUTER_DLQ_TAG
-    assert "not json" in payload
+    assert results == []
+    func.logger.exception.assert_called_once()
 
 
 def test_content_event_ignored_when_action_is_not_publish(mock_knowlg):

@@ -8,7 +8,6 @@ from enrichment_router.functions.transcript_approved import handle_transcript_ap
 
 TRANSCRIPTION_OUT_TAG = OutputTag("transcription-request", Types.STRING())
 MULTILINGUAL_OUT_TAG = OutputTag("multilingual-request", Types.STRING())
-ROUTER_DLQ_TAG = OutputTag("router-dlq", Types.STRING())
 
 
 class RouterFunction(BaseProcessFunction):
@@ -28,17 +27,16 @@ class RouterFunction(BaseProcessFunction):
 
         Args:
             value: The raw JSON string of the enriched.metadata event.
-            ctx: The PyFlink processing context, passed through to
-                emit_to_dlq on failure.
+            ctx: The PyFlink processing context (unused).
 
         Yields:
             tuple[OutputTag, str]: A (TRANSCRIPTION_OUT_TAG or
-            MULTILINGUAL_OUT_TAG, JSON payload) pair for the routed request,
-            or (ROUTER_DLQ_TAG, DLQ envelope JSON) on any failure — including
-            a malformed value that fails EnrichedMetadataEvent.from_json
-            itself, which previously propagated uncaught and crash-looped
-            the job (the triggering Kafka offset never commits, so the same
-            message replays forever on restart).
+            MULTILINGUAL_OUT_TAG, JSON payload) pair for the routed request.
+            Any failure, including a malformed value that fails
+            EnrichedMetadataEvent.from_json, is caught and logged rather
+            than propagated — an uncaught exception would otherwise never
+            commit the triggering Kafka offset, crash-looping the job on
+            the same malformed message forever.
         """
         assert self.logger is not None, "open() must be called before process_element()"
         try:
@@ -56,9 +54,8 @@ class RouterFunction(BaseProcessFunction):
                     routed = True
                     yield out
             self.logger.info("Routed event" if routed else "Ignored event", extra={**extra, "routed": routed})
-        except Exception as error:
+        except Exception:
             self.logger.exception("Failed routing event")
-            yield from self.emit_to_dlq(value, error, ctx, ROUTER_DLQ_TAG)
 
     def _handle_content_published(self, event: EnrichedMetadataEvent):
         """Dispatches a content-published event to transcription, if eligible.

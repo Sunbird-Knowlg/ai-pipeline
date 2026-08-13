@@ -10,9 +10,6 @@ kafka:
     input: ${ENV}.enriched.metadata
     transcription_out: ${ENV}.media.transcription.request
     multilingual_out: ${ENV}.media.multilingual.request
-    # Malformed events RouterFunction can't parse/route at all (bad JSON,
-    # EnrichedMetadataEvent.from_json failures).
-    router_dlq: ${ENV}.enriched.metadata.dlq
 
 knowlg:
   # No api_key — internal calls to the knowlg platform require no auth.
