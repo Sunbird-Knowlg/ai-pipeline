@@ -63,7 +63,9 @@ class LiteLLMProvider(MultilingualProvider):
         self._api_version = api_version
         self._max_completion_tokens = max_completion_tokens
 
-    def translate(self, segments: list[Segment], source_lang: str, target_lang: str) -> list[Segment]:
+    def translate(
+        self, segments: list[Segment], source_lang: str, target_lang: str
+    ) -> tuple[list[Segment], bool]:
         """Translates one batch of segments via a single LiteLLM completion call.
 
         Preserves id/start/end exactly — only text is sent to and replaced
@@ -75,16 +77,16 @@ class LiteLLMProvider(MultilingualProvider):
             target_lang: The target language code.
 
         Returns:
-            A new list of segments, same ids/timings/order as the input,
-            with text translated to target_lang.
+            A tuple of (segments, had_fallback) — see MultilingualProvider.translate.
 
         Raises:
             Exception: If the underlying LiteLLM completion call fails.
             json.JSONDecodeError: If the model's response isn't valid JSON.
-            ValueError: If the response has no usable translations at all
-                (every id missing) — a partial response (some ids missing)
-                falls back to the original text for those instead of failing
-                the whole batch.
+            ValueError: If the response has no overlap with the batch's ids
+                at all (nothing usable) — a response with SOME matching ids
+                falls back to the original text for the ones that don't
+                match, signaled via had_fallback rather than raising, since
+                that's real partial progress worth keeping.
         """
         # Keyed by str(id) rather than an array of {id, text} objects — a
         # dict survives the model reordering/dropping/adding entries far
@@ -133,11 +135,17 @@ class LiteLLMProvider(MultilingualProvider):
 
         expected_ids = {str(s.id) for s in segments}
         received_ids = set(translated_by_id.keys())
-        if not received_ids:
-            raise ValueError(f"Translation response had no usable ids (target_lang={target_lang})")
+        matched_ids = expected_ids & received_ids
+        if not matched_ids:
+            raise ValueError(
+                f"Translation response had no overlap with the batch's ids "
+                f"(target_lang={target_lang}, expected={sorted(expected_ids)}, "
+                f"received={sorted(received_ids)})"
+            )
 
         missing_ids = expected_ids - received_ids
         extra_ids = received_ids - expected_ids
+        had_fallback = bool(missing_ids)
         if missing_ids or extra_ids:
             # Logged in the message text itself, not just extra= — extra
             # fields have not been reliably showing up in this deployment's
@@ -152,7 +160,7 @@ class LiteLLMProvider(MultilingualProvider):
             )
 
         logger.debug("Translation batch complete", extra={"target_lang": target_lang, "segment_count": len(segments)})
-        return [
+        translated_segments = [
             Segment(
                 id=s.id,
                 start=s.start,
@@ -161,3 +169,4 @@ class LiteLLMProvider(MultilingualProvider):
             )
             for s in segments
         ]
+        return translated_segments, had_fallback
