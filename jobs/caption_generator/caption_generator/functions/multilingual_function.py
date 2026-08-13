@@ -4,6 +4,7 @@ target language in parallel, and updates each Transcript node.
 """
 
 import logging
+import os
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -96,9 +97,12 @@ def translate_one_language(
         logger.info("Chunked segments", extra={**extra, "batch_count": len(batches)})
 
         translated_batches = []
+        had_fallback = False
         for i, batch in enumerate(batches):  # M4
             logger.info("Translating batch", extra={**extra, "batch_index": i, "batch_count": len(batches)})
-            translated_batches.append(provider.translate(batch, source_lang, target_lang))
+            translated_batch, batch_had_fallback = provider.translate(batch, source_lang, target_lang)
+            translated_batches.append(translated_batch)
+            had_fallback = had_fallback or batch_had_fallback
             logger.info("Translated batch", extra={**extra, "batch_index": i, "batch_count": len(batches)})
         merged = merge_translated_batches(translated_batches)
         logger.info("Merged translated batches", extra=extra)
@@ -114,7 +118,14 @@ def translate_one_language(
         storage.upload_bytes(vtt.encode("utf-8"), vtt_key)
         logger.info("Uploaded transcript and captions", extra=extra)
 
-        logger.info("Updating Transcript node", extra=extra)
+        # Never auto-approve to Live if any batch fell back to untranslated
+        # source text for some segments — that would put a caption track
+        # live that's partially in the wrong language with no other signal
+        # it happened. Falls back to Review for a human to check instead.
+        if had_fallback:
+            logger.warning("Forcing Review instead of Live: translation had a partial fallback", extra=extra)
+        status = "Live" if (auto_approve and not had_fallback) else "Review"
+        logger.info("Updating Transcript node", extra={**extra, "status": status})
         knowlg.patch(
             "object_update",
             {
@@ -122,7 +133,7 @@ def translate_one_language(
                 "artifactUrl": storage.get_uri(json_key),
                 "captionsUrl": storage.get_uri(vtt_key),
                 "generatedBy": "litellm",
-                "status": "Live" if auto_approve else "Review",
+                "status": status,
             },
             identifier=content_id,
             objectIdentifier=transcript_id,
@@ -229,11 +240,15 @@ class MultilingualFunction(BaseProcessFunction):
 
             # M2
             self.logger.info("Downloading source transcript", extra={"content_id": request.contentId})
-            tmp_path = tempfile.mktemp(suffix=".json")
-            self.storage.download_from_uri(request.sourceTranscriptUrl, tmp_path)
-            self.logger.info("Downloaded source transcript", extra={"content_id": request.contentId})
-            with open(tmp_path, "r") as f:
-                source_segments = parse_transcript_json(f.read())
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".json")
+            os.close(tmp_fd)
+            try:
+                self.storage.download_from_uri(request.sourceTranscriptUrl, tmp_path)
+                self.logger.info("Downloaded source transcript", extra={"content_id": request.contentId})
+                with open(tmp_path, "r") as f:
+                    source_segments = parse_transcript_json(f.read())
+            finally:
+                os.remove(tmp_path)
             self.logger.info(
                 "Parsed source transcript",
                 extra={"content_id": request.contentId, "segment_count": len(source_segments)},
