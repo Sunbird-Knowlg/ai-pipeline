@@ -4,10 +4,10 @@
         submit-router submit-capgen
 
 install-core:
-	pip install -e "core/[dev]"
+	pip install -e "core/[dev,test]"
 
 install-jobs:
-	pip install -e jobs/enrichment_router/ -e jobs/caption_generator/
+	pip install -e "jobs/enrichment_router/[test]" -e "jobs/caption_generator/[test]"
 
 install: install-core install-jobs
 
