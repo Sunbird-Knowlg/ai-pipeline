@@ -14,23 +14,26 @@ paths:
   dataclasses.
 - **Topic contracts** (see each job's `config.yaml` under `kafka.topics`):
   - `enrichment-router`: reads `enriched.metadata`; writes `media.transcription.request` and
-    `media.multilingual.request`.
+    `media.multilingual.request`. Has no DLQ of its own today — a routing failure (bad JSON,
+    unrecognized action) is logged and the event dropped, not replayed or queued anywhere.
   - `caption-generator`: reads both of those (merged via `.union()` in `main.py`, then
-    discriminated structurally by `EventRouter` — presence of `targetLanguages` means
-    multilingual); writes `media.transcription.dlq` and `media.multilingual.dlq`.
-- **Side outputs (`OutputTag` + `ctx.output(tag, value)`) are how one `ProcessFunction` reaches
-  more than one downstream destination.** `OutputTag` instances are module-level constants,
-  imported by both the function that emits to them and the `main.py` that later calls
-  `.get_side_output(tag)` — always reuse the same shared instance rather than constructing a
-  second `OutputTag` with the same string name (they're matched by identity/name; a duplicate
-  instance risks subtle bugs).
-- **Every failure path routes to a DLQ side output**, via `BaseProcessFunction.emit_to_dlq` —
-  mark the relevant graph node `Failed` first, then call `emit_to_dlq`, inside a deliberately
-  broad `except Exception:` at the per-element processing boundary (this breadth is
-  intentional here: any exception at this boundary should produce the same outcome, not a
-  crashed TaskManager — see `core/docs/06_base_classes.md` / `caption_generator/docs/03_*.md`
-  for the reasoning). Don't swallow exceptions without both marking the node `Failed` and
-  emitting to DLQ.
+    discriminated by `EventRouter` on the BE_JOB_REQUEST envelope's `edata.action` —
+    `media-transcription-request` vs `media-multilingual-request`, not by payload shape);
+    writes `media.transcription.dlq` and `media.multilingual.dlq`.
+- **Side outputs (`OutputTag` + `yield (tag, value)`, not `ctx.output()`) are how one
+  `ProcessFunction` reaches more than one downstream destination** — PyFlink 1.20's
+  `ProcessFunction.Context` has no `.output()` method. `OutputTag` instances are module-level
+  constants, imported by both the function that emits to them and the `main.py` that later
+  calls `.get_side_output(tag)` — always reuse the same shared instance rather than
+  constructing a second `OutputTag` with the same string name (they're matched by
+  identity/name; a duplicate instance risks subtle bugs).
+- **`caption-generator`'s failure path routes to a DLQ side output** via
+  `BaseProcessFunction.emit_to_dlq`, called inside a deliberately broad `except Exception:` at
+  the per-element processing boundary — mark the relevant Transcript node `Failed` via
+  `knowlg.patch(...)` first, then `yield from self.emit_to_dlq(...)`. `enrichment-router`'s
+  `RouterFunction` does not follow this pattern today — it logs and drops a failed event
+  instead (see its own docstring for why); don't assume every process function in this repo
+  has a DLQ just because `caption-generator`'s do.
 - New request/response shapes: prefer the generic `cls(**json.loads(raw))` dict-unpacking
   shortcut in `from_json` only when every field is genuinely required and JSON keys are
   trusted to match exactly; spell out fields individually with `.get(key, default)` fallbacks

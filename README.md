@@ -8,16 +8,16 @@ Apache PyFlink 1.20 streaming jobs that add AI-generated video transcripts and m
 
 ## Overview
 
-Sunbird's Knowledge Platform stores every piece of content (videos, documents, question sets, etc.) as a node in a JanusGraph knowledge graph. This repository hosts two independent, always-running Flink jobs that together turn a freshly published video into a fully captioned, multilingual, offline-ready piece of content, without either job ever blocking the platform's own publish path:
+Sunbird's Knowledge Platform stores every piece of content (videos, documents, question sets, etc.) and exposes it through an HTTP content API. This repository hosts two independent, always-running Flink jobs that together turn a freshly published video into a fully captioned, multilingual piece of content, without either job ever blocking the platform's own publish path or connecting to a platform datastore directly — every read/write goes through that same content API:
 
 ```
                          enriched.metadata (Kafka)
                                   |
                                   v
                     +---------------------------+
-                    |     enrichment-router      |   read-only: never writes to the graph
-                    |  (reads JanusGraph state,   |
-                    |   decides what to trigger)  |
+                    |     enrichment-router      |   calls the knowlg content API to
+                    |  (checks eligibility via    |   check eligibility; no other writes
+                    |   the knowlg content API)   |
                     +---------------------------+
                         |                    |
                         v                    v
@@ -28,36 +28,31 @@ Sunbird's Knowledge Platform stores every piece of content (videos, documents, q
                     |            caption-generator            |
                     |  faster-whisper (speech-to-text)         |
                     |  LiteLLM (multilingual translation)      |
-                    |  fsspec (blob upload) + ECAR packaging   |
+                    |  fsspec (blob upload)                    |
                     +---------------------------------------+
-                        |                              |
-                        v                              v
-              WebVTT + JSON captions           combined ECAR (.zip)
-              uploaded to blob storage         for offline consumption
+                        |
+                        v
+              WebVTT + JSON captions
+              uploaded to blob storage
 ```
 
 **`enrichment-router`** consumes the `enriched.metadata` topic, which carries two kinds of events discriminated by `contentType`/`action`:
 
-- **Content-published** — a new/updated video. The router checks JanusGraph for an `Enrichment` node and a source-language `Transcript` node in a triggerable state (no existing captions, not already in progress). If eligible, it emits a `MediaTranscriptionRequest` to `media.transcription.request`.
-- **Transcript-approved** — a source-language transcript has been approved. The router determines which configured target languages don't already have an active translation, creates `Draft` Transcript nodes for them via the knowlg platform's content API, and emits a `MediaMultilingualRequest` to `media.multilingual.request`.
-
-The router is deliberately **read-only** against the graph — the only graph-mutating call in this job's dependency chain is the knowlg content API used to create new Transcript nodes, never a direct graph write.
+- **Content-published** — a new/updated video. The router calls the knowlg content API to check for an `Enrichment` node and a source-language `Transcript` node in a triggerable state (no existing captions, not already in progress). If eligible, it emits a `MediaTranscriptionRequest` to `media.transcription.request`.
+- **Transcript-approved** — a source-language transcript has been approved. The router determines which configured target languages don't already have an active translation, creates `Draft` Transcript nodes for them via the knowlg content API, and emits a `MediaMultilingualRequest` to `media.multilingual.request`.
 
 **`caption-generator`** consumes both request topics (merged via a single Flink `.union()`), and splits into two independent processing paths:
 
-- **Transcription** — downloads the source video, extracts audio with `ffmpeg`, runs `faster-whisper` for speech-to-text, builds WebVTT + a segment-level `transcript.json`, uploads both to blob storage, and updates the source Transcript node's status (`Live` or `Review`, depending on `auto_approve`).
-- **Multilingual translation** — downloads the source-language transcript JSON, chunks it into overlapping batches, translates each batch concurrently (one worker thread per target language) via an LLM through LiteLLM, validates the LLM's response against the original segment ids, merges/dedupes the translated batches back into an ordered transcript, and uploads WebVTT + JSON per language.
+- **Transcription** — downloads the source video, extracts audio with `ffmpeg`, runs `faster-whisper` for speech-to-text, builds WebVTT + a segment-level `transcript.json`, uploads both to blob storage, and updates the source Transcript node's status (`Live` or `Review`, depending on `auto_approve`) via the knowlg content API.
+- **Multilingual translation** — downloads the source-language transcript JSON, chunks it into overlapping batches, translates each batch concurrently (one worker thread per target language) via an LLM through LiteLLM, validates the LLM's response against the original segment ids (falling back to original text and forcing `Review` on any partial mismatch), merges/dedupes the translated batches back into an ordered transcript, and uploads WebVTT + JSON per language.
 
-After every language update, the Enrichment node's denormalized `transcripts` snapshot is refreshed. Once the source language is `Live` and every target language is in an acceptable terminal state, the job packages a combined **ECAR** (a `.zip` archive, Knowledge Platform's offline-content-package convention) containing a manifest plus every language's captions, uploads it, and records its URL on the Enrichment node for offline/low-connectivity consumption.
-
-Both jobs share failure handling via Kafka **dead-letter topics**: any exception during processing marks the relevant graph node `Failed` and routes the original request event to a `*.dlq` topic through a Flink side output, so failures are visible and replayable without crashing the job.
+`caption-generator`'s two processing paths each have their own Kafka **dead-letter topic**: any exception during processing marks the relevant Transcript node `Failed` (via the knowlg content API) and routes the original request event to a `*.dlq` topic through a Flink side output, so failures are visible and replayable without crashing the job. `enrichment-router` does not have this today — a routing failure is logged and the event dropped.
 
 ### Why these design choices
 
 - **PyFlink over Java/Scala Flink** — the AI tooling this needs (`faster-whisper`, LiteLLM's multi-provider LLM client) is Python-native; PyFlink lets these jobs live in the same streaming/Kafka ecosystem as the platform's existing Scala Flink jobs without reimplementing ML inference bindings in the JVM.
-- **gremlinpython for JanusGraph** — the official Apache TinkerPop Python driver, the direct sibling of the `gremlin-driver` Java library the platform's other jobs already use — same wire protocol, same Gremlin traversal semantics, just from Python.
+- **HTTP content API over a direct datastore connection** — both jobs treat the platform as a black box behind `KnowlgClient`, never opening a direct connection to whatever backs it; that backend can change without either job noticing.
 - **fsspec for blob storage** — a single filesystem-like abstraction over Azure/AWS/GCP blob backends (`adlfs`/`s3fs`/`gcsfs`), so job code never imports a cloud-specific SDK directly; switching cloud providers is a config change, not a code change.
-- **Schema-driven graph writes, no hardcoded schemas** — `SchemaRegistry` fetches `schema.json`/`config.json` per object type from blob storage at runtime and caches them for the process lifetime, mirroring the `DefinitionFactory`/`SchemaValidatorFactory` pattern used elsewhere on the platform. There are no locally-committed copies of the platform's object schemas in this repo.
 
 ## Repository Structure
 
@@ -67,7 +62,6 @@ ai-pipeline/
 │   ├── sunbird_ai_core/
 │   │   ├── base/               # BaseFlinkJob, BaseProcessFunction, BaseJobConfig
 │   │   ├── config/             # YAML + env-var-override config loading
-│   │   ├── graph/               # JanusGraphUtil (gremlinpython) + SchemaRegistry
 │   │   ├── kafka/               # @dataclass event schemas (requests, DLQ envelope)
 │   │   ├── knowlg/              # config-driven HTTP client for the knowlg platform API
 │   │   └── storage/             # fsspec-based multi-cloud blob storage util
@@ -75,9 +69,9 @@ ai-pipeline/
 │   ├── docs/                   # concept-by-concept walkthrough of every module here
 │   └── pyproject.toml
 ├── jobs/
-│   ├── enrichment_router/       # read-only router job (see docs/ for a full walkthrough)
+│   ├── enrichment_router/       # eligibility-checking router job (see docs/ for a full walkthrough)
 │   └── caption_generator/       # transcription + multilingual translation job
-│       └── scripts/transcribe_local.py   # standalone dev utility, no Flink/Kafka/JanusGraph needed
+│       └── scripts/transcribe_local.py   # standalone dev utility, no Flink/Kafka needed
 ├── docker/                     # Dockerfiles for both jobs + docker-compose.yml for local dev
 ├── Makefile                    # install/test/lint/package/submit targets
 └── pyproject.toml              # root-level: pytest + ruff config only, no real package here
@@ -88,7 +82,7 @@ Every `docs/` folder under `core/` and `jobs/*/` is a from-scratch, concept-by-c
 ## Prerequisites
 
 - Python 3.11+
-- Docker + Docker Compose (for the local dev stack: JanusGraph, Cassandra, Redpanda/Kafka, Azurite blob emulator, Flink)
+- Docker + Docker Compose (for the local dev stack: Redpanda/Kafka, Azurite blob emulator, Flink — `docker/docker-compose.yml` also defines JanusGraph/Cassandra services, but nothing in this repo's code uses them today)
 - `ffmpeg` on `PATH` if you want to run `caption-generator`'s transcription path locally (it shells out to `ffmpeg` for audio extraction)
 
 ## Local Development Setup
@@ -98,13 +92,13 @@ Every `docs/` folder under `core/` and `jobs/*/` is a from-scratch, concept-by-c
 python3.11 -m venv .venv
 source .venv/bin/activate
 
-# 2. Install core + both jobs, editable
+# 2. Install core + both jobs, editable (with test/dev extras)
 make install
 # equivalent to:
-#   pip install -e core/
-#   pip install -e jobs/enrichment_router/ -e jobs/caption_generator/
+#   pip install -e "core/[dev,test]"
+#   pip install -e "jobs/enrichment_router/[test]" -e "jobs/caption_generator/[test]"
 
-# 3. Bring up the local dependency stack (JanusGraph+Cassandra, Redpanda, Azurite, Flink)
+# 3. Bring up the local dependency stack (Redpanda, Azurite, Flink)
 make dev-up
 # ... work ...
 make dev-down
@@ -133,7 +127,7 @@ pytest core/tests jobs/enrichment_router/tests jobs/caption_generator/tests -m "
 pytest core/tests jobs/enrichment_router/tests jobs/caption_generator/tests -m integration
 ```
 
-The `integration` marker (declared in each package's `pyproject.toml`) flags tests that need the docker-compose stack (JanusGraph, Kafka, and — for `caption-generator` — Azurite) actually running.
+The `integration` marker (declared in each package's `pyproject.toml`) flags tests that need the docker-compose stack (Kafka, and — for `caption-generator` — Azurite) actually running.
 
 Lint/type-check:
 
@@ -145,7 +139,7 @@ make lint
 
 ## Configuration
 
-Each job reads a single `config.yaml` (see `jobs/enrichment_router/config.yaml` and `jobs/caption_generator/config.yaml` for the full real shape — Kafka topics, JanusGraph host, schema base path, knowlg API config, cloud storage settings, and job-specific settings like `transcription.model` or `multilingual.batch_size`).
+Each job reads a single `config.yaml` (see `jobs/enrichment_router/config.yaml` and `jobs/caption_generator/config.yaml` for the full real shape — Kafka topics, knowlg content API config, cloud storage settings, and job-specific settings like `transcription.model` or `multilingual.batch_size`).
 
 Any dotted config key can be overridden by an environment variable named `SUNBIRD_AI_<KEY_PATH>` (dots replaced with underscores, upper-cased) — e.g. `kafka.brokers` is overridden by `SUNBIRD_AI_KAFKA_BROKERS`. Environment variables always take precedence over the YAML file.
 
