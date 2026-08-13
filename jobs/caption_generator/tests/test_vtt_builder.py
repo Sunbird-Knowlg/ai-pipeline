@@ -29,6 +29,28 @@ def test_build_vtt_millisecond_rounding_carries_seconds():
     assert "00:00:00.000 --> 00:00:01.000" in vtt
 
 
+def test_build_vtt_millisecond_rounding_carries_minutes():
+    # 59.9996 rounds up to 60.000s - must carry into minutes (01:00.000),
+    # not produce the invalid "00:00:60.000".
+    segments = [Segment(id=0, start=0.0, end=59.9996, text="x")]
+
+    vtt = build_vtt(segments)
+
+    assert "00:01:00.000" in vtt
+    assert "60.000" not in vtt
+
+
+def test_build_vtt_millisecond_rounding_carries_hours():
+    # 3599.9996 rounds up to 3600.000s - must carry into hours (01:00:00.000),
+    # not produce the invalid "00:59:60.000".
+    segments = [Segment(id=0, start=0.0, end=3599.9996, text="x")]
+
+    vtt = build_vtt(segments)
+
+    assert "01:00:00.000" in vtt
+    assert "60.000" not in vtt
+
+
 def test_transcript_json_roundtrip():
     segments = [
         Segment(id=0, start=0.0, end=2.5, text="Hello"),
