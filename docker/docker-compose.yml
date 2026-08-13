@@ -30,10 +30,18 @@ services:
       - --smp=1
       - --overprovisioned
       - --node-id=0
-      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
-      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+      # Two listeners: PLAINTEXT for other containers (address "redpanda",
+      # resolvable inside the compose network), OUTSIDE for host-side
+      # processes (e.g. pytest run directly, not in a container) connecting
+      # via localhost:19092 — without this, a host client's initial bootstrap
+      # to localhost:9092 succeeds but then fails once it acts on broker
+      # metadata pointing at hostname "redpanda", unresolvable outside the
+      # compose network.
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092,OUTSIDE://localhost:19092
     ports:
       - "9092:9092"
+      - "19092:19092"
 
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:latest
