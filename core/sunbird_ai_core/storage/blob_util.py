@@ -23,14 +23,20 @@ def _build_storage_options(storage_type: str, auth_type: str, config: dict) -> d
 
     Args:
         storage_type: Cloud provider type ('azure', 'aws', 'gcp').
-        auth_type: Authorization pattern ('ACCESS_KEY', 'OIDC', 'IAM', 'DEV').
+        auth_type: Authorization pattern, valid values depend on storage_type —
+            azure: 'ACCESS_KEY', 'OIDC', 'IAM', 'DEV'; aws: 'ACCESS_KEY', 'IAM';
+            gcp: 'SERVICE_ACCOUNT', 'OIDC'.
         config: Dictionary containing credentials/keys.
 
     Returns:
         A dictionary of backend configurations for fsspec filesystem establishment.
 
     Raises:
-        ValueError: If the storage type or auth pattern is unsupported.
+        ValueError: If the storage type is unsupported, or auth_type isn't one
+            of the values valid for that storage_type — e.g. a typo like
+            cloud_storage_auth_type: OIDC on an AWS deployment (meaning IAM
+            auth) fails fast here instead of silently building credentials
+            with a None key/secret.
     """
     if storage_type == "azure":
         if auth_type == "ACCESS_KEY":
@@ -48,10 +54,22 @@ def _build_storage_options(storage_type: str, auth_type: str, config: dict) -> d
         raise ValueError(f"Unsupported Azure auth_type: {auth_type}")
 
     if storage_type == "aws":
-        return {"key": config.get("access_key"), "secret": config.get("secret_key")}
+        if auth_type == "ACCESS_KEY":
+            return {"key": config["access_key"], "secret": config["secret_key"]}
+        if auth_type == "IAM":
+            # No explicit credentials — s3fs falls back to boto3's default
+            # credential chain (instance profile / IRSA).
+            return {}
+        raise ValueError(f"Unsupported AWS auth_type: {auth_type}")
 
     if storage_type == "gcp":
-        return {"token": config.get("service_account_json_path")}
+        if auth_type == "SERVICE_ACCOUNT":
+            return {"token": config["service_account_json_path"]}
+        if auth_type == "OIDC":
+            # No explicit credentials — gcsfs falls back to Application
+            # Default Credentials (workload identity).
+            return {}
+        raise ValueError(f"Unsupported GCP auth_type: {auth_type}")
 
     raise ValueError(f"Unsupported cloud_storage_type: {storage_type}")
 
@@ -76,7 +94,9 @@ class BlobStorageUtil:
 
         Args:
             cloud_storage_type: Cloud provider type ('azure', 'aws', 'gcp').
-            cloud_storage_auth_type: Authorization pattern ('ACCESS_KEY', 'OIDC', 'IAM', 'DEV').
+            cloud_storage_auth_type: Authorization pattern — see
+                _build_storage_options for the valid values per
+                cloud_storage_type.
             container: The storage container or bucket name.
             auth_config: Dictionary containing authentication credentials.
             public_endpoint: Optional public domain proxy URL endpoint.

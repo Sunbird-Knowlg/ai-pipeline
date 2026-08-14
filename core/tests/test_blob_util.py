@@ -25,6 +25,36 @@ def test_unsupported_storage_type_raises():
         _build_storage_options("bogus", "ACCESS_KEY", {})
 
 
+def test_aws_access_key_auth_options():
+    options = _build_storage_options("aws", "ACCESS_KEY", {"access_key": "ak", "secret_key": "sk"})
+    assert options == {"key": "ak", "secret": "sk"}
+
+
+def test_aws_iam_auth_options():
+    assert _build_storage_options("aws", "IAM", {}) == {}
+
+
+def test_aws_rejects_azure_auth_type():
+    # A typo like cloud_storage_auth_type: OIDC on an AWS deployment must
+    # fail fast, not silently build {"key": None, "secret": None}.
+    with pytest.raises(ValueError):
+        _build_storage_options("aws", "OIDC", {})
+
+
+def test_gcp_service_account_auth_options():
+    options = _build_storage_options("gcp", "SERVICE_ACCOUNT", {"service_account_json_path": "/p.json"})
+    assert options == {"token": "/p.json"}
+
+
+def test_gcp_oidc_auth_options():
+    assert _build_storage_options("gcp", "OIDC", {}) == {}
+
+
+def test_gcp_rejects_unsupported_auth_type():
+    with pytest.raises(ValueError):
+        _build_storage_options("gcp", "ACCESS_KEY", {})
+
+
 def test_uri_construction():
     util = BlobStorageUtil(
         cloud_storage_type="azure",
