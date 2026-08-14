@@ -85,7 +85,9 @@ def test_translate_one_language_forces_review_on_partial_fallback(
     assert final_props["status"] == "Review"
 
 
-def test_translate_one_language_marks_failed_on_error(mock_knowlg, mock_storage, sample_segments, mock_logger):
+def test_translate_one_language_marks_failed_on_error(
+    mock_knowlg, mock_storage, sample_segments, mock_logger
+):
     provider = Mock()
     provider.translate.side_effect = RuntimeError("LLM timeout")
 
@@ -123,7 +125,13 @@ def test_process_element_dlqs_instead_of_crashing_on_m2_failure(
     replays and crash-loops the job forever on restart.
     """
     mock_knowlg.get.return_value = {
-        "result": {"enrichment": {"transcripts": [{"identifier": "do_t_hi", "languageCode": "hi", "sourceLanguage": False}]}}
+        "result": {
+            "enrichment": {
+                "transcripts": [
+                    {"identifier": "do_t_hi", "languageCode": "hi", "sourceLanguage": False}
+                ]
+            }
+        }
     }
     mock_storage.download_from_uri.side_effect = ValueError("Refusing to download from disallowed scheme: ''")
 

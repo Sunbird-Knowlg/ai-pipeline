@@ -180,7 +180,9 @@ class TranscriptionFunction(BaseProcessFunction):
             device=self._config.raw("transcription.device", "cpu"),
             compute_type=self._config.raw("transcription.compute_type", "int8"),
             language_detection_segments=int(self._config.raw("transcription.language_detection_segments", 8)),
-            language_detection_threshold=float(self._config.raw("transcription.language_detection_threshold", 0.7)),
+            language_detection_threshold=float(
+                self._config.raw("transcription.language_detection_threshold", 0.7)
+            ),
             candidate_languages=self._config.raw("transcription.candidate_languages", []),
         )
         self._generated_by = f"{self._config.raw('transcription.provider')}:{model}"
@@ -212,10 +214,19 @@ class TranscriptionFunction(BaseProcessFunction):
         self.logger.info("Received transcription request event", extra=extra)
         try:
             language_code = run_transcription_pipeline(
-                request, self.knowlg, self.storage, self._provider, self._generated_by, self._auto_approve, self.logger
+                request,
+                self.knowlg,
+                self.storage,
+                self._provider,
+                self._generated_by,
+                self._auto_approve,
+                self.logger,
             )
             if self._auto_approve:
-                self.logger.info("Building Transcript-approved event", extra={**extra, "language_code": language_code})
+                self.logger.info(
+                    "Building Transcript-approved event",
+                    extra={**extra, "language_code": language_code},
+                )
                 event = EnrichedMetadataEvent(
                     id=request.transcriptId,
                     contentType="Transcript",
@@ -228,7 +239,10 @@ class TranscriptionFunction(BaseProcessFunction):
                         "channel": request.channel,
                     },
                 )
-                self.logger.info("Emitting Transcript-approved event", extra={**extra, "language_code": language_code})
+                self.logger.info(
+                    "Emitting Transcript-approved event",
+                    extra={**extra, "language_code": language_code},
+                )
                 yield ENRICHED_METADATA_TAG, event.to_json()
             else:
                 self.logger.info("Skipping enriched-metadata emit: auto_approve disabled", extra=extra)

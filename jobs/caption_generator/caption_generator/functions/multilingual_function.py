@@ -46,7 +46,10 @@ def resolve_target_transcript_ids(
     transcripts = enrichment.get("transcripts", [])
     by_language = {t["languageCode"]: t["identifier"] for t in transcripts if not t.get("sourceLanguage")}
     resolved = {lang: by_language[lang] for lang in target_languages if lang in by_language}
-    logger.info("Resolved target Transcript ids", extra={"content_id": content_id, "resolved_languages": list(resolved.keys())})
+    logger.info(
+        "Resolved target Transcript ids",
+        extra={"content_id": content_id, "resolved_languages": list(resolved.keys())},
+    )
     return resolved
 
 

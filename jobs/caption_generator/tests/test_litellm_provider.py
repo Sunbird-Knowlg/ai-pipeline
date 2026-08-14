@@ -19,7 +19,10 @@ def _mock_response(content: dict) -> Mock:
 @patch("caption_generator.providers.multilingual.litellm_provider.litellm.completion")
 def test_translate_exact_match(mock_completion):
     mock_completion.return_value = _mock_response({"0": "Bonjour", "1": "Monde"})
-    segments = [Segment(id=0, start=0.0, end=1.0, text="Hello"), Segment(id=1, start=1.0, end=2.0, text="World")]
+    segments = [
+        Segment(id=0, start=0.0, end=1.0, text="Hello"),
+        Segment(id=1, start=1.0, end=2.0, text="World"),
+    ]
 
     result, had_fallback = _provider().translate(segments, "en", "fr")
 
@@ -31,7 +34,10 @@ def test_translate_exact_match(mock_completion):
 @patch("caption_generator.providers.multilingual.litellm_provider.litellm.completion")
 def test_translate_falls_back_to_original_text_for_missing_ids(mock_completion):
     mock_completion.return_value = _mock_response({"0": "Bonjour"})
-    segments = [Segment(id=0, start=0.0, end=1.0, text="Hello"), Segment(id=1, start=1.0, end=2.0, text="World")]
+    segments = [
+        Segment(id=0, start=0.0, end=1.0, text="Hello"),
+        Segment(id=1, start=1.0, end=2.0, text="World"),
+    ]
 
     result, had_fallback = _provider().translate(segments, "en", "fr")
 

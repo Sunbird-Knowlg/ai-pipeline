@@ -97,7 +97,9 @@ class KnowlgClient:
         url = f"{self._base_url}{path}"
         logger.info("POST %s", url, extra={"api_key": api_key})
         try:
-            response = requests.post(url, json={"request": {"object": payload}}, headers=self._headers(), timeout=30)
+            response = requests.post(
+                url, json={"request": {"object": payload}}, headers=self._headers(), timeout=30
+            )
             response.raise_for_status()
         except requests.exceptions.RequestException:
             logger.exception("knowlg POST failed", extra={"api_key": api_key, "url": url})
@@ -163,7 +165,9 @@ class KnowlgClient:
         url = f"{self._base_url}{path}"
         logger.info("PATCH %s", url, extra={"api_key": api_key})
         try:
-            response = requests.patch(url, json={"request": {"object": payload}}, headers=self._headers(), timeout=30)
+            response = requests.patch(
+                url, json={"request": {"object": payload}}, headers=self._headers(), timeout=30
+            )
             response.raise_for_status()
         except requests.exceptions.RequestException:
             logger.exception("knowlg PATCH failed", extra={"api_key": api_key, "url": url})

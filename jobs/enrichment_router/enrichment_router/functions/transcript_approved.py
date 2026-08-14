@@ -79,7 +79,10 @@ def handle_transcript_approved(
     logger.info("Computed target languages", extra={**extra, "target_languages": target_languages})
 
     for language_code in target_languages:
-        logger.info("Creating target-language Transcript draft", extra={**extra, "language_code": language_code})
+        logger.info(
+            "Creating target-language Transcript draft",
+            extra={**extra, "language_code": language_code},
+        )
         knowlg.post(
             "object_create",
             {
@@ -89,7 +92,10 @@ def handle_transcript_approved(
             },
             identifier=content_id,
         )
-        logger.info("Created target-language Transcript draft", extra={**extra, "language_code": language_code})
+        logger.info(
+            "Created target-language Transcript draft",
+            extra={**extra, "language_code": language_code},
+        )
 
     source_transcript = next(
         (t for t in existing_transcripts if t.get("sourceLanguage") is True), None

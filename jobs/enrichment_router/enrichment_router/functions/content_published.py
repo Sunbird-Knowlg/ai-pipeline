@@ -63,7 +63,10 @@ def handle_content_published(
         return None
 
     if source_transcript.get("status") in _ACTIVE_STATUSES:
-        logger.info("Skip: source Transcript already active", extra={**extra, "status": source_transcript.get("status")})
+        logger.info(
+            "Skip: source Transcript already active",
+            extra={**extra, "status": source_transcript.get("status")},
+        )
         return None
     logger.info("Source Transcript not active", extra=extra)
 

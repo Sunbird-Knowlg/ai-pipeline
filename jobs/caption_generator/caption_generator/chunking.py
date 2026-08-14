@@ -50,7 +50,12 @@ def chunk_segments(segments: list[Segment], batch_size: int, overlap: int) -> li
         i += step
     logger.debug(
         "Chunked segments",
-        extra={"segment_count": len(segments), "batch_count": len(batches), "batch_size": batch_size, "overlap": overlap},
+        extra={
+            "segment_count": len(segments),
+            "batch_count": len(batches),
+            "batch_size": batch_size,
+            "overlap": overlap,
+        },
     )
     return batches
 
@@ -75,5 +80,8 @@ def merge_translated_batches(batches: list[list[Segment]]) -> list[Segment]:
             if segment.id not in seen:
                 seen[segment.id] = segment
     merged = [seen[i] for i in sorted(seen)]
-    logger.debug("Merged translated batches", extra={"batch_count": len(batches), "merged_count": len(merged)})
+    logger.debug(
+        "Merged translated batches",
+        extra={"batch_count": len(batches), "merged_count": len(merged)},
+    )
     return merged

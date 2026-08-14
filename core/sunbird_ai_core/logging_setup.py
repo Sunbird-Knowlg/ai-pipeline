@@ -38,6 +38,8 @@ class _RawFdHandler(logging.Handler):
     (StreamHandler(sys.stdout) here would recurse into itself infinitely).
     """
 
+    _sunbird_json: bool = False
+
     def emit(self, record: logging.LogRecord) -> None:
         try:
             data = (self.format(record) + "\n").encode("utf-8", errors="replace")

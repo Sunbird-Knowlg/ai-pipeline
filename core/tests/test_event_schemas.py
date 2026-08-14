@@ -16,7 +16,11 @@ def test_enriched_metadata_event_roundtrip():
             "ets": 1234567890,
             "mid": "LP.1234567890.abc",
             "actor": {"id": "knowlg-service", "type": "System"},
-            "context": {"pdata": {"ver": "1.0", "id": "org.ekstep.platform"}, "channel": "in.ekstep", "env": "dev"},
+            "context": {
+                "pdata": {"ver": "1.0", "id": "org.ekstep.platform"},
+                "channel": "in.ekstep",
+                "env": "dev",
+            },
             "object": {"ver": "1.0", "id": "do_123"},
             "edata": {"action": "publish", "contentType": "Content", "mimeType": "video/mp4"},
         }
@@ -48,7 +52,9 @@ def test_enriched_metadata_event_accepts_legacy_flat_shape():
 
 
 def test_enriched_metadata_event_to_json_uses_standard_envelope():
-    event = EnrichedMetadataEvent(id="do_123", contentType="Content", action="publish", data={"mimeType": "video/mp4"})
+    event = EnrichedMetadataEvent(
+        id="do_123", contentType="Content", action="publish", data={"mimeType": "video/mp4"}
+    )
 
     payload = json.loads(event.to_json())
 
@@ -66,7 +72,9 @@ def test_enriched_metadata_event_to_json_also_carries_flat_top_level_shape():
     # throws on a missing top-level "id" — these siblings must be present
     # alongside our own envelope, and "data" must be absent so their chunking
     # stage filters the event instead of trying to embed our metadata.
-    event = EnrichedMetadataEvent(id="do_123", contentType="Transcript", action="approved", data={"languageCode": "en"})
+    event = EnrichedMetadataEvent(
+        id="do_123", contentType="Transcript", action="approved", data={"languageCode": "en"}
+    )
 
     payload = json.loads(event.to_json())
 

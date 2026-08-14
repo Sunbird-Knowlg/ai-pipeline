@@ -95,7 +95,12 @@ class LiteLLMProvider(MultilingualProvider):
         input_payload = {str(s.id): s.text for s in segments}
         logger.info(
             "Translating segment batch",
-            extra={"model": self._model, "source_lang": source_lang, "target_lang": target_lang, "segment_count": len(segments)},
+            extra={
+                "model": self._model,
+                "source_lang": source_lang,
+                "target_lang": target_lang,
+                "segment_count": len(segments),
+            },
         )
 
         try:
@@ -159,7 +164,10 @@ class LiteLLMProvider(MultilingualProvider):
                 sorted(extra_ids),
             )
 
-        logger.debug("Translation batch complete", extra={"target_lang": target_lang, "segment_count": len(segments)})
+        logger.debug(
+            "Translation batch complete",
+            extra={"target_lang": target_lang, "segment_count": len(segments)},
+        )
         translated_segments = [
             Segment(
                 id=s.id,

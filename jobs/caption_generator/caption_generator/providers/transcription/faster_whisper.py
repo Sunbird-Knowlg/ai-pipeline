@@ -38,7 +38,10 @@ class FasterWhisperProvider(TranscriptionProvider):
                 probabilities within this set instead of trusting its raw
                 top-1 guess (see transcribe / detect_language below).
         """
-        logger.info("Loading whisper model", extra={"model": model, "device": device, "compute_type": compute_type})
+        logger.info(
+            "Loading whisper model",
+            extra={"model": model, "device": device, "compute_type": compute_type},
+        )
         self._model = WhisperModel(model, device=device, compute_type=compute_type)
         self._language_detection_segments = language_detection_segments
         self._language_detection_threshold = language_detection_threshold
@@ -75,12 +78,18 @@ class FasterWhisperProvider(TranscriptionProvider):
                 language_detection_segments=self._language_detection_segments,
                 language_detection_threshold=self._language_detection_threshold,
             )
-            candidates = [(lang, prob) for lang, prob in all_language_probs if lang in self._candidate_languages]
+            candidates = [
+                (lang, prob) for lang, prob in all_language_probs if lang in self._candidate_languages
+            ]
             if candidates:
                 language = max(candidates, key=lambda pair: pair[1])[0]
                 logger.info(
                     "Restricted language detection to candidate set",
-                    extra={"audio_path": audio_path, "chosen_language": language, "top_candidates": candidates[:5]},
+                    extra={
+                        "audio_path": audio_path,
+                        "chosen_language": language,
+                        "top_candidates": candidates[:5],
+                    },
                 )
 
         # word_timestamps=True adds a .words list (per-word start/end) to
@@ -95,8 +104,8 @@ class FasterWhisperProvider(TranscriptionProvider):
             language_detection_segments=self._language_detection_segments,
             language_detection_threshold=self._language_detection_threshold,
         )
-        segments = []
-        words = []
+        segments: list[Segment] = []
+        words: list[Segment] = []
         for i, seg in enumerate(raw_segments):
             segments.append(Segment(id=i, start=seg.start, end=seg.end, text=seg.text.strip()))
             for word in seg.words:
