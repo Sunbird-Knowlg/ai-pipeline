@@ -1,12 +1,29 @@
 import logging
+from datetime import datetime
 
 import requests
 from sunbird_ai_core.kafka.event_schemas import EnrichedMetadataEvent, MediaTranscriptionRequest
 from sunbird_ai_core.knowlg.knowlg_client import KnowlgClient
 
 _ACTIVE_STATUSES = {"Processing", "Review", "Live"}
+_HUMAN_GENERATED_BY = {"human-edited", "human-uploaded"}
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    """Parses a knowlg lastUpdatedOn-style ISO 8601 timestamp.
+
+    Returns None (rather than raising) for a missing/malformed value, so a
+    republish check that can't compare timestamps safely falls back to "not
+    a republish" instead of crashing the event.
+    """
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def handle_content_published(
@@ -62,22 +79,57 @@ def handle_content_published(
         logger.info("Skip: no source-language Transcript node under Enrichment", extra=extra)
         return None
 
+    is_republish = False
     if source_transcript.get("status") in _ACTIVE_STATUSES:
-        logger.info(
-            "Skip: source Transcript already active",
-            extra={**extra, "status": source_transcript.get("status")},
+        # A republish (content edited after this transcript was last
+        # generated) must still go through, even though status looks
+        # "done" — otherwise a Live transcript can never be regenerated
+        # short of a manual reject/reset. Reads the Content node directly
+        # rather than relying on the publish event's own (configurable,
+        # easy-to-miss) field allow-list.
+        try:
+            content_response = knowlg.get("content_read", identifier=content_id)
+        except requests.exceptions.RequestException:
+            logger.info("Skip: could not read Content node to check for republish", extra=extra)
+            return None
+        content_last_updated = _parse_timestamp(
+            content_response.get("result", {}).get("content", {}).get("lastUpdatedOn", "")
         )
-        return None
-    logger.info("Source Transcript not active", extra=extra)
+        transcript_last_updated = _parse_timestamp(source_transcript.get("lastUpdatedOn", ""))
+        is_republish = bool(
+            content_last_updated
+            and transcript_last_updated
+            and content_last_updated > transcript_last_updated
+        )
+        if not is_republish:
+            logger.info(
+                "Skip: source Transcript already active",
+                extra={**extra, "status": source_transcript.get("status")},
+            )
+            return None
+        logger.info(
+            "Republish detected (content updated after transcript) — regenerating despite active status",
+            extra={
+                **extra,
+                "status": source_transcript.get("status"),
+                "content_last_updated": str(content_last_updated),
+                "transcript_last_updated": str(transcript_last_updated),
+            },
+        )
+    else:
+        logger.info("Source Transcript not active", extra=extra)
 
-    if source_transcript.get("captionsUrl"):
-        logger.info("Skip: source Transcript already has captionsUrl (manual upload)", extra=extra)
+    # Only a human-authored caption is protected from being overwritten — an
+    # AI-generated one (the normal Live/Review case) always has captionsUrl
+    # set too, so this must not block the republish path above.
+    if source_transcript.get("captionsUrl") and source_transcript.get("generatedBy") in _HUMAN_GENERATED_BY:
+        logger.info("Skip: source Transcript already has a human caption", extra=extra)
         return None
     logger.info("No manual captionsUrl present", extra=extra)
 
     logger.info(
         "Dispatching transcription request",
-        extra={**extra, "transcript_id": source_transcript["identifier"]},
+        extra={**extra, "transcript_id": source_transcript["identifier"], "is_republish": is_republish},
     )
     return MediaTranscriptionRequest(
         contentId=content_id,
@@ -86,4 +138,5 @@ def handle_content_published(
         artifactUrl=event.data.get("artifactUrl", ""),
         mimeType=mime_type,
         channel=enrichment.get("channel", ""),
+        isRepublish=is_republish,
     )
