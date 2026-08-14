@@ -61,18 +61,36 @@ def handle_transcript_approved(
     response = knowlg.get("enrichment_read", identifier=content_id)
     enrichment = response.get("result", {}).get("enrichment", {})
     existing_transcripts = enrichment.get("transcripts", [])
-    active_languages = {
-        t["languageCode"]
-        for t in existing_transcripts
-        if t.get("status") not in _INACTIVE_STATUSES and not t.get("sourceLanguage")
-    }
-    logger.info("Computed active languages", extra={**extra, "active_languages": list(active_languages)})
 
-    # Excludes the source's own language explicitly, since active_languages
-    # only tracks non-source transcripts and could otherwise re-create one.
-    target_languages = [
-        lang for lang in configured_languages if lang not in active_languages and lang != source_language_code
-    ]
+    is_republish = bool(event.data.get("isRepublish"))
+    if is_republish:
+        # The source was regenerated from updated content — every currently
+        # configured target language needs re-translating from the new
+        # source text, not just ones missing or previously Draft/Failed.
+        # object_create below is idempotent for languages that already have
+        # a Transcript node (returns the existing one, doesn't touch it), so
+        # this only *creates* a node for a genuinely new language (e.g. a
+        # newly added target language) and re-translates the rest in place.
+        target_languages = [lang for lang in configured_languages if lang != source_language_code]
+        logger.info(
+            "Republish: treating all configured languages as targets",
+            extra={**extra, "target_languages": target_languages},
+        )
+    else:
+        active_languages = {
+            t["languageCode"]
+            for t in existing_transcripts
+            if t.get("status") not in _INACTIVE_STATUSES and not t.get("sourceLanguage")
+        }
+        logger.info("Computed active languages", extra={**extra, "active_languages": list(active_languages)})
+
+        # Excludes the source's own language explicitly, since active_languages
+        # only tracks non-source transcripts and could otherwise re-create one.
+        target_languages = [
+            lang
+            for lang in configured_languages
+            if lang not in active_languages and lang != source_language_code
+        ]
     if not target_languages:
         logger.info("Skip: all configured languages already active", extra=extra)
         return None

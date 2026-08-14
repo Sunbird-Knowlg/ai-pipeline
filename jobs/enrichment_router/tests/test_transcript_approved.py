@@ -128,6 +128,56 @@ def test_created_transcript_includes_display_language_name(transcript_approved_e
     assert kwargs["identifier"] == "do_123"
 
 
+def test_republish_retargets_all_configured_languages(transcript_approved_event, mock_knowlg):
+    # hi/ta are already Live (would normally be excluded as "active"), but
+    # isRepublish=True means the source was regenerated and every configured
+    # language needs re-translating, including the already-Live ones.
+    transcript_approved_event.data["isRepublish"] = True
+    mock_knowlg.get.return_value = _enrichment_response(
+        [
+            {
+                "identifier": "do_t_en",
+                "languageCode": "en",
+                "sourceLanguage": True,
+                "status": "Live",
+                "artifactUrl": "https://blob/en/transcript.json",
+            },
+            {"identifier": "do_t_hi", "languageCode": "hi", "sourceLanguage": False, "status": "Live"},
+            {"identifier": "do_t_ta", "languageCode": "ta", "sourceLanguage": False, "status": "Live"},
+        ]
+    )
+
+    result = handle_transcript_approved(transcript_approved_event, mock_knowlg, LANGUAGES)
+
+    assert set(result.targetLanguages) == {"hi", "ta"}
+    # object_create is idempotent for existing languages (returns the
+    # existing node, doesn't touch it) - still called for both to confirm
+    # they exist, but no new node is expected to result from it.
+    assert mock_knowlg.post.call_count == 2
+
+
+def test_republish_still_creates_a_genuinely_new_language(transcript_approved_event, mock_knowlg):
+    # Previously configured: hi only. Now configured: hi, ta - ta has no
+    # existing Transcript node at all and must be created, not just updated.
+    transcript_approved_event.data["isRepublish"] = True
+    mock_knowlg.get.return_value = _enrichment_response(
+        [
+            {
+                "identifier": "do_t_en",
+                "languageCode": "en",
+                "sourceLanguage": True,
+                "status": "Live",
+                "artifactUrl": "https://blob/en/transcript.json",
+            },
+            {"identifier": "do_t_hi", "languageCode": "hi", "sourceLanguage": False, "status": "Live"},
+        ]
+    )
+
+    result = handle_transcript_approved(transcript_approved_event, mock_knowlg, LANGUAGES)
+
+    assert set(result.targetLanguages) == {"hi", "ta"}
+
+
 def test_calls_object_create_for_target_content(transcript_approved_event, mock_knowlg):
     mock_knowlg.get.return_value = _enrichment_response(
         [
