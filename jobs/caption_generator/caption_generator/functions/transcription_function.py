@@ -243,7 +243,7 @@ class TranscriptionFunction(BaseProcessFunction):
                     "Emitting Transcript-approved event",
                     extra={**extra, "language_code": language_code},
                 )
-                yield ENRICHED_METADATA_TAG, event.to_json()
+                yield ENRICHED_METADATA_TAG, event.to_json(env=self._config.env)
             else:
                 self.logger.info("Skipping enriched-metadata emit: auto_approve disabled", extra=extra)
         except Exception as error:

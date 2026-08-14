@@ -112,7 +112,7 @@ class EnrichedMetadataEvent:
             data=data,
         )
 
-    def to_json(self) -> str:
+    def to_json(self, env: str = "") -> str:
         """Serializes the EnrichedMetadataEvent instance to the standard envelope.
 
         This topic (dev.knowlg.enriched.content.metadata) is shared with
@@ -125,6 +125,11 @@ class EnrichedMetadataEvent:
         makes their chunking stage filter the event as "no usable text"
         rather than attempting to embed our Transcript-approval metadata.
 
+        Args:
+            env: The producing job's deployment environment, for context.env
+                (same convention as MediaTranscriptionRequest/
+                MediaMultilingualRequest.to_json).
+
         Returns:
             A JSON-serialized BE_JOB_REQUEST envelope string.
         """
@@ -135,6 +140,7 @@ class EnrichedMetadataEvent:
             object_id=self.id,
             edata={"contentType": self.contentType, **data},
             channel=self.data.get("channel", ""),
+            env=env,
             extra_top_level={"id": self.id, "contentType": self.contentType, "_schema_version": "1.0"},
         )
 

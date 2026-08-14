@@ -64,6 +64,18 @@ def test_enriched_metadata_event_to_json_uses_standard_envelope():
     assert payload["edata"]["contentType"] == "Content"
     assert payload["edata"]["mimeType"] == "video/mp4"
     assert "mid" in payload and "ets" in payload
+    assert payload["context"]["env"] == ""
+
+
+def test_enriched_metadata_event_to_json_forwards_env():
+    # Regression: to_json() previously had no env param at all, so any
+    # producer emitting EnrichedMetadataEvent could not stamp context.env,
+    # unlike MediaTranscriptionRequest/MediaMultilingualRequest.to_json.
+    event = EnrichedMetadataEvent(id="do_123", contentType="Content", action="publish")
+
+    payload = json.loads(event.to_json(env="dev"))
+
+    assert payload["context"]["env"] == "dev"
 
 
 def test_enriched_metadata_event_to_json_also_carries_flat_top_level_shape():

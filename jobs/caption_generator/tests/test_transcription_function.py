@@ -124,6 +124,7 @@ def test_process_element_emits_enriched_metadata_on_auto_approve(
     func._provider = mock_transcription_provider
     func._generated_by = "faster-whisper:large-v3-turbo"
     func._auto_approve = True
+    func._config = MagicMock(env="dev")
 
     with patch("caption_generator.functions.transcription_function.extract_audio"):
         results = list(func.process_element(transcription_request.to_json(), MagicMock()))
@@ -137,6 +138,7 @@ def test_process_element_emits_enriched_metadata_on_auto_approve(
     assert event["edata"]["sourceLanguage"] is True
     assert event["edata"]["languageCode"] == "en"
     assert event["object"]["id"] == "do_transcript_1"
+    assert event["context"]["env"] == "dev"
 
 
 def test_process_element_emits_nothing_when_not_auto_approved(
