@@ -158,6 +158,14 @@ class MediaTranscriptionRequest:
         channel: The owning channel of the content, carried in the envelope's
             context.channel rather than edata (set at construction time,
             round-trips through to_json/from_json like any other field).
+        isRepublish: True if this request was triggered by a republish of
+            content whose source Transcript was already Live/Review/
+            Processing (Content.lastUpdatedOn newer than the Transcript's),
+            rather than a first-time transcription. Forwarded into the
+            Transcript-approved event on completion so
+            handle_transcript_approved knows to re-translate every
+            currently-configured target language, not just ones missing or
+            previously Draft/Failed.
     """
     contentId: str
     enrichmentId: str
@@ -165,6 +173,7 @@ class MediaTranscriptionRequest:
     artifactUrl: str
     mimeType: str
     channel: str = ""
+    isRepublish: bool = False
 
     @classmethod
     def from_json(cls, raw: str) -> "MediaTranscriptionRequest":
