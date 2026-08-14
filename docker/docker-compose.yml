@@ -1,0 +1,69 @@
+version: "3.8"
+
+services:
+  cassandra:
+    image: cassandra:4.1
+    ports:
+      - "9042:9042"
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  janusgraph:
+    image: janusgraph/janusgraph:1.0.0
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    environment:
+      JANUSGRAPH_STORAGE_BACKEND: cql
+      JANUSGRAPH_STORAGE_HOSTS: cassandra
+    ports:
+      - "8182:8182"
+
+  redpanda:
+    image: redpandadata/redpanda:v24.1.1
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --overprovisioned
+      - --node-id=0
+      # Two listeners: PLAINTEXT for other containers (address "redpanda",
+      # resolvable inside the compose network), OUTSIDE for host-side
+      # processes (e.g. pytest run directly, not in a container) connecting
+      # via localhost:19092 — without this, a host client's initial bootstrap
+      # to localhost:9092 succeeds but then fails once it acts on broker
+      # metadata pointing at hostname "redpanda", unresolvable outside the
+      # compose network.
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092,OUTSIDE://localhost:19092
+    ports:
+      - "9092:9092"
+      - "19092:19092"
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    command: azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+    ports:
+      - "10000:10000"
+
+  jobmanager:
+    image: flink:1.20.5-scala_2.12-java11
+    command: jobmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+    ports:
+      - "8081:8081"
+
+  taskmanager:
+    image: flink:1.20.5-scala_2.12-java11
+    command: taskmanager
+    depends_on:
+      - jobmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 4

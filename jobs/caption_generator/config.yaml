@@ -1,0 +1,68 @@
+job:
+  name: caption-generator
+  parallelism: 4
+  env: ${ENV}
+  # Transcription is a long synchronous CPU call — the default 60s
+  # checkpoint timeout expires mid-transcription, and once that happens
+  # enough times in a row Flink kills the job (restart re-downloads and
+  # re-transcribes the same in-flight request, looking like an infinite loop).
+  checkpointing_interval_ms: 300000
+  checkpointing_timeout_ms: 900000
+
+kafka:
+  brokers: ${KAFKA_BROKERS}
+  group_id: caption-generator
+  topics:
+    transcription_in: ${ENV}.media.transcription.request
+    multilingual_in: ${ENV}.media.multilingual.request
+    transcription_dlq: ${ENV}.media.transcription.dlq
+    multilingual_dlq: ${ENV}.media.multilingual.dlq
+    # Same physical topic enrichment-router reads "input" from — auto-approving
+    # the source transcript here (transcription.auto_approve) writes the
+    # status directly to the graph, bypassing knowledge-platform's own
+    # /transcript/approve API and the "approved" event it pushes. Emitting
+    # the same event here ourselves is what lets enrichment-router still
+    # kick off multilingual generation.
+    enriched_metadata_out: ${ENV}.enriched.metadata
+
+knowlg:
+  # No api_key — internal calls to the knowlg platform require no auth.
+  # object_update/enrichment_read are both hardcoded in KnowlgClient (shared
+  # by every job, platform-wide fixed paths) — nothing left to list here.
+  content_service_url: ${CONTENT_SERVICE_URL}
+
+cloud_storage_type: azure
+cloud_storage_auth_type: OIDC
+cloud_storage_container: ${STORAGE_CONTAINER}
+
+transcription:
+  provider: faster_whisper
+  model: large-v3-turbo
+  device: cpu
+  compute_type: int8
+  auto_approve: false
+  # More windows sampled + majority-voted across the audio, rather than
+  # trusting one or two — lower-resource languages are more likely to get
+  # misdetected as a major language from just a couple of windows.
+  language_detection_segments: 8
+  language_detection_threshold: 0.7
+
+multilingual:
+  provider: litellm
+  model: ${LLM_MODEL}
+  api_key: ${LLM_API_KEY}
+  # Reasoning models (e.g. gpt-5-mini) spend part of this budget on hidden
+  # reasoning tokens before the visible reply - too low truncates the
+  # translated JSON mid-string. batch_size/max_concurrency both sized down
+  # to stay under a tight LLM deployment quota (seen live: 15 req/min,
+  # 40k tokens/min) — fewer segments per call, fewer calls in flight.
+  max_completion_tokens: 4000
+  batch_size: 20
+  max_concurrency: 2
+  context_overlap: 2
+  auto_approve: true
+  # ECAR rebuild readiness (source Live + all languages settled) is now
+  # decided and executed server-side by knowlg's object/update handling
+  # (TranscriptManager.syncAndMaybeBuildEcar) — see that service's own
+  # content.transcript.ecar.allow_failed_languages config for the equivalent
+  # knob; this job no longer builds or uploads an ECAR itself.

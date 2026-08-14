@@ -1,0 +1,39 @@
+job:
+  name: enrichment-router
+  parallelism: 4
+  env: ${ENV}
+
+kafka:
+  brokers: ${KAFKA_BROKERS}
+  group_id: enrichment-router
+  topics:
+    input: ${ENV}.enriched.metadata
+    transcription_out: ${ENV}.media.transcription.request
+    multilingual_out: ${ENV}.media.multilingual.request
+
+knowlg:
+  # No api_key — internal calls to the knowlg platform require no auth.
+  # object_update/object_create/enrichment_read are all hardcoded in
+  # KnowlgClient (shared by every job, platform-wide fixed paths) — nothing
+  # left to list here.
+  content_service_url: ${CONTENT_SERVICE_URL}
+
+# BaseProcessFunction.open() always builds a BlobStorageUtil regardless of
+# whether the job calls it. cloud_storage_type/auth_type/container are
+# get_required in BaseJobConfig; cloud_storage_auth.account_name is also
+# required eagerly for OIDC/IAM (_build_storage_options in blob_util.py) -
+# none of these three lines are actually optional despite this job never
+# touching self.storage afterward. Only cloud_storage_public_endpoint is
+# genuinely safe to omit (lazy, guarded default "").
+cloud_storage_type: azure
+cloud_storage_auth_type: OIDC
+cloud_storage_container: ${STORAGE_CONTAINER}
+cloud_storage_auth:
+  account_name: ${STORAGE_ACCOUNT_NAME}
+
+enrichment:
+  transcript:
+    mime_types:
+      - video/mp4
+      - video/webm
+    languages: []

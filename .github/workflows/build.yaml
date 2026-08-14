@@ -1,0 +1,49 @@
+name: Build
+
+# GITHUB_TOKEN needs packages: write to push to ghcr.io (GitHub Container Registry)
+permissions:
+  contents: read
+  packages: write
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - job: enrichment-router
+            dockerfile: docker/Dockerfile.enrichment-router
+          - job: caption-generator
+            dockerfile: docker/Dockerfile.caption-generator
+    steps:
+      # Step 1: Checkout the code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Login to GHCR
+      - name: Registry Login
+        run: |
+          REPO_NAME_LOWERCASE=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "REGISTRY_URL=ghcr.io/$REPO_NAME_LOWERCASE" >> $GITHUB_ENV
+
+      # Step 3: Build Docker image
+      - name: Build Docker Image
+        run: |
+          IMAGE_NAME="${{ matrix.job }}"
+          IMAGE_TAG=$(echo "${{ github.ref_name }}_$(echo $GITHUB_SHA | cut -c1-7)" | tr '[:upper:]' '[:lower:]')
+          docker build -f ${{ matrix.dockerfile }} -t $REGISTRY_URL/${IMAGE_NAME}:${IMAGE_TAG} .
+
+          echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
+
+      # Step 4: Push Docker image
+      - name: Push Docker Image
+        run: |
+          docker push $REGISTRY_URL/${IMAGE_NAME}:${IMAGE_TAG}
+          echo "Pushed Docker image: $REGISTRY_URL/${IMAGE_NAME}:${IMAGE_TAG}"
