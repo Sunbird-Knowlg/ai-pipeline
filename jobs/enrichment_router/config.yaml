@@ -13,13 +13,10 @@ kafka:
 
 knowlg:
   # No api_key — internal calls to the knowlg platform require no auth.
-  # object_update is hardcoded in KnowlgClient (shared by every job), not
-  # listed here. Only object_create and enrichment_read are actually called
-  # by this job — content_read/object_approve/object_reject are unused here.
+  # object_update/object_create/enrichment_read are all hardcoded in
+  # KnowlgClient (shared by every job, platform-wide fixed paths) — nothing
+  # left to list here.
   content_service_url: ${CONTENT_SERVICE_URL}
-  apis:
-    object_create: /content/v4/enrichment/object/create/{identifier}
-    enrichment_read: /content/v4/enrichment/read/{identifier}
 
 # BaseProcessFunction.open() always builds a BlobStorageUtil regardless of
 # whether the job calls it. cloud_storage_type/auth_type/container are

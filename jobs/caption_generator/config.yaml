@@ -27,12 +27,9 @@ kafka:
 
 knowlg:
   # No api_key — internal calls to the knowlg platform require no auth.
-  # object_update is hardcoded in KnowlgClient (shared by every job), not
-  # listed here. enrichment_read is the only other API this job calls —
-  # object_create/object_approve/object_reject/content_read are unused here.
+  # object_update/enrichment_read are both hardcoded in KnowlgClient (shared
+  # by every job, platform-wide fixed paths) — nothing left to list here.
   content_service_url: ${CONTENT_SERVICE_URL}
-  apis:
-    enrichment_read: /content/v4/enrichment/read/{identifier}
 
 cloud_storage_type: azure
 cloud_storage_auth_type: OIDC

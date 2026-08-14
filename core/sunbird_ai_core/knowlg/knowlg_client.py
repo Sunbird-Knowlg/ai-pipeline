@@ -6,11 +6,12 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# Every job that patches an Enrichment child object (Transcript today) hits
-# this same path - not deployment-specific, so it's fixed here instead of
-# duplicated across every job's config.yaml/values.yaml.
+# These paths are platform-wide and not deployment-specific, so they're
+# fixed here instead of duplicated across every job's config.yaml/values.yaml.
 _HARDCODED_APIS = {
     "object_update": "/content/v4/enrichment/object/update/{identifier}/{objectIdentifier}",
+    "object_create": "/content/v4/enrichment/object/create/{identifier}",
+    "enrichment_read": "/content/v4/enrichment/read/{identifier}",
 }
 
 
