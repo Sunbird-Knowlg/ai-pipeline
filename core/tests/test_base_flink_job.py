@@ -46,12 +46,32 @@ def test_init_configures_env_from_config(mock_env_cls, tmp_path):
 
 @patch("sunbird_ai_core.base.base_flink_job.RestartStrategies")
 @patch("sunbird_ai_core.base.base_flink_job.StreamExecutionEnvironment")
-def test_init_sets_restart_strategy_from_config(mock_env_cls, mock_restart_strategies, tmp_path):
+def test_init_sets_fixed_delay_restart_strategy_when_configured(
+    mock_env_cls, mock_restart_strategies, tmp_path
+):
+    mock_env_cls.get_execution_environment.return_value = MagicMock()
+    config = {**MINIMAL_CONFIG, "job": {**MINIMAL_CONFIG["job"], "restart_strategy": "fixed_delay"}}
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config))
+
+    _ConcreteFlinkJob(str(config_path))
+
+    mock_restart_strategies.fixed_delay_restart.assert_called_once_with(5, 2000)
+
+
+@patch("sunbird_ai_core.base.base_flink_job.RestartStrategies")
+@patch("sunbird_ai_core.base.base_flink_job.StreamExecutionEnvironment")
+def test_init_defaults_to_failure_rate_restart_strategy(mock_env_cls, mock_restart_strategies, tmp_path):
+    # failure_rate is the default because a fixed lifetime restart counter
+    # (fixed_delay) exhausts permanently over weeks/months of otherwise
+    # healthy uptime — failure_rate bounds failures per rolling window
+    # instead.
     mock_env_cls.get_execution_environment.return_value = MagicMock()
 
     _ConcreteFlinkJob(_write_config(tmp_path))
 
-    mock_restart_strategies.fixed_delay_restart.assert_called_once_with(5, 2000)
+    mock_restart_strategies.failure_rate_restart.assert_called_once_with(3, 300000, 2000)
+    mock_restart_strategies.fixed_delay_restart.assert_not_called()
 
 
 @patch("sunbird_ai_core.base.base_flink_job.StreamExecutionEnvironment")

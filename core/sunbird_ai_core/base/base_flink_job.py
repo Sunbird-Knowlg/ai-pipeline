@@ -41,15 +41,26 @@ class BaseFlinkJob(ABC):
 
         self.env.enable_checkpointing(self.config.checkpointing_interval_ms)
         self.env.get_checkpoint_config().set_checkpoint_timeout(self.config.checkpointing_timeout_ms)
-        self.env.set_restart_strategy(
-            RestartStrategies.fixed_delay_restart(self.config.restart_attempts, self.config.restart_delay_ms)
-        )
+        if self.config.restart_strategy == "fixed_delay":
+            self.env.set_restart_strategy(
+                RestartStrategies.fixed_delay_restart(
+                    self.config.restart_attempts, self.config.restart_delay_ms
+                )
+            )
+        else:
+            self.env.set_restart_strategy(
+                RestartStrategies.failure_rate_restart(
+                    self.config.failure_rate_max_failures,
+                    self.config.failure_rate_interval_ms,
+                    self.config.restart_delay_ms,
+                )
+            )
         logger.debug(
             "Checkpointing configured",
             extra={
                 "interval_ms": self.config.checkpointing_interval_ms,
                 "timeout_ms": self.config.checkpointing_timeout_ms,
-                "restart_attempts": self.config.restart_attempts,
+                "restart_strategy": self.config.restart_strategy,
                 "restart_delay_ms": self.config.restart_delay_ms,
             },
         )

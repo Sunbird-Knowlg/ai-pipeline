@@ -50,14 +50,40 @@ class BaseJobConfig:
         return int(self._config.get("job.checkpointing_timeout_ms", 60000))
 
     @property
+    def restart_strategy(self) -> str:
+        """str: "failure_rate" (default) or "fixed_delay". failure_rate
+        bounds failures per rolling time window instead of a lifetime
+        counter, so sporadic transient failures over weeks/months of uptime
+        don't accumulate against a fixed budget and permanently fail the
+        job — see failure_rate_max_failures/failure_rate_interval_ms.
+        """
+        return self._config.get("job.restart_strategy", "failure_rate")
+
+    @property
     def restart_attempts(self) -> int:
-        """int: The maximum number of restart attempts before job failure (defaults to 3)."""
+        """int: The maximum number of restart attempts before job failure,
+        for the "fixed_delay" restart_strategy (defaults to 3)."""
         return int(self._config.get("job.restart_attempts", 3))
 
     @property
     def restart_delay_ms(self) -> int:
-        """int: The delay duration in milliseconds between restart attempts (defaults to 10000)."""
+        """int: The delay duration in milliseconds between restart attempts,
+        for either restart_strategy (defaults to 10000)."""
         return int(self._config.get("job.restart_delay_ms", 10000))
+
+    @property
+    def failure_rate_max_failures(self) -> int:
+        """int: Maximum restarts allowed within failure_rate_interval_ms
+        before failing the job, for the "failure_rate" restart_strategy
+        (defaults to 3)."""
+        return int(self._config.get("job.failure_rate_max_failures", 3))
+
+    @property
+    def failure_rate_interval_ms(self) -> int:
+        """int: The rolling time window in milliseconds that
+        failure_rate_max_failures is measured over, for the "failure_rate"
+        restart_strategy (defaults to 300000, i.e. 5 minutes)."""
+        return int(self._config.get("job.failure_rate_interval_ms", 300000))
 
     @property
     def kafka_brokers(self) -> str:
