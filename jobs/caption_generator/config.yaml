@@ -1,6 +1,7 @@
 job:
   name: caption-generator
   parallelism: 4
+  env: ${ENV}
   # Transcription is a long synchronous CPU call — the default 60s
   # checkpoint timeout expires mid-transcription, and once that happens
   # enough times in a row Flink kills the job (restart re-downloads and
