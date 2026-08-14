@@ -55,6 +55,19 @@ def test_gcp_rejects_unsupported_auth_type():
         _build_storage_options("gcp", "ACCESS_KEY", {})
 
 
+def test_unsupported_storage_type_raises_via_constructor():
+    # Regression: the scheme lookup used to run before _build_storage_options,
+    # so a bad cloud_storage_type raised a bare KeyError here instead of the
+    # clear ValueError _build_storage_options already produces.
+    with pytest.raises(ValueError):
+        BlobStorageUtil(
+            cloud_storage_type="azur",
+            cloud_storage_auth_type="DEV",
+            container="test-container",
+            auth_config={},
+        )
+
+
 def test_uri_construction():
     util = BlobStorageUtil(
         cloud_storage_type="azure",

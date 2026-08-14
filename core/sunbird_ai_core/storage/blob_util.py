@@ -101,12 +101,12 @@ class BlobStorageUtil:
             auth_config: Dictionary containing authentication credentials.
             public_endpoint: Optional public domain proxy URL endpoint.
         """
-        self._scheme = _SCHEME_BY_STORAGE_TYPE[cloud_storage_type]
-        self._container = container
-        self._public_endpoint = public_endpoint
         self._storage_options = _build_storage_options(
             cloud_storage_type, cloud_storage_auth_type, auth_config
         )
+        self._scheme = _SCHEME_BY_STORAGE_TYPE[cloud_storage_type]
+        self._container = container
+        self._public_endpoint = public_endpoint
 
     def _uri(self, object_key: str) -> str:
         """Constructs the internal private URI for an object key.
