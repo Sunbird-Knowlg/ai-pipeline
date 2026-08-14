@@ -12,6 +12,7 @@ _HARDCODED_APIS = {
     "object_update": "/content/v4/enrichment/object/update/{identifier}/{objectIdentifier}",
     "object_create": "/content/v4/enrichment/object/create/{identifier}",
     "enrichment_read": "/content/v4/enrichment/read/{identifier}",
+    "content_read": "/content/v4/read/{identifier}",
 }
 
 
