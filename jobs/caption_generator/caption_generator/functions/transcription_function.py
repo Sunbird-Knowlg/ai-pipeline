@@ -237,6 +237,7 @@ class TranscriptionFunction(BaseProcessFunction):
                         "sourceLanguage": True,
                         "languageCode": language_code,
                         "channel": request.channel,
+                        "isRepublish": request.isRepublish,
                     },
                 )
                 self.logger.info(
