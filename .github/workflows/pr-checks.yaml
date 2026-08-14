@@ -38,7 +38,11 @@ jobs:
           cache: 'pip'
 
       - name: Install core test dependencies
-        run: pip install -e "core/[test]"
+        # core/sunbird_ai_core/base/*.py imports pyflink directly, but
+        # apache-flink is only declared as a dependency in each job's own
+        # pyproject.toml (pinned to match the Docker base image), not
+        # core's — install it explicitly here to match.
+        run: pip install -e "core/[test]" "apache-flink==1.20.5"
 
       - name: Run core tests
         run: pytest core/tests -m "not integration"
