@@ -1,0 +1,31 @@
+[project]
+name = "enrichment-router"
+version = "0.1.0"
+description = "Routes content publish and transcript approval events to downstream AI job topics"
+requires-python = ">=3.11"
+# sunbird-ai-core is installed separately (pip install -e ../../core), not
+# declared here — see root Makefile packaging targets.
+dependencies = [
+    # Pinned exact to match the Flink JVM baked into the Docker base image
+    # (flink:1.20.5-scala_2.12-java11) - bump both together.
+    "apache-flink==1.20.5",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.14.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["enrichment_router*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires local docker-compose stack (Kafka)",
+]

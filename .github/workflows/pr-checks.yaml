@@ -1,0 +1,82 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+    branches:
+      - '*'
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install lint dependencies
+        run: make install
+
+      - name: Run ruff + mypy
+        run: make lint
+
+  test-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install core test dependencies
+        # core/sunbird_ai_core/base/*.py imports pyflink directly, but
+        # apache-flink is only declared as a dependency in each job's own
+        # pyproject.toml (pinned to match the Docker base image), not
+        # core's — install it explicitly here to match.
+        run: pip install -e "core/[test]" "apache-flink==1.20.5"
+
+      - name: Run core tests
+        run: pytest core/tests -m "not integration"
+
+  test-enrichment-router:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install enrichment-router test dependencies
+        run: pip install -e core/ -e "jobs/enrichment_router/[test]"
+
+      - name: Run enrichment-router tests
+        run: pytest jobs/enrichment_router/tests -m "not integration"
+
+  test-caption-generator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install caption-generator test dependencies
+        run: pip install -e core/ -e "jobs/caption_generator/[test]"
+
+      - name: Run caption-generator tests
+        run: pytest jobs/caption_generator/tests -m "not integration"

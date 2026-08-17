@@ -1,0 +1,31 @@
+[project]
+name = "sunbird-ai-platform"
+version = "0.1.0"
+description = "Sunbird AI Flink jobs — enrichment-router and caption-generator"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = [
+    "core/tests",
+    "jobs/enrichment_router/tests",
+    "jobs/caption_generator/tests",
+]
+markers = [
+    "integration: requires local docker-compose stack (Kafka, Azurite)",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.mypy]
+python_version = "3.11"
+
+# No stubs exist anywhere (not inline, not a types-* package) for these —
+# nothing to install, so silence the import-untyped noise per-module.
+[[tool.mypy.overrides]]
+module = ["pyflink.*", "fsspec.*", "faster_whisper.*"]
+ignore_missing_imports = true

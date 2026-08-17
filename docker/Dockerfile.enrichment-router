@@ -1,0 +1,42 @@
+FROM flink:1.20.5-scala_2.12-java11
+
+# apache-flink 1.20.x ships a real prebuilt cp311 wheel (unlike 1.18.1,
+# which was source-only and needed a compiler + a pemja/numpy override) —
+# no build-essential/python3.11-dev needed here.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3.11 python3.11-venv python3-pip && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python
+
+# PyFlink's Python KafkaSource/KafkaSink are thin wrappers that call into
+# the real Java connector class at runtime — the base flink image ships
+# only core Flink, not connectors, so without this jar job startup fails
+# with "Could not found the Java class ...KafkaSource.builder". Version
+# suffix must match the Flink minor version (1.20.x here).
+RUN wget -q -P /opt/flink/lib/ \
+    https://repo.maven.apache.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.4.0-1.20/flink-sql-connector-kafka-3.4.0-1.20.jar
+
+COPY core/ /opt/sunbird-ai/core/
+COPY jobs/enrichment_router/ /opt/sunbird-ai/jobs/enrichment_router/
+
+# Plain (non-editable) installs, explicitly via python3.11's own pip — the
+# image is built once and never edited in place, so there's no reason to
+# want -e here, and -e requires a PEP 660-capable build backend that isn't
+# reliably resolvable through apt's python3-pip (which targets the base
+# image's default python, not 3.11, and can be too old for PEP 660 anyway).
+RUN python3.11 -m pip install --no-cache-dir --upgrade pip && \
+    python3.11 -m pip install --no-cache-dir /opt/sunbird-ai/core/ && \
+    python3.11 -m pip install --no-cache-dir apache-flink==1.20.5 && \
+    python3.11 -m pip install --no-cache-dir /opt/sunbird-ai/jobs/enrichment_router/
+
+WORKDIR /opt/sunbird-ai/jobs/enrichment_router
+
+# No custom ENTRYPOINT/CMD here — the base flink image's own
+# /docker-entrypoint.sh (inherited) dispatches on the first arg
+# (jobmanager | standalone-job | taskmanager) to start the right process
+# in Application Mode. The py-flink Helm chart's JobManager/TaskManager
+# Deployments supply the actual command/args (standalone-job with
+# --job-classname org.apache.flink.client.python.PythonDriver -py
+# enrichment_router/main.py for the JM; taskmanager for the TM) — see
+# templates/deployment.yaml in that chart.
