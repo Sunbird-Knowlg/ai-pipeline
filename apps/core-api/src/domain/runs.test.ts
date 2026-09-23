@@ -7,7 +7,7 @@ import {
   metadataOf,
   triggerOf,
 } from '../testing/restate.js';
-import { cancelRun, getRun, listRuns, startRun } from './runs.js';
+import { cancelRun, getRun, killRun, listRuns, resumeRun, startRun } from './runs.js';
 
 /**
  * The run-start precondition chain, which used to live inside the route handler and had no tests.
@@ -256,6 +256,91 @@ describe('cancelRun', () => {
     await expect(cancelRun(gone, 'content-enrichment', 'api_1')).rejects.toMatchObject({
       code: 'NOT_FOUND',
       statusCode: 404,
+    });
+  });
+});
+
+describe('killRun', () => {
+  const row = {
+    id: 'inv_1',
+    target_service_name: 'ContentEnrichment',
+    target_service_key: 'api_1',
+    status: 'running',
+    created_at: '2026-01-01T00:00:00.000Z',
+  };
+
+  it('kills without waiting for the handler to unwind', async () => {
+    const cp = fakeControlPlane({ seed: { definitions: [definitionOf()] } });
+    cp.admin.rows = [row];
+    await expect(killRun(cp, 'content-enrichment', 'api_1')).resolves.toEqual({
+      runId: 'api_1',
+      invocationId: 'inv_1',
+      status: 'kill_requested',
+    });
+  });
+
+  it('refuses a run that has already completed', async () => {
+    const cp = fakeControlPlane({
+      seed: { definitions: [definitionOf()] },
+      admin: { killInvocation: async () => 'completed' },
+    });
+    cp.admin.rows = [row];
+    await expect(killRun(cp, 'content-enrichment', 'api_1')).rejects.toMatchObject({
+      code: 'RUN_COMPLETED',
+      statusCode: 409,
+    });
+  });
+});
+
+describe('resumeRun', () => {
+  const paused = {
+    id: 'inv_1',
+    target_service_name: 'ContentEnrichment',
+    target_service_key: 'api_1',
+    status: 'paused',
+    created_at: '2026-01-01T00:00:00.000Z',
+  };
+
+  it('resumes a paused run, which is the counterpart to pausing on exhausted retries', async () => {
+    const cp = fakeControlPlane({ seed: { definitions: [definitionOf()] } });
+    cp.admin.rows = [paused];
+    await expect(resumeRun(cp, 'content-enrichment', 'api_1')).resolves.toEqual({
+      runId: 'api_1',
+      invocationId: 'inv_1',
+      status: 'resume_requested',
+    });
+  });
+
+  it('refuses a run that is not paused, and says why', async () => {
+    const cp = fakeControlPlane({
+      seed: { definitions: [definitionOf()] },
+      admin: { resumeInvocation: async () => 'not_paused' },
+    });
+    cp.admin.rows = [paused];
+    const error = (await resumeRun(cp, 'content-enrichment', 'api_1').catch(
+      (e: unknown) => e,
+    )) as PipelineError;
+    expect(error).toMatchObject({ code: 'RUN_NOT_RESUMABLE', statusCode: 409 });
+    expect(error.message).toMatch(/only a paused run can be resumed/);
+  });
+
+  it('404s on a run Restate does not know', async () => {
+    const cp = fakeControlPlane({
+      seed: { definitions: [definitionOf()] },
+      admin: { resumeInvocation: async () => 'not_found' },
+    });
+    cp.admin.rows = [paused];
+    await expect(resumeRun(cp, 'content-enrichment', 'api_1')).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+    });
+  });
+
+  it('reports a paused run as `paused`, so an operator can find it to resume', async () => {
+    const cp = fakeControlPlane({ seed: { definitions: [definitionOf()] } });
+    cp.admin.rows = [paused];
+    await expect(getRun(cp, 'content-enrichment', 'api_1')).resolves.toMatchObject({
+      status: 'paused',
     });
   });
 });

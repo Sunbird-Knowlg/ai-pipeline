@@ -112,6 +112,18 @@ export function inFlightSql(deploymentId: string): string {
   return `SELECT count(*) AS n FROM sys_invocation WHERE pinned_deployment_id = ${quote(deploymentId)} AND status <> 'completed'`;
 }
 
+/**
+ * In-flight counts for many deployments at once, as one grouped query.
+ *
+ * The listing endpoint needs a count per deployment, and asking per deployment costs one round trip
+ * each — which with accumulated build history reached dozens of queries for a single request.
+ * Deployments with nothing pinned to them are absent from the result, so callers default to 0.
+ */
+export function inFlightByDeploymentSql(deploymentIds: string[]): string {
+  const ids = deploymentIds.map(quote).join(', ');
+  return `SELECT pinned_deployment_id AS id, count(*) AS n FROM sys_invocation WHERE pinned_deployment_id IN (${ids}) AND status <> 'completed' GROUP BY pinned_deployment_id`;
+}
+
 /** The `trigger` and `version` state the workflows record at their start, keyed `service/runId`. */
 export async function runState(
   admin: Pick<RestateAdminPort, 'query'>,

@@ -11,16 +11,19 @@ import { triggerViews } from './triggers.js';
  */
 
 export async function listUnits(cp: ControlPlane, kind?: UnitKind): Promise<WorkflowSummary[]> {
-  const [definitions, deployments] = await Promise.all([
+  // The subscription list is global and is fetched once here, not once per unit: Restate offers no
+  // per-service subscription endpoint, so the naive version costs one round trip per catalogued unit.
+  const [definitions, deployments, subscriptions] = await Promise.all([
     cp.store.definitions.listCurrent(kind),
     cp.store.deployments.list(),
+    cp.admin.listSubscriptions(),
   ]);
   return Promise.all(
     definitions.map(async (definition) =>
       toWorkflowSummary(
         definition,
         deployments.find((d) => d.name === definition.name && d.status === 'active')?.deploymentId,
-        await triggerViews(cp, definition.name),
+        await triggerViews(cp, definition.name, subscriptions),
       ),
     ),
   );

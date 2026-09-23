@@ -1,13 +1,15 @@
 import { responseSchema } from '@ai-pipeline/api-contract/serialization';
 import {
   runCancelling,
+  runKilling,
   runList,
   runParams,
   runQuery,
+  runResuming,
   runView,
 } from '@ai-pipeline/api-contract/runs';
 import type { FastifyInstance } from 'fastify';
-import { cancelRun, getRun, listRuns } from '../domain/runs.js';
+import { cancelRun, getRun, killRun, listRuns, resumeRun } from '../domain/runs.js';
 
 /** Runs. Restate is the store; these routes read it and ask it to cancel. */
 export async function runRoutes(app: FastifyInstance): Promise<void> {
@@ -32,6 +34,26 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const { workflow, runId } = runParams.parse(request.params);
       return reply.code(202).send(await cancelRun(cp, workflow, runId));
+    },
+  );
+
+  // Cancel asks a handler to finish; kill does not wait. Both are needed by an operator.
+  app.post(
+    '/runs/:workflow/:runId/kill',
+    { schema: { response: { 202: responseSchema(runKilling) } } },
+    async (request, reply) => {
+      const { workflow, runId } = runParams.parse(request.params);
+      return reply.code(202).send(await killRun(cp, workflow, runId));
+    },
+  );
+
+  // The counterpart to the retry policy pausing an invocation rather than failing it.
+  app.post(
+    '/runs/:workflow/:runId/resume',
+    { schema: { response: { 202: responseSchema(runResuming) } } },
+    async (request, reply) => {
+      const { workflow, runId } = runParams.parse(request.params);
+      return reply.code(202).send(await resumeRun(cp, workflow, runId));
     },
   );
 }

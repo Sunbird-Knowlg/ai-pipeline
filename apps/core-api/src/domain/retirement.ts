@@ -1,7 +1,7 @@
 import type { DeploymentRetired } from '@ai-pipeline/api-contract/deployments';
 import { assert, notFound } from '../errors.js';
 import type { RestateAdminPort } from '../restate/admin.js';
-import { inFlightSql } from '../restate/invocations.js';
+import { inFlightByDeploymentSql, inFlightSql } from '../restate/invocations.js';
 import type { ControlPlane } from './deps.js';
 
 /** Invocations still pinned to a deployment. They must finish there before it can be removed. */
@@ -11,6 +11,18 @@ export async function inFlight(
 ): Promise<number> {
   const [row] = await admin.query<{ n: number }>(inFlightSql(deploymentId));
   return Number(row?.n ?? 0);
+}
+
+/**
+ * In-flight counts for a whole set of deployments, in one query. Absent ids have nothing pinned.
+ */
+export async function inFlightByDeployment(
+  admin: Pick<RestateAdminPort, 'query'>,
+  deploymentIds: string[],
+): Promise<Map<string, number>> {
+  if (deploymentIds.length === 0) return new Map();
+  const rows = await admin.query<{ id: string; n: number }>(inFlightByDeploymentSql(deploymentIds));
+  return new Map(rows.map((row) => [row.id, Number(row.n)]));
 }
 
 /**

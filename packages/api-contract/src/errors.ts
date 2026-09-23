@@ -29,6 +29,7 @@ export const ERROR_CODES = [
   'NO_REST_TRIGGER',
   'TRIGGER_DISABLED',
   'RUN_COMPLETED',
+  'RUN_NOT_RESUMABLE',
   // Registration conflicts: bump the version, or deploy the dependency first.
   'RESTATE_NAME_TAKEN',
   'VERSION_CONTRACT_CONFLICT',

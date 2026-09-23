@@ -18,6 +18,8 @@ export interface FakeAdmin extends RestateAdminPort {
   rows: Record<string, unknown>[];
   deleted: string[];
   clusters: string[];
+  /** How many times each method was called — the read paths' round-trip counts are worth asserting. */
+  calls: Record<string, number>;
   /** Set to make the next `createSubscription` throw. */
   failCreate?: string;
 }
@@ -31,6 +33,7 @@ export function fakeAdmin(overrides: Partial<FakeAdmin> = {}): FakeAdmin {
     rows: [],
     deleted: [],
     clusters: [],
+    calls: {},
 
     health: async () => true,
 
@@ -59,7 +62,10 @@ export function fakeAdmin(overrides: Partial<FakeAdmin> = {}): FakeAdmin {
       return deploymentId === undefined ? undefined : { deployment_id: deploymentId, revision: 1 };
     },
 
-    listSubscriptions: async () => [...admin.subscriptions],
+    listSubscriptions: async () => {
+      admin.calls.listSubscriptions = (admin.calls.listSubscriptions ?? 0) + 1;
+      return [...admin.subscriptions];
+    },
 
     createSubscription: async (source, sink, options) => {
       if (admin.failCreate) throw new Error(admin.failCreate);
@@ -72,9 +78,16 @@ export function fakeAdmin(overrides: Partial<FakeAdmin> = {}): FakeAdmin {
       admin.subscriptions = admin.subscriptions.filter((s) => s.id !== id);
     },
 
-    query: async <T>() => admin.rows as T[],
+    query: async <T>() => {
+      admin.calls.query = (admin.calls.query ?? 0) + 1;
+      return admin.rows as T[];
+    },
 
     cancelInvocation: async () => 'requested',
+
+    killInvocation: async () => 'requested',
+
+    resumeInvocation: async () => 'requested',
 
     ...overrides,
   };

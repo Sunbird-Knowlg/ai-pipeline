@@ -1,4 +1,11 @@
-import type { RunCancelling, RunList, RunQuery, RunView } from '@ai-pipeline/api-contract/runs';
+import type {
+  RunCancelling,
+  RunKilling,
+  RunList,
+  RunQuery,
+  RunResuming,
+  RunView,
+} from '@ai-pipeline/api-contract/runs';
 import type { StartRunAccepted } from '@ai-pipeline/api-contract/workflows';
 import { apiRunId } from '@ai-pipeline/metadata/run-ids';
 import { assert, notFound, PipelineError } from '../errors.js';
@@ -140,6 +147,42 @@ export async function cancelRun(
   assert(outcome !== 'not_found', 'NOT_FOUND', 'run not found', 404);
   assert(outcome !== 'completed', 'RUN_COMPLETED', 'the run has already completed', 409);
   return { runId, invocationId: row.id, status: 'cancellation_requested' };
+}
+
+/**
+ * Killing a run: no unwinding, no compensation, children abandoned. For a run that cancel cannot
+ * stop — cancel asks the handler to finish, kill does not.
+ */
+export async function killRun(cp: ControlPlane, name: string, runId: string): Promise<RunKilling> {
+  const { row } = await findRun(cp, name, runId);
+  const outcome = await cp.admin.killInvocation(row.id);
+  assert(outcome !== 'not_found', 'NOT_FOUND', 'run not found', 404);
+  assert(outcome !== 'completed', 'RUN_COMPLETED', 'the run has already completed', 409);
+  return { runId, invocationId: row.id, status: 'kill_requested' };
+}
+
+/**
+ * Resuming a paused run.
+ *
+ * Runs pause instead of failing when their retries run out, which is deliberate: an LLM gateway
+ * outage should not destroy a run's journal. That choice only works if a paused run can be resumed
+ * once the cause is fixed, which is what this is for.
+ */
+export async function resumeRun(
+  cp: ControlPlane,
+  name: string,
+  runId: string,
+): Promise<RunResuming> {
+  const { row } = await findRun(cp, name, runId);
+  const outcome = await cp.admin.resumeInvocation(row.id);
+  assert(outcome !== 'not_found', 'NOT_FOUND', 'run not found', 404);
+  assert(
+    outcome !== 'not_paused',
+    'RUN_NOT_RESUMABLE',
+    'only a paused run can be resumed; this one is running or has completed',
+    409,
+  );
+  return { runId, invocationId: row.id, status: 'resume_requested' };
 }
 
 async function findRun(

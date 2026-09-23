@@ -40,6 +40,10 @@ export interface RestateAdminPort {
   /** SQL introspection (DataFusion). Callers must only interpolate quoted/validated values. */
   query<T>(sql: string): Promise<T[]>;
   cancelInvocation(id: string): Promise<'requested' | 'completed' | 'not_found'>;
+  /** Kills an invocation without letting it unwind. */
+  killInvocation(id: string): Promise<'requested' | 'completed' | 'not_found'>;
+  /** Resumes a paused invocation. `not_paused` covers running, completed and unknown-state. */
+  resumeInvocation(id: string): Promise<'requested' | 'not_paused' | 'not_found'>;
 }
 
 /** Thin typed client for the Restate Admin API (control plane only; ingress uses the SDK client). */
@@ -176,9 +180,35 @@ export class RestateAdmin implements RestateAdminPort {
 
   /** 'requested' | 'completed' (already finished) | 'not_found' */
   async cancelInvocation(id: string): Promise<'requested' | 'completed' | 'not_found'> {
+    return this.lifecycle(id, 'cancel');
+  }
+
+  async killInvocation(id: string): Promise<'requested' | 'completed' | 'not_found'> {
+    return this.lifecycle(id, 'kill');
+  }
+
+  /**
+   * Resumes a paused invocation. Restate answers 409 when it is not paused — already running,
+   * or completed — and 400/404 when the id is not one it knows.
+   */
+  async resumeInvocation(id: string): Promise<'requested' | 'not_paused' | 'not_found'> {
     const { status } = await this.call(
       'PATCH',
-      `/invocations/${encodeURIComponent(id)}/cancel`,
+      `/invocations/${encodeURIComponent(id)}/resume`,
+      undefined,
+      [400, 404, 409],
+    );
+    if (status === 409) return 'not_paused';
+    return status === 400 || status === 404 ? 'not_found' : 'requested';
+  }
+
+  private async lifecycle(
+    id: string,
+    action: 'cancel' | 'kill',
+  ): Promise<'requested' | 'completed' | 'not_found'> {
+    const { status } = await this.call(
+      'PATCH',
+      `/invocations/${encodeURIComponent(id)}/${action}`,
       undefined,
       [404, 409],
     );

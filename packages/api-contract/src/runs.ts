@@ -54,3 +54,28 @@ export const runCancelling = z.object({
   status: z.literal('cancellation_requested'),
 });
 export type RunCancelling = z.infer<typeof runCancelling>;
+
+/**
+ * Resuming a paused run.
+ *
+ * Runs pause rather than fail when their retries are exhausted — an LLM gateway outage should not
+ * lose work — so resuming one is a routine operation, not an escape hatch. Without it a paused run
+ * could only be revived with the Restate CLI.
+ */
+export const runResuming = z.object({
+  runId: z.string(),
+  invocationId: z.string(),
+  status: z.literal('resume_requested'),
+});
+export type RunResuming = z.infer<typeof runResuming>;
+
+/**
+ * Killing a run. Unlike cancel, this does not let the handler unwind: no compensation runs and
+ * children are abandoned. It is for a run that cancel cannot stop.
+ */
+export const runKilling = z.object({
+  runId: z.string(),
+  invocationId: z.string(),
+  status: z.literal('kill_requested'),
+});
+export type RunKilling = z.infer<typeof runKilling>;

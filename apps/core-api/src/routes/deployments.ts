@@ -10,7 +10,7 @@ import { responseSchema } from '@ai-pipeline/api-contract/serialization';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { registerDeployment } from '../domain/registration.js';
-import { inFlight, retireDeployment } from '../domain/retirement.js';
+import { inFlightByDeployment, retireDeployment } from '../domain/retirement.js';
 import { toDeploymentView } from '../views.js';
 
 /** The control plane. Only `pnpm pipeline` talks to these routes. */
@@ -32,17 +32,16 @@ export async function deploymentRoutes(app: FastifyInstance): Promise<void> {
     async (request) => {
       const { name } = deploymentQuery.parse(request.query);
       const deployments = await cp.store.deployments.list(name);
+      // A retired deployment has nothing pinned to it by definition, so it is not worth asking
+      // about; the rest are counted in a single grouped query rather than one query each.
+      const live = deployments.filter((d) => d.status !== 'retired');
+      const counts = await inFlightByDeployment(
+        cp.admin,
+        live.map((d) => d.deploymentId),
+      );
       return {
-        deployments: await Promise.all(
-          deployments.map(async (deployment) =>
-            toDeploymentView(
-              deployment,
-              // A retired deployment has nothing pinned to it by definition; don't ask Restate.
-              deployment.status === 'retired'
-                ? 0
-                : await inFlight(cp.admin, deployment.deploymentId),
-            ),
-          ),
+        deployments: deployments.map((deployment) =>
+          toDeploymentView(deployment, counts.get(deployment.deploymentId) ?? 0),
         ),
       };
     },

@@ -15,12 +15,25 @@ import {
  * actually consuming, and this module converges the two.
  */
 
-/** Trigger state with observed status read live from Restate. */
-export async function triggerViews(cp: ControlPlane, name: string): Promise<TriggerView[]> {
+/**
+ * Trigger state with observed status read live from Restate.
+ *
+ * `subscriptions` is the global subscription list. Pass it when views are being built for more than
+ * one unit: Restate has no per-service subscription endpoint, so every call otherwise fetches the
+ * same global list again — one HTTP round trip per unit listed.
+ */
+export async function triggerViews(
+  cp: ControlPlane,
+  name: string,
+  subscriptions?: Subscription[],
+): Promise<TriggerView[]> {
   const definition = await cp.store.definitions.current(name);
   if (!definition) throw notFound(`workflow ${name}`);
   const records = await cp.store.triggers.list(name);
-  const live = await ownedSubscriptions(cp, definition.restateName);
+  const prefix = sinkPrefix(definition.restateName);
+  const live = (subscriptions ?? (await cp.admin.listSubscriptions())).filter((s) =>
+    s.sink.startsWith(prefix),
+  );
   const sinks = desiredSubscriptions(definition.metadata, () => true);
   return records.map((record) =>
     toTriggerView(record, subscriptionFor(record.triggerId, sinks, live)),
@@ -58,11 +71,12 @@ async function reconcile(cp: ControlPlane, name: string): Promise<TriggerView[]>
     }
   }
 
-  const live = await ownedSubscriptions(cp, definition.restateName);
+  const live = await cp.admin.listSubscriptions();
+  const owned = live.filter((s) => s.sink.startsWith(prefix));
   const sinks = desiredSubscriptions(definition.metadata, () => true);
   for (const record of records) {
     const subscription =
-      diff.keep.get(record.triggerId) ?? subscriptionFor(record.triggerId, sinks, live);
+      diff.keep.get(record.triggerId) ?? subscriptionFor(record.triggerId, sinks, owned);
     const status = observedStatus(
       {
         type: record.type,
@@ -77,7 +91,7 @@ async function reconcile(cp: ControlPlane, name: string): Promise<TriggerView[]>
       error: errors.get(record.triggerId) ?? null,
     });
   }
-  return triggerViews(cp, name);
+  return triggerViews(cp, name, live);
 }
 
 export async function setTriggerEnabled(
@@ -90,12 +104,6 @@ export async function setTriggerEnabled(
   if (!updated) throw notFound(`trigger ${name}/${triggerId}`);
   const views = await reconcileTriggers(cp, name);
   return views.find((view) => view.id === triggerId)!;
-}
-
-/** Live subscriptions whose sink belongs to this workflow's trigger service. */
-async function ownedSubscriptions(cp: ControlPlane, restateName: string): Promise<Subscription[]> {
-  const prefix = sinkPrefix(restateName);
-  return (await cp.admin.listSubscriptions()).filter((s) => s.sink.startsWith(prefix));
 }
 
 function subscriptionFor(
