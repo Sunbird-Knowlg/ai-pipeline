@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Endpoints of the package graph (apps/*): nothing imports them, so they emit no declarations.
+  "extends": "./base.json"
+}

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Packages and deployable units: imported by other packages and by tests, so they emit types.
+  // declarationMap keeps go-to-definition landing on the source instead of the .d.ts.
+  "extends": "./base.json",
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true
+  }
+}

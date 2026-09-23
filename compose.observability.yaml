@@ -1,0 +1,130 @@
+# Observability overlay:
+#   docker compose -f compose.yaml -f compose.observability.yaml up -d
+# Adds Langfuse (LLM traces, tokens, cost) and points the OTel collector and LiteLLM at it.
+# Langfuse UI: http://127.0.0.1:3001 (sign up locally; the seeded project uses the .env keys).
+# Needs roughly 4 GB of extra memory (ClickHouse, Langfuse web + worker).
+
+x-langfuse-env: &langfuse-env
+  DATABASE_URL: postgres://pipeline:${POSTGRES_PASSWORD}@postgres:5432/langfuse
+  NEXTAUTH_URL: http://localhost:3001
+  SALT: ${LANGFUSE_SALT:?set in .env}
+  ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?set in .env}
+  TELEMETRY_ENABLED: 'false'
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: langfuse
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set in .env}
+  CLICKHOUSE_CLUSTER_ENABLED: 'false'
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?set in .env}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://seaweedfs:8333
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: 'true'
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://seaweedfs:8333
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: 'true'
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+  REDIS_HOST: langfuse-redis
+  REDIS_PORT: 6379
+
+services:
+  langfuse-web:
+    image: docker.langfuse.com/langfuse/langfuse:4.38.0
+    restart: unless-stopped
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?set in .env}
+      LANGFUSE_INIT_ORG_ID: ai-pipeline-local
+      LANGFUSE_INIT_ORG_NAME: AI Pipeline
+      LANGFUSE_INIT_PROJECT_ID: ai-pipeline
+      LANGFUSE_INIT_PROJECT_NAME: AI Pipeline (Restate)
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_DEFAULT_ORG_ID: ai-pipeline-local
+      LANGFUSE_DEFAULT_ORG_ROLE: VIEWER
+      LANGFUSE_DEFAULT_PROJECT_ID: ai-pipeline
+      LANGFUSE_DEFAULT_PROJECT_ROLE: VIEWER
+    ports:
+      - 127.0.0.1:3001:3000
+    depends_on:
+      postgres: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      langfuse-redis: { condition: service_started }
+      seaweedfs: { condition: service_started }
+
+  langfuse-worker:
+    image: docker.langfuse.com/langfuse/langfuse-worker:4.38.0
+    restart: unless-stopped
+    environment: *langfuse-env
+    depends_on:
+      langfuse-web: { condition: service_started }
+
+  langfuse-redis:
+    image: redis:7.4.11-alpine
+    restart: unless-stopped
+    command:
+      [
+        'redis-server',
+        '--appendonly',
+        'yes',
+        '--maxmemory',
+        '256mb',
+        '--maxmemory-policy',
+        'noeviction',
+      ]
+    volumes:
+      - langfuse-redis-data:/data
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.12.11.4
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:8123/ping']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # S3-compatible blob store for Langfuse events/media (same choice as the reference project).
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47
+    restart: unless-stopped
+    command: ['mini', '-dir=/data', '-ip=seaweedfs', '-admin.ui=false', '-webdav=false']
+    environment:
+      S3_BUCKET: langfuse
+      AWS_ACCESS_KEY_ID: langfuse
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+    volumes:
+      - seaweedfs-data:/data
+
+  # Overrides: traces go to Langfuse, and LiteLLM reports every generation (tokens, cost).
+  otel:
+    environment:
+      LANGFUSE_OTEL_AUTH: ${LANGFUSE_OTEL_AUTH:?set in .env}
+    volumes:
+      - ./infra/otel/langfuse.yaml:/etc/otelcol/config.yaml:ro
+
+  litellm:
+    environment:
+      LANGFUSE_HOST: http://langfuse-web:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+    volumes:
+      - ./infra/litellm/config.langfuse.yaml:/app/config.yaml:ro
+
+volumes:
+  clickhouse-data:
+  clickhouse-logs:
+  langfuse-redis-data:
+  seaweedfs-data:

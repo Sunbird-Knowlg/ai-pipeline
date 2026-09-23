@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "mastra": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@mastra/mcp-docs-server@1.2.27"]
+    },
+    "langfuse-docs": { "type": "http", "url": "https://langfuse.com/api/mcp" },
+    "kafka": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@confluentinc/mcp-confluent@1.5.0", "--config", "./.claude/kafka-mcp.yaml"],
+      "env": { "DO_NOT_TRACK": "true" }
+    }
+  }
+}

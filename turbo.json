@@ -1,0 +1,75 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "globalEnv": ["CI"],
+  // The complete set of environment variables this system reads at run time. They are
+  // pass-through, not cache keys: none of them changes a build output, but declaring them keeps
+  // `turbo/no-undeclared-env-vars` honest and documents the runtime contract in one place.
+  "globalPassThroughEnv": [
+    "ALLOWED_HOSTS",
+    "CORE_API_URL",
+    "DATABASE_URL",
+    "DOCKER_NETWORK",
+    "HOST",
+    "KAFKA_BOOTSTRAP_SERVERS",
+    "KAFKA_CLUSTER_NAME",
+    "LITELLM_API_KEY",
+    "LITELLM_MASTER_KEY",
+    "LITELLM_URL",
+    "LLM_TIMEOUT_MS",
+    "LOG_LEVEL",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_SERVICE_NAME",
+    "PGPASSWORD",
+    "PIPELINE_ROOT",
+    "PORT",
+    "RESTATE_ADMIN_URL",
+    "RESTATE_INGRESS_URL",
+    "UNIT_LITELLM_URL",
+    "UNIT_OTEL_ENDPOINT"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "tsconfig*.json", "package.json"],
+      "outputs": ["dist/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "tsconfig*.json", "package.json"]
+    },
+    "lint": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "eslint.config.js", "tsconfig*.json", "package.json"]
+    },
+    // Root tasks: the shared Vitest projects, the e2e/config typecheck and repo-wide formatting
+    // genuinely cannot be package tasks. Everything else is a package task.
+    //
+    // None of them depends on `build`: the unit suites resolve `@ai-pipeline/*` to source through
+    // the Vitest aliases, and `tests/e2e` drives the stack over HTTP without importing a workspace
+    // package. Leaving the dependency out keeps them running in parallel with the builds.
+    "//#typecheck:tests": {
+      "inputs": ["tests/e2e/**", "tsconfig.json", "vitest.config.ts"]
+    },
+    "//#lint:tests": {
+      "inputs": ["tests/e2e/**", "eslint.config.js", "tsconfig.json", "vitest.config.ts"]
+    },
+    "//#test:unit": {
+      "inputs": [
+        "{packages,services,workflows,apps,tests/fixtures}/*/src/**",
+        "vitest.config.ts",
+        "pnpm-workspace.yaml"
+      ]
+    },
+    "//#format:check": {
+      "inputs": ["**/*.{ts,js,json,md,yaml,yml}", ".prettierrc.json", ".prettierignore"]
+    }
+  },
+  "boundaries": {
+    "tags": {
+      "contract": { "dependencies": { "deny": ["runtime", "unit", "app"] } },
+      "runtime": { "dependencies": { "deny": ["unit", "app"] } },
+      "unit": { "dependencies": { "deny": ["app"] } },
+      "app": { "dependents": { "deny": ["config", "contract", "runtime", "unit"] } }
+    }
+  }
+}

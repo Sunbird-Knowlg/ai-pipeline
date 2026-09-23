@@ -1,0 +1,18 @@
+# Same gateway, plus LLM traces, token usage and cost in Langfuse (observability overlay only).
+model_list:
+  - model_name: chat-default
+    litellm_params:
+      model: ollama_chat/qwen3.5:4b
+      api_base: os.environ/OLLAMA_URL
+      keep_alive: 10m
+      num_ctx: 8192
+      think: false
+litellm_settings:
+  telemetry: false
+  drop_params: false
+  request_timeout: 180
+  num_retries: 0
+  callbacks: ['langfuse_otel']
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  disable_spend_logs: true

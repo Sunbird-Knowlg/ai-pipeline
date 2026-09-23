@@ -1,0 +1,32 @@
+packages:
+  - packages/*
+  - services/*
+  - workflows/*
+  - apps/*
+  - tests/fixtures/*
+
+# `pnpm deploy` (used by the Dockerfile) copies workspace dependencies into the deployed tree.
+injectWorkspacePackages: true
+
+# Build scripts are opt-in (pnpm 11). None of these are needed: protobufjs only prints a notice,
+# ssh2/cpu-features are optional native speedups pulled in by testcontainers.
+allowBuilds:
+  protobufjs: false
+  ssh2: false
+  cpu-features: false
+
+# One version per dependency used by more than one package, plus the shared toolchain. A bump is a
+# one-line change here instead of a hunt through eleven manifests.
+catalog:
+  '@opentelemetry/api': 1.9.1
+  '@restatedev/restate-sdk': 1.17.2
+  '@restatedev/restate-sdk-clients': 1.17.2
+  '@restatedev/restate-sdk-opentelemetry': 1.17.2
+  '@restatedev/restate-sdk-testcontainers': 1.17.2
+  '@types/node': 24.13.5
+  ajv: 8.20.0
+  eslint: 10.11.0
+  prettier: 3.9.8
+  typescript: 5.9.3
+  vitest: 4.1.11
+  zod: 4.6.5

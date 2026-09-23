@@ -1,0 +1,9 @@
+{
+  // Root-level files that belong to no package: the e2e suites and the Vitest config.
+  // Every package typechecks its own sources *and tests* through its own tsconfig.json.
+  "extends": "@ai-pipeline/typescript-config/app.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["tests/e2e/**/*.ts", "vitest.config.ts"]
+}

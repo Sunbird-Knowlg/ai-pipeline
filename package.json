@@ -1,0 +1,36 @@
+{
+  "name": "ai-pipeline-restate",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.1.1",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "lint": "turbo run lint //#lint:tests",
+    "typecheck": "turbo run typecheck //#typecheck:tests",
+    "check": "turbo run build typecheck lint //#typecheck:tests //#lint:tests //#test:unit //#format:check && turbo boundaries",
+    "test": "vitest run --project unit",
+    "test:replay": "vitest run --project replay",
+    "test:e2e": "vitest run --project e2e",
+    "pipeline": "turbo run build --output-logs=errors-only > /dev/null && node apps/cli/dist/main.js",
+    "format": "prettier --write .",
+    "test:unit": "vitest run --project unit",
+    "typecheck:tests": "tsc -p tsconfig.json",
+    "lint:tests": "eslint tests vitest.config.ts",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@ai-pipeline/api-contract": "workspace:*",
+    "@ai-pipeline/eslint-config": "workspace:*",
+    "@ai-pipeline/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "prettier": "catalog:",
+    "turbo": "2.11.2",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
