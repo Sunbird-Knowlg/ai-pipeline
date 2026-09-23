@@ -1,0 +1,37 @@
+{
+  "name": "@ai-pipeline/core-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist",
+    "schema.sql"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@ai-pipeline/api-contract": "workspace:*",
+    "@ai-pipeline/metadata": "workspace:*",
+    "@ai-pipeline/observability": "workspace:*",
+    "@restatedev/restate-sdk-clients": "catalog:",
+    "ajv": "catalog:",
+    "ajv-formats": "3.0.1",
+    "fastify": "5.12.5",
+    "fastify-plugin": "6.0.0",
+    "pg": "8.23.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-pipeline/eslint-config": "workspace:*",
+    "@ai-pipeline/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/pg": "8.23.1",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
