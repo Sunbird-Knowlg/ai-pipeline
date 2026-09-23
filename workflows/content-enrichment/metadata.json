@@ -1,0 +1,30 @@
+{
+  "apiVersion": "ai-pipeline/v1alpha1",
+  "kind": "workflow",
+  "name": "content-enrichment",
+  "restateName": "ContentEnrichment",
+  "version": "0.2.0",
+  "description": "Summarises published content and attaches metadata",
+  "config": {
+    "summaryMaxWords": 120
+  },
+  "triggers": [
+    {
+      "id": "api",
+      "type": "rest"
+    },
+    {
+      "id": "content-published",
+      "type": "kafka",
+      "cluster": "local",
+      "topic": "content.published",
+      "adapter": "contentPublished"
+    }
+  ],
+  "dependencies": [
+    {
+      "kind": "service",
+      "name": "summary"
+    }
+  ]
+}

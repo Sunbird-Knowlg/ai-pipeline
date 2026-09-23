@@ -1,0 +1,62 @@
+{
+  "name": "@ai-pipeline/wf-content-enrichment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./adapters": {
+      "@ai-pipeline/source": "./src/adapters.ts",
+      "types": "./dist/adapters.d.ts",
+      "default": "./dist/adapters.js"
+    },
+    "./steps": {
+      "@ai-pipeline/source": "./src/steps.ts",
+      "types": "./dist/steps.d.ts",
+      "default": "./dist/steps.js"
+    },
+    "./trigger": {
+      "@ai-pipeline/source": "./src/trigger.ts",
+      "types": "./dist/trigger.d.ts",
+      "default": "./dist/trigger.js"
+    },
+    "./unit": {
+      "@ai-pipeline/source": "./src/unit.ts",
+      "types": "./dist/unit.d.ts",
+      "default": "./dist/unit.js"
+    },
+    "./workflow": {
+      "@ai-pipeline/source": "./src/workflow.ts",
+      "types": "./dist/workflow.d.ts",
+      "default": "./dist/workflow.js"
+    }
+  },
+  "files": [
+    "dist",
+    "metadata.json"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@ai-pipeline/contracts": "workspace:*",
+    "@ai-pipeline/metadata": "workspace:*",
+    "@ai-pipeline/runtime": "workspace:*",
+    "@restatedev/restate-sdk": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-pipeline/ai": "workspace:*",
+    "@ai-pipeline/eslint-config": "workspace:*",
+    "@ai-pipeline/svc-summary": "workspace:*",
+    "@ai-pipeline/typescript-config": "workspace:*",
+    "@restatedev/restate-sdk-clients": "catalog:",
+    "@restatedev/restate-sdk-testcontainers": "catalog:",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

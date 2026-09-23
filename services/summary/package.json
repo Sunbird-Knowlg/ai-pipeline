@@ -1,0 +1,47 @@
+{
+  "name": "@ai-pipeline/svc-summary",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./prompt": {
+      "@ai-pipeline/source": "./src/prompt.ts",
+      "types": "./dist/prompt.d.ts",
+      "default": "./dist/prompt.js"
+    },
+    "./service": {
+      "@ai-pipeline/source": "./src/service.ts",
+      "types": "./dist/service.d.ts",
+      "default": "./dist/service.js"
+    },
+    "./unit": {
+      "@ai-pipeline/source": "./src/unit.ts",
+      "types": "./dist/unit.d.ts",
+      "default": "./dist/unit.js"
+    }
+  },
+  "files": [
+    "dist",
+    "metadata.json"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@ai-pipeline/ai": "workspace:*",
+    "@ai-pipeline/contracts": "workspace:*",
+    "@ai-pipeline/metadata": "workspace:*",
+    "@ai-pipeline/runtime": "workspace:*",
+    "@restatedev/restate-sdk": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-pipeline/eslint-config": "workspace:*",
+    "@ai-pipeline/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:"
+  }
+}

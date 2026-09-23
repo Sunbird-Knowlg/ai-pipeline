@@ -1,0 +1,17 @@
+{
+  "apiVersion": "ai-pipeline/v1alpha1",
+  "kind": "workflow",
+  "name": "versioned-sleeper",
+  "restateName": "VersionedSleeper",
+  "version": "1.1.0",
+  "description": "Test fixture: sleeps durably and reports the version that ran it",
+  "config": {
+    "version": "1.1.0"
+  },
+  "triggers": [
+    {
+      "id": "api",
+      "type": "rest"
+    }
+  ]
+}
