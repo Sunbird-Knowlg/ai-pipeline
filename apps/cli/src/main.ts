@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util';
 import { cancelRun, getRun, listRuns, listUnits, startRun } from './commands/runs.js';
 import { deploy } from './commands/deploy.js';
 import { listDeployments, retireDeployment } from './commands/deployments.js';
+import { scaffold } from './commands/scaffold.js';
 import { coreApi } from './core-api.js';
 import { dockerCli } from './docker.js';
 import { readDotEnv, root, setting } from './env.js';
@@ -14,6 +15,8 @@ import { readDotEnv, root, setting } from './env.js';
  */
 const USAGE = `pipeline <command>
 
+  new <workflow|service> <name> [--kafka <topic>]
+                                  scaffold a deployable unit, ready to build and deploy
   deploy <name...> [--dev]        build, start and register immutable deployment(s)
   deployments [name]              list deployments with in-flight counts
   retire <deploymentId>           retire a drained deployment and stop its container
@@ -32,6 +35,7 @@ const { positionals, values } = parseArgs({
     input: { type: 'string' },
     key: { type: 'string' },
     status: { type: 'string' },
+    kafka: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -58,6 +62,22 @@ const required = (value: string | undefined, what: string): string => {
 
 async function main(): Promise<void> {
   switch (command) {
+    case 'new': {
+      const kind = required(args[0], 'new needs <workflow|service> <name>');
+      if (kind !== 'workflow' && kind !== 'service')
+        throw new Error(`the kind must be "workflow" or "service", not "${kind}"`);
+      scaffold({
+        root: repo,
+        kind,
+        name: required(args[1], 'new needs <workflow|service> <name>'),
+        ...(values.kafka ? { kafkaTopic: values.kafka } : {}),
+        log: (line) => {
+          console.error(line);
+        },
+      });
+      return;
+    }
+
     case 'deploy': {
       if (args.length === 0) throw new Error('deploy needs at least one unit name');
       const env = unitEnv();
