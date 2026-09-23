@@ -1,0 +1,67 @@
+{
+  "name": "@ai-pipeline/api-contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./deployments": {
+      "@ai-pipeline/source": "./src/deployments.ts",
+      "types": "./dist/deployments.d.ts",
+      "default": "./dist/deployments.js"
+    },
+    "./errors": {
+      "@ai-pipeline/source": "./src/errors.ts",
+      "types": "./dist/errors.d.ts",
+      "default": "./dist/errors.js"
+    },
+    "./health": {
+      "@ai-pipeline/source": "./src/health.ts",
+      "types": "./dist/health.d.ts",
+      "default": "./dist/health.js"
+    },
+    "./params": {
+      "@ai-pipeline/source": "./src/params.ts",
+      "types": "./dist/params.d.ts",
+      "default": "./dist/params.js"
+    },
+    "./runs": {
+      "@ai-pipeline/source": "./src/runs.ts",
+      "types": "./dist/runs.d.ts",
+      "default": "./dist/runs.js"
+    },
+    "./serialization": {
+      "@ai-pipeline/source": "./src/serialization.ts",
+      "types": "./dist/serialization.d.ts",
+      "default": "./dist/serialization.js"
+    },
+    "./triggers": {
+      "@ai-pipeline/source": "./src/triggers.ts",
+      "types": "./dist/triggers.d.ts",
+      "default": "./dist/triggers.js"
+    },
+    "./workflows": {
+      "@ai-pipeline/source": "./src/workflows.ts",
+      "types": "./dist/workflows.d.ts",
+      "default": "./dist/workflows.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-pipeline/eslint-config": "workspace:*",
+    "@ai-pipeline/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

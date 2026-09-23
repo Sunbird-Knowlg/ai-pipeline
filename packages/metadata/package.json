@@ -1,0 +1,42 @@
+{
+  "name": "@ai-pipeline/metadata",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./metadata": {
+      "@ai-pipeline/source": "./src/metadata.ts",
+      "types": "./dist/metadata.d.ts",
+      "default": "./dist/metadata.js"
+    },
+    "./naming": {
+      "@ai-pipeline/source": "./src/naming.ts",
+      "types": "./dist/naming.d.ts",
+      "default": "./dist/naming.js"
+    },
+    "./run-ids": {
+      "@ai-pipeline/source": "./src/run-ids.ts",
+      "types": "./dist/run-ids.d.ts",
+      "default": "./dist/run-ids.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-pipeline/eslint-config": "workspace:*",
+    "@ai-pipeline/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "name": "@ai-pipeline/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./trigger": {
+      "@ai-pipeline/source": "./src/trigger.ts",
+      "types": "./dist/trigger.d.ts",
+      "default": "./dist/trigger.js"
+    },
+    "./schemas": {
+      "@ai-pipeline/source": "./src/schemas.ts",
+      "types": "./dist/schemas.d.ts",
+      "default": "./dist/schemas.js"
+    },
+    "./registry": {
+      "@ai-pipeline/source": "./src/registry.ts",
+      "types": "./dist/registry.d.ts",
+      "default": "./dist/registry.js"
+    },
+    "./summary": {
+      "@ai-pipeline/source": "./src/summary/schemas.ts",
+      "types": "./dist/summary/schemas.d.ts",
+      "default": "./dist/summary/schemas.js"
+    },
+    "./summary/api": {
+      "@ai-pipeline/source": "./src/summary/api.ts",
+      "types": "./dist/summary/api.d.ts",
+      "default": "./dist/summary/api.js"
+    },
+    "./content-enrichment": {
+      "@ai-pipeline/source": "./src/content-enrichment/schemas.ts",
+      "types": "./dist/content-enrichment/schemas.d.ts",
+      "default": "./dist/content-enrichment/schemas.js"
+    },
+    "./content-enrichment/api": {
+      "@ai-pipeline/source": "./src/content-enrichment/api.ts",
+      "types": "./dist/content-enrichment/api.d.ts",
+      "default": "./dist/content-enrichment/api.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@restatedev/restate-sdk": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-pipeline/eslint-config": "workspace:*",
+    "@ai-pipeline/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "ajv": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
