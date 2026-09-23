@@ -9,6 +9,21 @@
       "types": "./dist/adapters.d.ts",
       "default": "./dist/adapters.js"
     },
+    "./api": {
+      "@ai-pipeline/source": "./src/api.ts",
+      "types": "./dist/api.d.ts",
+      "default": "./dist/api.js"
+    },
+    "./contract": {
+      "@ai-pipeline/source": "./src/contract.ts",
+      "types": "./dist/contract.d.ts",
+      "default": "./dist/contract.js"
+    },
+    "./schemas": {
+      "@ai-pipeline/source": "./src/schemas.ts",
+      "types": "./dist/schemas.d.ts",
+      "default": "./dist/schemas.js"
+    },
     "./steps": {
       "@ai-pipeline/source": "./src/steps.ts",
       "types": "./dist/steps.d.ts",
@@ -41,6 +56,7 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
+    "@ai-pipeline/contract-summary": "workspace:*",
     "@ai-pipeline/contracts": "workspace:*",
     "@ai-pipeline/metadata": "workspace:*",
     "@ai-pipeline/runtime": "workspace:*",

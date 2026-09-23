@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import type { ContractEntry } from './registry.js';
+import type { ContractEntry } from './entry.js';
 
 export interface ContractSchemas {
   input: Record<string, unknown>;

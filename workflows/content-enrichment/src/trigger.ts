@@ -1,4 +1,4 @@
-import { ContentInput } from '@ai-pipeline/contracts/content-enrichment';
+import { ContentInput } from './schemas.js';
 import { kafkaTrigger } from '@ai-pipeline/runtime/kafka-trigger';
 import { adapters } from './adapters.js';
 import { metadata } from './unit.js';

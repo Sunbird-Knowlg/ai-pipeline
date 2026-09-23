@@ -1,9 +1,6 @@
 import type { Generate } from '@ai-pipeline/ai/generate';
-import {
-  type ContentEnrichmentRequest,
-  type ContentOutput,
-} from '@ai-pipeline/contracts/content-enrichment';
-import { summaryApi } from '@ai-pipeline/contracts/summary/api';
+import { type ContentEnrichmentRequest, type ContentOutput } from './schemas.js';
+import { summaryApi } from '@ai-pipeline/contract-summary/api';
 import { kafkaRunId } from '@ai-pipeline/metadata/run-ids';
 import type { KafkaTriggerResult } from '@ai-pipeline/runtime/kafka-trigger';
 import { createSummaryService } from '@ai-pipeline/svc-summary/service';

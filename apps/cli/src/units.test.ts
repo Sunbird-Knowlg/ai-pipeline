@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { contracts } from '@ai-pipeline/contracts/registry';
+import type { ContractEntry } from '@ai-pipeline/contracts/entry';
 import { contractHash, contractSchemas } from '@ai-pipeline/contracts/schemas';
 import { describe, expect, it } from 'vitest';
 import { discoverUnits, findUnit } from './units.js';
@@ -33,12 +33,20 @@ describe('workspace', () => {
 describe('discoverUnits', () => {
   const units = discoverUnits(ROOT);
 
-  it('finds the deployable units and nothing else', () => {
-    expect(units.map((u) => u.metadata.name).sort()).toEqual([
-      'content-enrichment',
-      'summary',
-      'versioned-sleeper',
-    ]);
+  it('finds the example units', () => {
+    // Asserted as a subset on purpose: a hardcoded list would mean adding a workflow breaks this
+    // test, which is exactly the friction the scaffold exists to remove.
+    expect(units.map((u) => u.metadata.name)).toEqual(
+      expect.arrayContaining(['content-enrichment', 'summary', 'versioned-sleeper']),
+    );
+  });
+
+  it('finds only packages that are actually deployable', () => {
+    const names = units.map((u) => u.metadata.name);
+    // A package without metadata.json and src/main.ts is not a unit, however it is named.
+    expect(names).not.toContain('contracts');
+    expect(names).not.toContain('core-api');
+    expect(new Set(names).size).toBe(names.length);
   });
 
   it('requires both a metadata.json and a served entry point', () => {
@@ -56,46 +64,62 @@ describe('discoverUnits', () => {
 describe('units and contracts agree', () => {
   const units = discoverUnits(ROOT);
 
+  /**
+   * Loads a unit's contract from its source, the way `pipeline deploy` loads it from `dist`. There is
+   * no shared registry to check against any more — each unit owns its contract, which is what makes
+   * units independently deployable — so the check is per unit.
+   */
+  const contractOf = async (dir: string) =>
+    ((await import(join(dir, 'src/contract.ts'))) as { contract?: ContractEntry }).contract;
+
   it.each(units.map((u) => [u.metadata.name, u] as const))(
-    '%s has a contract whose Restate name matches its metadata',
-    (_name, unit) => {
-      // A unit either uses a shared contract or ships its own in `dist/contract.js`; the latter is
-      // built output, so only the shared half can be checked without a build.
-      const shared = contracts[unit.metadata.name];
-      if (!shared) {
-        expect(
-          existsSync(join(unit.dir, 'src/contract.ts')),
-          `${unit.metadata.name} has neither a shared contract nor a unit-local one`,
-        ).toBe(true);
-        return;
-      }
-      expect(shared.restateName).toBe(unit.metadata.restateName);
-      expect(shared.handler).toBe(unit.metadata.kind === 'workflow' ? 'run' : shared.handler);
+    '%s ships a contract that agrees with its metadata',
+    async (_name, unit) => {
+      expect(
+        existsSync(join(unit.dir, 'src/contract.ts')),
+        `${unit.metadata.name} ships no src/contract.ts, so it cannot be deployed`,
+      ).toBe(true);
+
+      const contract = await contractOf(unit.dir);
+      expect(
+        contract,
+        `${unit.metadata.name}/src/contract.ts must export \`contract\``,
+      ).toBeDefined();
+      expect(contract!.restateName).toBe(unit.metadata.restateName);
+      // The runs API selects invocations by handler name, so a workflow's entry point must be `run`.
+      if (unit.metadata.kind === 'workflow') expect(contract!.handler).toBe('run');
     },
   );
 
-  it.each(Object.keys(contracts))('%s generates a stable contract hash', (name) => {
-    const schemas = contractSchemas(contracts[name]!);
-    expect(contractHash(schemas)).toMatch(/^sha256:[0-9a-f]{64}$/);
-    // The hash is what the version rule compares, so it must not depend on key order.
-    expect(contractHash(structuredClone(schemas))).toBe(contractHash(schemas));
-  });
+  it.each(units.map((u) => [u.metadata.name, u] as const))(
+    '%s generates a stable contract hash',
+    async (_name, unit) => {
+      const schemas = contractSchemas((await contractOf(unit.dir))!);
+      expect(contractHash(schemas)).toMatch(/^sha256:[0-9a-f]{64}$/);
+      // The hash is what the version rule compares, so it must not depend on key order.
+      expect(contractHash(structuredClone(schemas))).toBe(contractHash(schemas));
+    },
+  );
 
-  it('every unit declares a config that its contract accepts', () => {
-    for (const unit of units) {
-      const contract = contracts[unit.metadata.name];
-      if (!contract) continue;
+  it.each(units.map((u) => [u.metadata.name, u] as const))(
+    '%s declares a config its contract accepts',
+    async (_name, unit) => {
+      const contract = (await contractOf(unit.dir))!;
       const parsed = contract.config.safeParse(unit.metadata.config);
-      expect(parsed.success, `${unit.metadata.name}: ${JSON.stringify(parsed.error?.issues)}`).toBe(
-        true,
-      );
-    }
-  });
+      expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+    },
+  );
 
   it('every unit dependency names another unit in the workspace', () => {
     const names = new Set(units.map((u) => u.metadata.name));
     for (const unit of units)
       for (const dependency of unit.metadata.dependencies)
         expect(names, `${unit.metadata.name} → ${dependency.name}`).toContain(dependency.name);
+  });
+
+  it('no unit depends on a shared registry of contracts', () => {
+    // A shared name → contract map would be a file every unit's artifact digest depends on, so
+    // adding one workflow would change every other unit's artifact. Guard against it coming back.
+    expect(existsSync(join(ROOT, 'packages/contracts/src/registry.ts'))).toBe(false);
   });
 });

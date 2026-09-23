@@ -1,6 +1,6 @@
 import { isRetryableModelError } from '@ai-pipeline/ai/errors';
 import type { Generate } from '@ai-pipeline/ai/generate';
-import { summaryApi } from '@ai-pipeline/contracts/summary/api';
+import { summaryApi } from '@ai-pipeline/contract-summary/api';
 import { serviceOptions } from '@ai-pipeline/runtime/options';
 import { retry } from '@ai-pipeline/runtime/retry';
 import * as restate from '@restatedev/restate-sdk';

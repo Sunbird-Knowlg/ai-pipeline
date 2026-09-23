@@ -1,4 +1,4 @@
-import { ContentConfig } from '@ai-pipeline/contracts/content-enrichment';
+import { ContentConfig } from './schemas.js';
 import { loadMetadata } from '@ai-pipeline/metadata/metadata';
 import { loadConfig } from '@ai-pipeline/runtime/config';
 

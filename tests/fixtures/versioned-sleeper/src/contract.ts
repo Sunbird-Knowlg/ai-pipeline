@@ -1,4 +1,4 @@
-import type { ContractEntry } from '@ai-pipeline/contracts/registry';
+import type { ContractEntry } from '@ai-pipeline/contracts/entry';
 import { runRequest } from '@ai-pipeline/contracts/trigger';
 import { z } from 'zod';
 

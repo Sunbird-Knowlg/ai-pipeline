@@ -1,23 +1,18 @@
 {
-  "name": "@ai-pipeline/contracts",
+  "name": "@ai-pipeline/contract-summary",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
-    "./entry": {
-      "@ai-pipeline/source": "./src/entry.ts",
-      "types": "./dist/entry.d.ts",
-      "default": "./dist/entry.js"
-    },
-    "./schemas": {
+    ".": {
       "@ai-pipeline/source": "./src/schemas.ts",
       "types": "./dist/schemas.d.ts",
       "default": "./dist/schemas.js"
     },
-    "./trigger": {
-      "@ai-pipeline/source": "./src/trigger.ts",
-      "types": "./dist/trigger.d.ts",
-      "default": "./dist/trigger.js"
+    "./api": {
+      "@ai-pipeline/source": "./src/api.ts",
+      "types": "./dist/api.d.ts",
+      "default": "./dist/api.js"
     }
   },
   "files": [
@@ -29,13 +24,13 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@restatedev/restate-sdk": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@ai-pipeline/eslint-config": "workspace:*",
     "@ai-pipeline/typescript-config": "workspace:*",
     "@types/node": "catalog:",
-    "ajv": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

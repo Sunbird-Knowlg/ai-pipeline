@@ -7,7 +7,7 @@ import type {
   DeploymentRequest,
 } from '@ai-pipeline/api-contract/deployments';
 import { PRE_REGISTRATION_CODES, type PipelineErrorCode } from '@ai-pipeline/api-contract/errors';
-import { contracts, type ContractEntry } from '@ai-pipeline/contracts/registry';
+import type { ContractEntry } from '@ai-pipeline/contracts/entry';
 import { canonicalJson, contractHash, contractSchemas } from '@ai-pipeline/contracts/schemas';
 import { sourceDigest } from '../artifact.js';
 import { ApiError, type CoreApi } from '../core-api.js';
@@ -146,25 +146,32 @@ const isPreRegistration = (code: string): boolean =>
   PRE_REGISTRATION_CODES.includes(code as PipelineErrorCode);
 
 /**
- * A unit's contract: from `@ai-pipeline/contracts` when it is shared, else the unit's own
- * `dist/contract.js`. Keeping a fixture's contract local means fixture changes never alter a
- * production unit's artifact.
+ * A unit's contract, loaded from its own `dist/contract.js`.
+ *
+ * Every unit ships one. There is deliberately no central registry: a shared map of name → contract
+ * would be a file every unit's artifact digest depends on, so adding one workflow would change the
+ * artifact of every other one and force a round of version bumps. Per-unit contracts are what make
+ * units independently deployable.
  */
 async function contractOf(unit: Unit): Promise<ContractEntry> {
-  const contract = contracts[unit.metadata.name] ?? (await unitContract(unit.dir));
-  if (!contract)
+  const file = join(unit.dir, 'dist/contract.js');
+  if (!existsSync(file))
     throw new Error(
-      `no contract for "${unit.metadata.name}" in @ai-pipeline/contracts or ${unit.dir}/dist/contract.js`,
+      `${unit.metadata.name} ships no contract at ${file}. Export \`contract\` from src/contract.ts, then build.`,
     );
+  const { contract } = (await import(pathToFileURL(file).href)) as {
+    contract?: ContractEntry;
+  };
+  if (!contract) throw new Error(`${file} does not export \`contract\``);
   if (contract.restateName !== unit.metadata.restateName)
     throw new Error(
       `contract restateName ${contract.restateName} ≠ metadata restateName ${unit.metadata.restateName}`,
     );
+  // The runs API reads invocations by handler name, so a workflow's entry point must be `run`.
+  if (unit.metadata.kind === 'workflow' && contract.handler !== 'run')
+    throw new Error(
+      `a workflow's contract handler must be "run" (${unit.metadata.name} declares "${contract.handler}"); ` +
+        'the runs API selects invocations by that name.',
+    );
   return contract;
-}
-
-async function unitContract(dir: string): Promise<ContractEntry | undefined> {
-  const file = join(dir, 'dist/contract.js');
-  if (!existsSync(file)) return undefined;
-  return ((await import(pathToFileURL(file).href)) as { contract?: ContractEntry }).contract;
 }

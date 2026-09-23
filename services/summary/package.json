@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./contract": {
+      "@ai-pipeline/source": "./src/contract.ts",
+      "types": "./dist/contract.d.ts",
+      "default": "./dist/contract.js"
+    },
     "./prompt": {
       "@ai-pipeline/source": "./src/prompt.ts",
       "types": "./dist/prompt.d.ts",
@@ -32,6 +37,7 @@
   },
   "dependencies": {
     "@ai-pipeline/ai": "workspace:*",
+    "@ai-pipeline/contract-summary": "workspace:*",
     "@ai-pipeline/contracts": "workspace:*",
     "@ai-pipeline/metadata": "workspace:*",
     "@ai-pipeline/runtime": "workspace:*",

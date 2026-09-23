@@ -1,4 +1,4 @@
-import { SummaryConfig } from '@ai-pipeline/contracts/summary';
+import { SummaryConfig } from '@ai-pipeline/contract-summary';
 import { loadMetadata } from '@ai-pipeline/metadata/metadata';
 import { loadConfig } from '@ai-pipeline/runtime/config';
 

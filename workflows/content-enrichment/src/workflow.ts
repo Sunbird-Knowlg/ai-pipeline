@@ -1,5 +1,5 @@
-import { contentEnrichmentApi } from '@ai-pipeline/contracts/content-enrichment/api';
-import { summaryApi } from '@ai-pipeline/contracts/summary/api';
+import { contentEnrichmentApi } from './api.js';
+import { summaryApi } from '@ai-pipeline/contract-summary/api';
 import { workflowOptions } from '@ai-pipeline/runtime/options';
 import * as restate from '@restatedev/restate-sdk';
 import { textStats } from './steps.js';

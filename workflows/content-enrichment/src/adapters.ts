@@ -1,7 +1,4 @@
-import {
-  ContentPublishedEvent,
-  type ContentInput,
-} from '@ai-pipeline/contracts/content-enrichment';
+import { ContentPublishedEvent, type ContentInput } from './schemas.js';
 import { z } from 'zod';
 
 const ObjectType = z.looseObject({ objectType: z.string().optional() });

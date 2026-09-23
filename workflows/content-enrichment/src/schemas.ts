@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { runRequest } from '../trigger.js';
+import { runRequest } from '@ai-pipeline/contracts/trigger';
 
 /**
  * The `content-enrichment` contract's data shapes. Kept apart from `./api.ts` so the catalogue side
