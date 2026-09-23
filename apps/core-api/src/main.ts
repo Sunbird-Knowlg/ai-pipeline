@@ -4,11 +4,11 @@ import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { RestateAdmin } from './restate/admin.js';
 import { RestateIngress } from './restate/ingress.js';
-import { applySchema, createDb } from './store/db.js';
+import { createDb } from './store/db.js';
 
 /**
- * The composition root: read config, build the adapters, apply the schema, serve. It is the only
- * place that touches the process — everything below it is passed its collaborators.
+ * The composition root: read config, build the adapters, wait for dependencies, serve. It is the
+ * only place that touches the process — everything below it is passed its collaborators.
  */
 const telemetry = startTelemetry('core-api');
 const log = createLogger('core-api');
@@ -29,7 +29,11 @@ async function retrying(what: string, fn: () => Promise<void>, attempts = 60): P
   }
 }
 
-await retrying('postgres', () => applySchema(db));
+// Wait for Postgres to answer. The catalogue schema is created when Postgres is provisioned
+// (`infra/postgres/init`), not here — the API holds no DDL privileges and creates nothing.
+await retrying('postgres', async () => {
+  await db.query('SELECT 1');
+});
 await retrying('restate', () =>
   admin.ensureKafkaCluster(config.KAFKA_CLUSTER_NAME, config.KAFKA_BOOTSTRAP_SERVERS),
 );

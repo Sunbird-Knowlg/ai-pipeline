@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 
 /**
@@ -22,11 +21,6 @@ export function createDb(
   // Without a listener, an idle client dropped by Postgres (restart, failover) crashes the process.
   pool.on('error', onIdleError);
   return pool;
-}
-
-/** The schema file is idempotent (`IF NOT EXISTS`); core-api is its only writer. */
-export async function applySchema(db: Db): Promise<void> {
-  await db.query(await readFile(new URL('../../schema.sql', import.meta.url), 'utf8'));
 }
 
 export async function transaction<T>(db: Db, fn: (tx: Tx) => Promise<T>): Promise<T> {

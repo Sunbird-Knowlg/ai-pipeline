@@ -16,7 +16,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+      # Provisioning: the databases and the catalogue schema. The official image runs these once,
+      # against an empty data directory — the API never creates tables.
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
     ports:
       - 127.0.0.1:5432:5432
     healthcheck:
