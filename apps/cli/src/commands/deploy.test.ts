@@ -1,4 +1,6 @@
+import type { ContractEntry } from '@ai-pipeline/contracts/entry';
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { ApiError, type CoreApi } from '../core-api.js';
 import type { ContainerState, Docker, RunContainer } from '../docker.js';
 import { deploy } from './deploy.js';
@@ -39,10 +41,23 @@ function fakeDocker(
   };
 }
 
+/**
+ * The contract `summary` really declares. Supplied directly rather than read from `dist/`: the real
+ * loader needs a build, and a unit test that depends on build output is a unit test that fails on a
+ * fresh clone.
+ */
+const summaryContract: ContractEntry = {
+  restateName: 'SummaryService',
+  handler: 'summarize',
+  input: z.strictObject({ text: z.string(), maxWords: z.number() }),
+  output: z.strictObject({ summary: z.string(), model: z.string() }),
+  config: z.strictObject({ model: z.string(), maxOutputTokens: z.number().default(512) }),
+};
+
 const options = (
   api: CoreApi,
   docker: Docker & { recorded: Recorded },
-  overrides: { dev?: boolean } = {},
+  overrides: { dev?: boolean; loadContract?: () => Promise<ContractEntry> } = {},
 ) => ({
   root: ROOT,
   name: UNIT,
@@ -53,6 +68,7 @@ const options = (
   docker,
   log: () => undefined,
   sleep: async () => undefined,
+  loadContract: overrides.loadContract ?? (async () => summaryContract),
 });
 
 const accepted: CoreApi = async () =>
@@ -189,5 +205,41 @@ describe('deploy', () => {
       /no deployable unit named "not-a-unit"/,
     );
     expect(docker.recorded.built).toEqual([]);
+  });
+});
+
+describe('the contract a deploy publishes', () => {
+  it('comes from the unit, and a unit without one cannot deploy', async () => {
+    // The real loader reads `dist/contract.js`, which `pnpm pipeline` builds first. There is no
+    // shared registry to fall back on — that is what keeps units independently deployable.
+    const docker = fakeDocker();
+    await expect(
+      deploy({
+        ...options(accepted, docker),
+        loadContract: () => {
+          throw new Error('summary ships no contract at …/dist/contract.js');
+        },
+      }),
+    ).rejects.toThrow(/ships no contract/);
+    expect(docker.recorded.built).toEqual([]);
+  });
+
+  it('is sent to the control plane with its generated schemas and hash', async () => {
+    const sent: unknown[] = [];
+    const api: CoreApi = async (_method, _path, body) => {
+      sent.push(body);
+      return {
+        name: UNIT,
+        version: '9.9.9',
+        deploymentId: 'dp_1',
+        active: true,
+        triggers: [],
+      } as never;
+    };
+    await deploy(options(api, fakeDocker()));
+
+    const request = sent[0] as { contractHash: string; schemas: Record<string, unknown> };
+    expect(request.contractHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(Object.keys(request.schemas).sort()).toEqual(['config', 'input', 'output']);
   });
 });

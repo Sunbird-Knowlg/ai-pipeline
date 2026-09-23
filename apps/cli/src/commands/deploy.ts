@@ -30,6 +30,11 @@ export interface DeployOptions {
   log: (line: string) => void;
   /** Injected so tests need not actually wait between retries. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * How a unit's contract is loaded. The default reads the built `dist/contract.js`, which is what
+   * `pnpm pipeline` produces before invoking this — injected so a test does not need a build.
+   */
+  loadContract?: (unit: Unit) => Promise<ContractEntry>;
 }
 
 const RETRYABLE_STATUS = new Set([502, 503]);
@@ -37,7 +42,7 @@ const MAX_ATTEMPTS = 20;
 
 export async function deploy(o: DeployOptions): Promise<DeploymentRegistered> {
   const unit = findUnit(o.root, o.name);
-  const contract = await contractOf(unit);
+  const contract = await (o.loadContract ?? contractFromDist)(unit);
   const schemas = contractSchemas(contract);
 
   const artifact = sourceDigest(o.root, unit.packageName);
@@ -153,7 +158,7 @@ const isPreRegistration = (code: string): boolean =>
  * artifact of every other one and force a round of version bumps. Per-unit contracts are what make
  * units independently deployable.
  */
-async function contractOf(unit: Unit): Promise<ContractEntry> {
+async function contractFromDist(unit: Unit): Promise<ContractEntry> {
   const file = join(unit.dir, 'dist/contract.js');
   if (!existsSync(file))
     throw new Error(
