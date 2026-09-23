@@ -1,0 +1,58 @@
+{
+  "name": "@ai-pipeline/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./config": {
+      "@ai-pipeline/source": "./src/config.ts",
+      "types": "./dist/config.d.ts",
+      "default": "./dist/config.js"
+    },
+    "./kafka-trigger": {
+      "@ai-pipeline/source": "./src/kafka-trigger.ts",
+      "types": "./dist/kafka-trigger.d.ts",
+      "default": "./dist/kafka-trigger.js"
+    },
+    "./options": {
+      "@ai-pipeline/source": "./src/options.ts",
+      "types": "./dist/options.d.ts",
+      "default": "./dist/options.js"
+    },
+    "./retry": {
+      "@ai-pipeline/source": "./src/retry.ts",
+      "types": "./dist/retry.d.ts",
+      "default": "./dist/retry.js"
+    },
+    "./serve": {
+      "@ai-pipeline/source": "./src/serve.ts",
+      "types": "./dist/serve.d.ts",
+      "default": "./dist/serve.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@ai-pipeline/contracts": "workspace:*",
+    "@ai-pipeline/metadata": "workspace:*",
+    "@ai-pipeline/observability": "workspace:*",
+    "@opentelemetry/api": "catalog:",
+    "@restatedev/restate-sdk": "catalog:",
+    "@restatedev/restate-sdk-opentelemetry": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-pipeline/eslint-config": "workspace:*",
+    "@ai-pipeline/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
