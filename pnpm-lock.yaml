@@ -221,11 +221,36 @@ importers:
         specifier: 'catalog:'
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.13.5)(vite@8.3.0(@types/node@24.13.5)(yaml@2.9.1))
 
-  packages/contracts:
+  packages/contract-summary:
     dependencies:
       '@restatedev/restate-sdk':
         specifier: 'catalog:'
         version: 1.17.2
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.5
+    devDependencies:
+      '@ai-pipeline/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@ai-pipeline/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.5
+      eslint:
+        specifier: 'catalog:'
+        version: 10.11.0
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.13.5)(vite@8.3.0(@types/node@24.13.5)(yaml@2.9.1))
+
+  packages/contracts:
+    dependencies:
       zod:
         specifier: 'catalog:'
         version: 4.6.5
@@ -379,6 +404,9 @@ importers:
       '@ai-pipeline/ai':
         specifier: workspace:*
         version: link:../../packages/ai
+      '@ai-pipeline/contract-summary':
+        specifier: workspace:*
+        version: link:../../packages/contract-summary
       '@ai-pipeline/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -447,6 +475,9 @@ importers:
 
   workflows/content-enrichment:
     dependencies:
+      '@ai-pipeline/contract-summary':
+        specifier: workspace:*
+        version: link:../../packages/contract-summary
       '@ai-pipeline/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts

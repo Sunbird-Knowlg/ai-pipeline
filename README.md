@@ -91,7 +91,9 @@ pnpm pipeline runs content-enrichment
 | Workflows     | `POST /v1/workflows/:name/runs` `{ input }` with optional `Idempotency-Key` → 202 `{ runId, invocationId, status }`        |
 | Runs          | `GET /v1/runs?workflow=&status=&limit=&cursor=`                                                                            |
 | Runs          | `GET /v1/runs/:workflow/:runId` (returns `output` once completed)                                                          |
-| Runs          | `POST /v1/runs/:workflow/:runId/cancel`                                                                                    |
+| Runs          | `POST /v1/runs/:workflow/:runId/cancel` (graceful — the handler unwinds)                                                   |
+| Runs          | `POST /v1/runs/:workflow/:runId/kill` (immediate — no unwinding, children abandoned)                                       |
+| Runs          | `POST /v1/runs/:workflow/:runId/resume` (a paused run; see the retry policy below)                                         |
 | Catalogue     | `GET /v1/workflows?kind=`                                                                                                  |
 | Catalogue     | `GET /v1/workflows/:name` (schemas, config, triggers with desired and observed state, dependencies, versions, deployments) |
 | Catalogue     | `PATCH /v1/workflows/:name/triggers/:id` `{ enabled }`                                                                     |
@@ -101,6 +103,10 @@ pnpm pipeline runs content-enrichment
 | Health        | `GET /health/live`, `GET /health/ready`                                                                                    |
 
 - Run statuses are `running`, `completed`, `failed`, `cancelled` and `paused`.
+- **`paused` is reachable by design.** The LLM retry profile is uncapped and pauses an invocation when
+  its retries are exhausted rather than failing it, so a gateway outage does not destroy a run's
+  journal. `GET /v1/runs?status=paused` finds them and `POST …/resume` revives them once the cause is
+  fixed. A pipeline that can pause but not resume would need the Restate CLI to recover.
 - A `RunView` carries `runId`, `invocationId`, `workflowVersion`, `deploymentId`, `trigger` and `traceId`.
 - Errors come back as `{ "error": { "code", "message" } }`.
 - Run history is Restate's retention: 7 days for workflows and journals. It is operational history, not an audit log.
@@ -108,6 +114,7 @@ pnpm pipeline runs content-enrichment
 ### CLI
 
 ```
+pnpm pipeline new <workflow|service> <name> [--kafka <topic>]   scaffold a deployable unit
 pnpm pipeline deploy <name...> [--dev]     build (skipped when unchanged), start, register
 pnpm pipeline deployments [name]           deployments with in-flight counts
 pnpm pipeline retire <deploymentId>        retire a drained deployment and stop its container
@@ -116,18 +123,67 @@ pnpm pipeline workflows | start <wf> --input '{…}' [--key k] | runs [wf] | run
 
 ## Add a workflow or service
 
-1. **Define the contract** in `packages/contracts`: zod input, output and config schemas, plus `restate.iface.workflow(...)` (or `.service(...)`). Register it in `registry.ts`.
-2. **Create the unit.** Add `workflows/<name>/` (or `services/<name>/`) containing:
-   - a `metadata.json` with `kind`, `name`, `restateName`, `version`, `config`, `triggers` and `dependencies`;
-   - `src/index.ts`, where `restate.implement(contract, { handlers, options: workflowOptions(metadata) })` builds the handlers;
-   - `src/main.ts` containing `serve(name, [definition, ...])`.
-3. **Declare triggers** in `metadata.json`:
-   - A REST trigger is `{ "id": "api", "type": "rest" }`.
-   - A Kafka trigger is `{ "id", "type": "kafka", "cluster": "local", "topic", "adapter"? }`. Pair it with `kafkaTrigger({ metadata, input, adapters })`.
-   - An adapter is a pure `(event) => input | null`, where `null` skips the event.
-4. **Deploy** with `pnpm pipeline deploy <name>`. Each later change is a new artifact: bump `version`, or iterate with `--dev`.
+```sh
+pnpm pipeline new workflow order-fulfilment --kafka orders.placed   # or: new service embedding
+pnpm install
+pnpm pipeline deploy order-fulfilment
+```
 
-The handler rules (all I/O in `ctx.run`, deterministic code, `RestatePromise` combinators) are in [CLAUDE.md](CLAUDE.md).
+That generates a unit that builds, lints, typechecks and deploys as it stands — the handler body is
+the only thing left to write. It writes `metadata.json`, the contract, the zod schemas, the
+`restate.iface` binding, the handler, `main.ts`, both tsconfigs, the lint config and the boundaries
+tag, all agreeing with each other.
+
+What it generates, and why:
+
+| File                                | Holds                                                                                |
+| ----------------------------------- | ------------------------------------------------------------------------------------ |
+| `metadata.json`                     | kind, name, `restateName`, version, config, triggers, dependencies                   |
+| `src/schemas.ts`                    | the zod input, output and config — no Restate SDK, so the catalogue side stays light |
+| `src/api.ts`                        | the `restate.iface` binding. A workflow's entry handler **must** be `run`            |
+| `src/contract.ts`                   | the `ContractEntry` the deploy CLI reads from `dist/contract.js`                     |
+| `src/unit.ts`                       | `metadata` and the config, validated against the contract at import                  |
+| `src/workflow.ts`                   | the handler                                                                          |
+| `src/trigger.ts`, `src/adapters.ts` | with `--kafka`: the trigger service and the record adapter                           |
+
+**Triggers** are declared in `metadata.json` and reconciled by the control plane:
+
+- REST is `{ "id": "api", "type": "rest" }`.
+- Kafka is `{ "id", "type": "kafka", "cluster", "topic", "adapter"? }`, paired with
+  `kafkaTrigger({ metadata, input, adapters })`. An adapter is a pure `(event) => input | null`,
+  where `null` drops the record without starting a run and throwing fails it terminally.
+- A Kafka trigger also needs its topic to exist — add it to `kafka-init` in `compose.yaml`.
+
+**Each unit is independently deployable, and adding one does not disturb the others.** A unit owns
+its own contract; there is no shared registry to edit. `packages/contract-*` exists only for a
+contract that a _second_ unit needs — `contract-summary` is shared because `content-enrichment` calls
+that service. This is not just tidiness: the artifact digest covers a unit's workspace dependencies,
+so a shared registry would mean adding one workflow changed every other unit's artifact and forced a
+round of version bumps. `apps/cli/src/artifact.test.ts` pins the property.
+
+Each later change to a unit is a new artifact: bump `version`, or iterate with `--dev`.
+
+The handler rules (all I/O in `ctx.run`, deterministic code, `RestatePromise` combinators) are in
+[CLAUDE.md](CLAUDE.md), and enforced by lint.
+
+## The catalogue schema
+
+The four catalogue tables are created when **Postgres is provisioned**, not by the API:
+`infra/postgres/init/` is mounted into `/docker-entrypoint-initdb.d`, which the official image runs
+once against an empty data directory. In a real environment the same SQL is applied by whatever
+provisions the database.
+
+The API assumes the tables are already there. It never issues DDL, so it needs no such privileges,
+and `apps/core-api/src/store/schema.test.ts` fails the build if a repository queries a table the
+provisioning SQL does not create.
+
+The files are re-runnable (`IF NOT EXISTS` throughout), but `docker-entrypoint-initdb.d` runs only on
+_first_ initialisation — after a `docker compose down` without `-v`, an existing volume is not
+re-provisioned. To apply a change to a volume that already exists:
+
+```sh
+docker compose exec -T postgres psql -U pipeline -d pipeline < infra/postgres/init/20-catalogue.sql
+```
 
 ## Deploy, version, retire
 
@@ -141,8 +197,18 @@ The handler rules (all I/O in `ctx.run`, deterministic code, `RestatePromise` co
 
 Tracing is collected in two ways:
 
-- **Always on:** Restate server spans, SDK spans (per attempt and per `ctx.run`) and service spans go to the OTel collector.
-- **With the Langfuse overlay:** the same traces, plus LiteLLM generations with token usage and cost, all in one trace per run.
+- **Always on:** Restate server spans, SDK spans (per attempt and per `ctx.run`) and service spans go
+  to the OTel collector. The base collector config only logs them — nothing is stored until the
+  overlay adds an exporter.
+- **With the Langfuse overlay:** the same spans plus the LiteLLM generation, **in one trace per run**,
+  which is the property that makes a run debuggable end to end.
+  - Verified: a run's Restate spans and its LLM generation share one `traceId`, and `RunView.traceId`
+    leads to it.
+  - Known gap: the generation carries its latency but **not token usage or cost** — LiteLLM's
+    `langfuse_otel` callback does not emit the `gen_ai.usage.*` attributes Langfuse maps those from.
+    LiteLLM's native `langfuse` callback does report usage, but creates its own trace, which would
+    break the single-trace property. Not worth that trade for a local overlay; if cost tracking
+    matters, read it from LiteLLM's own spend logs instead.
 
 To start the overlay:
 
@@ -164,6 +230,18 @@ The overlay needs about 4 GB of extra memory. The `traceId` in a `RunView` is th
 `pnpm check` is the gate. It fails on a formatting drift as readily as on a type error, because a
 reformat changes a unit's artifact digest and therefore needs a version bump — so drift is a
 deployment problem here, not a cosmetic one.
+
+### Postman
+
+`manifests/` holds a collection covering every route, with assertions, and a local environment:
+
+```sh
+npx newman run manifests/ai-pipeline.postman_collection.json -e manifests/local.postman_environment.json
+```
+
+It doubles as the API reference — every request is documented, including the refusals. A test
+(`apps/core-api/src/routes/collection.test.ts`) fails the build if a route is added without a request,
+or a request outlives its route, so it cannot quietly go stale.
 
 ## Developing with Claude Code
 

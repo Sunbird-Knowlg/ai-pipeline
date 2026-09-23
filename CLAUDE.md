@@ -26,7 +26,18 @@ Use the Restate context directly (`ctx.run`, `ctx.client`, `ctx.sendClient`, `Re
 
 ## Contracts and metadata
 
-- Types and schemas live in `packages/contracts` (zod + `restate.iface`). That is the single source; never hand-write JSON Schema.
+- **A unit owns its contract.** `src/contract.ts` exports a `ContractEntry`, which the deploy CLI reads
+  from `dist/contract.js`. There is no shared registry, and adding one would be a regression: the
+  artifact digest covers a unit's workspace dependencies, so a file every unit imports means adding
+  one workflow changes every other unit's artifact and forces a round of version bumps.
+- `packages/contract-<name>` exists only for a contract a **second** unit needs (a caller needs its
+  callee's contract). `packages/contracts` is the shared kit: the trigger envelope, the JSON Schema
+  generation, the `ContractEntry` type. Nothing unit-specific belongs in it.
+- Split every contract into schemas (zod) and api (`restate.iface`), so the catalogue side of a
+  contract does not drag the Restate SDK into tools that only read schemas.
+- A workflow's entry handler **must** be named `run` — the runs API selects invocations by that name.
+  `pipeline deploy` enforces it.
+- Types and schemas are zod; never hand-write JSON Schema.
 - `metadata.json` is operational metadata only: kind, restateName, version, config, triggers and dependencies.
 - **Any change to a unit or its workspace dependencies is a new artifact.** Bump the unit's `version` to deploy it immutably, or iterate with `pnpm pipeline deploy <unit> --dev`.
   - Otherwise the control plane answers `VERSION_ARTIFACT_CONFLICT`.
@@ -54,6 +65,17 @@ Use the Restate context directly (`ctx.run`, `ctx.client`, `ctx.sendClient`, `Re
     neither ships nor counts toward the artifact digest;
   - replay tests are `*.replay.test.ts` (Testcontainers);
   - e2e tests are in `tests/e2e` and use the types from `@ai-pipeline/api-contract`.
+
+## Adding a unit
+
+`pnpm pipeline new <workflow|service> <name> [--kafka <topic>]`. It generates a unit that builds,
+lints and deploys as it stands, with the conventions already applied. Do not hand-roll one: the files
+have to agree with each other, and the failure mode is a deploy-time error.
+
+## The catalogue schema
+
+Created when Postgres is provisioned (`infra/postgres/init/`), never by the API. The service assumes
+the tables exist and issues no DDL. Add a table by adding to that SQL, not by writing migration code.
 
 ## Commands
 

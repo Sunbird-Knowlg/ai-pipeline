@@ -187,6 +187,9 @@ true in the code? is it _tested_? would a test catch it being broken?
 16. The package graph is acyclic and directional: contracts depend on nothing above them, runtime not
     on units or apps, units not on apps, and nothing depends on an app. core-api never imports a
     workflow's contract — it addresses workflows by Restate name.
+17. **Units are independently deployable.** Adding, changing or removing one unit must not change
+    another unit's artifact digest. A unit owns its contract; a `packages/contract-*` exists only for
+    a contract a second unit needs. There is no shared registry of contracts.
 
 ---
 
@@ -233,17 +236,16 @@ Probe it for real, against Postgres and Restate:
   `withLock` uses a session-level lock on a dedicated connection — what happens if that connection
   drops mid-section?
 
-### 4. N+1 calls in the read paths — confirmed
+### 4. Read-path cost — two N+1s were fixed; check the fixes hold
 
-- `domain/catalogue.ts:listUnits` calls `triggerViews` per unit, and each `triggerViews` issues its
-  own `admin.listSubscriptions()` HTTP call. `GET /v1/workflows` therefore makes one Restate round
-  trip per catalogued unit, fetching the same global list each time.
-- `routes/deployments.ts` calls `inFlight` per deployment — one DataFusion query each. With the
-  fixture history this reached 30+ queries for one request.
-- `domain/triggers.ts:reconcile` lists subscriptions twice per reconcile.
+`GET /v1/workflows` used to fetch the global subscription list once per catalogued unit, and
+`GET /v1/deployments` ran one in-flight query per deployment. Both now issue a single call, pinned by
+`domain/catalogue.test.ts`.
 
-Confirm the cost, then judge: does this matter at the intended scale, and what is the right fix
-(hoist the list, batch the counts into one SQL query)?
+Verify with a populated catalogue: how many Restate round trips does each read actually make? Look for
+the same pattern elsewhere — anywhere a per-unit loop calls something global. And judge whether the
+remaining cost is acceptable at the intended scale, including `describeUnit`, which still issues four
+store queries plus one subscription fetch.
 
 ### 5. Restate coupling that will break on upgrade
 
@@ -316,13 +318,16 @@ must be added before this is exposed beyond localhost, and is the current code s
 
 ### 12. Operational gaps
 
-- **There is no CI.** `.github/workflows` does not exist, so `pnpm check`, the replay suite and the
-  e2e suite run only when someone remembers. Propose the pipeline, including where the e2e stack and
-  a GPU-less LLM substitute fit.
+- **CI covers `check` and the replay suite, not e2e** (`.github/workflows/ci.yml`) — a hosted runner
+  has no GPU for Ollama. Judge whether the gap is acceptable and what the cheapest honest substitute
+  would be (a stub model behind LiteLLM, a self-hosted runner).
 - **No coverage measurement** is configured in `vitest.config.ts`. Measure it, and report where the
   gaps are meaningful rather than reporting a percentage.
-- **No schema migrations.** `apps/core-api/schema.sql` is applied idempotently on every boot. What
-  happens when a column must change? What happens if two core-api instances boot at once?
+- **The schema is provisioned, not migrated.** `infra/postgres/init/` is applied by Postgres itself;
+  the API assumes the tables exist and issues no DDL. Probe the consequences: what happens on an
+  existing volume, where `docker-entrypoint-initdb.d` does not re-run? What is the story for altering
+  a column in a real environment, and is the absence of a migration tool the right call at this size?
+  Does the API fail usefully if a table really is missing?
 - **Unbounded growth**: unit containers and images are never garbage collected and run with
   `--restart unless-stopped`; the fixture's e2e runs accumulate deployments in the catalogue; the Ajv
   validator cache in `json-schema.ts` is keyed per `name@version#hash` and never evicted.
@@ -331,7 +336,25 @@ must be added before this is exposed beyond localhost, and is the current code s
   sensitive lands in argv, labels, image metadata or logs. The logger redacts a fixed field list
   (`packages/observability/src/logger.ts`); is it sufficient, and does it cover nested payloads?
 
-### 13. Do the guardrails actually guard? (meta-testing)
+### 13. What the recent fixes newly put at risk
+
+These changed in the last round and are therefore the least-proven parts of the system:
+
+- **Per-unit contracts and the digest's lockfile slicing.** `artifact.ts` now hashes only the
+  lockfile's `packages:`/`snapshots:` sections, on the reasoning that `importers:` restates declared
+  specifiers already covered by each package.json in the closure. Attack that reasoning: find a change
+  that alters what reaches a unit's image without changing its digest. A transitive resolution shift, a
+  `pnpm.overrides`, a patched dependency, a peer-dependency change, a catalog edit.
+- **The scaffold's templates.** They encode conventions that live in several other files. Scaffold a
+  unit, deploy it, start a run, and check the whole path — then look for a convention the templates
+  get wrong or omit.
+- **Provisioning instead of migration.** See above.
+- **`resume` and `kill`.** Force a real pause (stop LiteLLM until the retries are exhausted), then
+  resume it. Does the run complete? Is the journal intact? Is the LLM step re-executed?
+- **The Postman collection** is asserted to cover every route by
+  `routes/collection.test.ts`. Check the match is meaningful rather than superficial.
+
+### 14. Do the guardrails actually guard? (meta-testing)
 
 Break things deliberately and confirm something fails. A guardrail that has never been observed
 failing is a guardrail you do not have.

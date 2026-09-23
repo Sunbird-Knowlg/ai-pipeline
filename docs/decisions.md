@@ -183,6 +183,82 @@ settled answers to that.
   - A unit↔contract consistency test now fails the build when a `metadata.json` and its contract
     disagree; that mismatch used to surface only at deploy time.
 
+## Review round two (2026-09-23)
+
+Driven by a set of specific questions: how a workflow gets added, whether units are really
+independent, whether the APIs suffice, where tables come from, whether observability works, what
+SeaweedFS is for, dead code, over-engineering.
+
+- **Units are independently deployable, and that was broken.** The artifact digest covers a unit's
+  workspace dependencies, and every unit imported the whole of `packages/contracts` — so adding an
+  unrelated workflow's contract changed the digest of every existing unit and would have forced a
+  round of version bumps. Measured, then fixed:
+  - a unit owns its contract (`src/contract.ts` → `dist/contract.js`), and the shared registry is
+    gone. `packages/contract-*` exists only for a contract a second unit needs, which is why
+    `contract-summary` is shared and `content-enrichment`'s is not;
+  - the digest hashes the lockfile's external resolution graph (`packages:`, `snapshots:`) rather than
+    the whole file. `turbo prune --docker` writes a pruned lockfile per image, so another package's
+    `importers:` entry never reaches this unit's build — and `importers:` restates declared
+    specifiers that every package.json in the closure already contributes.
+  - Verified end to end: scaffolding a workflow with its own Kafka trigger, installing, and removing
+    it again leaves both existing units' digests byte-identical.
+- **Adding a unit is one command.** `pnpm pipeline new <kind> <name> [--kafka <topic>]` writes the
+  thirteen files that have to agree — manifest with subpath exports, both tsconfigs, lint config,
+  boundaries tag, metadata, contract, schemas, iface, handler, trigger, adapter, entry point. The
+  generated unit passes `pnpm check` as it stands, and `scaffold.test.ts` checks the output against
+  the same rules the toolchain enforces, so the templates cannot drift silently.
+- **A workflow's entry handler must be `run`.** The runs API selects invocations by handler name, so a
+  workflow that named it anything else would silently have no runs. It was an unenforced convention;
+  `pipeline deploy` now refuses it.
+- **Missing run-lifecycle APIs, found by taking the retry policy seriously.** The LLM profile is
+  uncapped and pauses an invocation when retries are exhausted — deliberately, so an outage does not
+  destroy a journal. But the API could only _report_ `paused`, so recovery needed the Restate CLI.
+  Restate 1.7.10 exposes `PATCH /invocations/{id}/resume`, `…/kill`, `…/restart-as-new` and
+  `…/purge`; the first two are now `POST /v1/runs/:workflow/:runId/{resume,kill}`. `restart-as-new`
+  and the purge operations were left out: purging deletes history, and Restate's retention already
+  governs that.
+- **The cancellation regex is justified.** `mapStatus` distinguishes cancelled from failed by matching
+  `[409] Cancel` in `completion_failure`. Checked against the live server: `sys_invocation` in 1.7.10
+  has no column that states it — `completion_result` is only `success`/`failure`. The custom code
+  stays, and the coupling is now written down rather than assumed.
+- **Tables come from provisioning, not from the application.** `infra/postgres/init/` is mounted into
+  `/docker-entrypoint-initdb.d`; in a real environment the same SQL is applied by whatever provisions
+  the database. The API assumes the tables exist, issues no DDL, and therefore needs no such
+  privileges. `schema.test.ts` derives the table names from the repositories' SQL and fails the build
+  if provisioning does not create one.
+  - A migration runner was built first and then removed: it was more machinery than this needs, and
+    the instruction was explicit that the schema belongs with the database. Worth recording that the
+    runner's own config had to be narrowed to `DATABASE_URL` — demanding the API's Restate settings
+    would have failed a job that never used them.
+- **Observability works, with one gap.** Restate server and SDK spans, service spans and the LiteLLM
+  generation share one trace per run, and `RunView.traceId` leads to it — confirmed through the
+  Langfuse API. The generation carries latency but not token usage or cost: `langfuse_otel` does not
+  emit the `gen_ai.usage.*` attributes Langfuse maps those from. LiteLLM's native `langfuse` callback
+  does, but creates its own trace and would break the single-trace property, which is the more
+  valuable of the two. The README says so rather than implying cost tracking works.
+  - The base collector config has only a debug exporter: without the overlay, spans are received and
+    dropped. That is intentional for a local stack, but it is not "tracing is on".
+- **SeaweedFS stays.** It is not spare parts: Langfuse v3+ requires S3-compatible storage for event
+  and media uploads, and both `LANGFUSE_S3_*_ENDPOINT` settings point at it. Confirmed in use — 89
+  objects after a handful of runs. It is in the observability overlay only, so the base stack does not
+  pay for it.
+- **Two N+1s in the read paths, fixed.** `GET /v1/workflows` fetched the global subscription list once
+  per catalogued unit (Restate has no per-service endpoint), and `GET /v1/deployments` ran one
+  in-flight count per deployment — dozens of queries for one request once fixture history had
+  accumulated. Both now issue one call, and a test pins the count so it cannot regress.
+- **Dead code: one finding.** `startContainer` was declared on the `Docker` port, implemented, wired
+  into `dockerCli` and stubbed in tests, and never called — the e2e suite starts containers directly.
+  Removed. A sweep of every exported symbol turned up nothing else: the rest of what a naive scan
+  flags is same-file use, and the inferred types a contract package exports next to each schema are a
+  published surface, not dead weight.
+- **Over-engineering, judged case by case.** The abstractions that survived review earn their keep:
+  the `Store` and port interfaces are what make the control-plane rules testable without Postgres or
+  Restate, and the scaffold replaces thirteen hand-written files. What was removed or avoided: the
+  migration runner, the contract registry, and `startContainer`. Advisory locks stay rather than
+  becoming a Restate virtual object — turning the control plane into a Restate service to borrow its
+  serialisation would be a far larger change than two `pg_advisory_lock` calls, and core-api is
+  deliberately not a Restate service.
+
 ## Deferred (v2+)
 
 RAG:
