@@ -1,0 +1,863 @@
+{
+  "info": {
+    "name": "AI Pipeline on Restate \u2014 core-api",
+    "description": "The complete core-api surface: health, the catalogue, trigger management, starting and inspecting runs, the run lifecycle, and the control plane.\n\n**Setup**\n1. Select the `Local` environment (or edit the collection variables).\n2. Bring the stack up: `docker compose up -d --build`.\n3. Deploy the example units: `pnpm pipeline deploy summary && pnpm pipeline deploy content-enrichment`.\n\n**How the variables work**\n`Start a run` and `List runs` save `runId` into a collection variable, so the run requests below them work without copy-pasting. Same for `deploymentId` from `List deployments`.\n\n**Errors** all use one envelope: `{ \"error\": { \"code\", \"message\" } }`. The codes are a closed set \u2014 see `packages/api-contract/src/errors.ts`.\n\n**Not in here:** the Restate admin API (`:9070`) and the Restate ingress (`:8080`). The ingress is deliberately not published; REST goes through this API.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:3000",
+      "description": "core-api. Bound to 127.0.0.1 only \u2014 there is no auth in v1."
+    },
+    {
+      "key": "workflow",
+      "value": "content-enrichment",
+      "description": "Catalogue name of the workflow under test."
+    },
+    {
+      "key": "service",
+      "value": "summary",
+      "description": "A private service, for contrast."
+    },
+    {
+      "key": "runId",
+      "value": "",
+      "description": "Filled in by 'Start a run' and 'List runs'."
+    },
+    {
+      "key": "deploymentId",
+      "value": "dp_0000000000000000",
+      "description": "Filled in by 'List deployments'. The default is a well-formed but unknown id, so the retire request 404s rather than failing id validation."
+    },
+    {
+      "key": "triggerId",
+      "value": "content-published",
+      "description": "A Kafka trigger of the workflow above."
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "description": "Liveness is 'the process answers'. Readiness is 'both stores answer' \u2014 Postgres for the catalogue, Restate for the runs.",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/health/live",
+              "host": ["{{baseUrl}}"],
+              "path": ["health", "live"]
+            },
+            "description": "Static. Answers as long as the process is up \u2014 suitable for a restart probe."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with status ok', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Readiness",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/health/ready",
+              "host": ["{{baseUrl}}"],
+              "path": ["health", "ready"]
+            },
+            "description": "503 when either store is unreachable, and the body says which. Suitable for a traffic probe."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('reports both dependencies', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.dependencies).to.have.keys(['postgres', 'restate']);",
+                  "  pm.expect([200, 503]).to.include(pm.response.code);",
+                  "  if (pm.response.code === 200) pm.expect(body.status).to.eql('ready');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Catalogue",
+      "description": "What is deployed, fed by each unit's metadata.json at deploy time. 'Workflow' in these paths covers both kinds of catalogued unit.",
+      "item": [
+        {
+          "name": "List units",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/workflows",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "workflows"],
+              "query": [
+                {
+                  "key": "kind",
+                  "value": "workflow",
+                  "disabled": true,
+                  "description": "workflow | service"
+                }
+              ]
+            },
+            "description": "Every unit's current version \u2014 the version of the deployment Restate routes to \u2014 with its triggers and declared dependencies.\n\n`observedStatus` on each trigger is read live from Restate, next to the `desiredEnabled` the catalogue holds. They differ on purpose: see 'Disable a Kafka trigger'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('lists the example units', () => {",
+                  "  const names = pm.response.json().workflows.map((w) => w.name);",
+                  "  pm.expect(names).to.include(pm.collectionVariables.get('workflow'));",
+                  "});",
+                  "pm.test('the summary service is private and has no triggers', () => {",
+                  "  const svc = pm.response.json().workflows.find((w) => w.name === pm.collectionVariables.get('service'));",
+                  "  if (!svc) return;",
+                  "  pm.expect(svc.visibility).to.eql('private');",
+                  "  pm.expect(svc.triggers).to.eql([]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Describe a unit",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/workflows/{{workflow}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "workflows", "{{workflow}}"]
+            },
+            "description": "The full record: the declared config, the draft-07 JSON Schemas generated from the unit's contract, the contract hash, every registered version, and every deployment.\n\n`schemas.input` is what 'Start a run' validates against \u2014 and it is the schema of the version that will actually run, not the newest registered."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('carries the generated schemas and the contract hash', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.schemas).to.have.keys(['input', 'output', 'config']);",
+                  "  pm.expect(body.contractHash).to.match(/^sha256:[0-9a-f]{64}$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Describe a unit \u2014 unknown name (404)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/workflows/not-a-unit",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "workflows", "not-a-unit"]
+            },
+            "description": "Shows the error envelope every failure uses."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 NOT_FOUND in the error envelope', () => {",
+                  "  pm.response.to.have.status(404);",
+                  "  pm.expect(pm.response.json().error.code).to.eql('NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Triggers",
+      "description": "Enabling and disabling a unit's triggers. Disabling a Kafka trigger is eventually consistent, and the response says so.",
+      "item": [
+        {
+          "name": "Disable a Kafka trigger",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/workflows/{{workflow}}/triggers/{{triggerId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "workflows", "{{workflow}}", "triggers", "{{triggerId}}"]
+            },
+            "description": "Sets the desired state and reconciles Restate's subscriptions.\n\nDeleting a subscription stops its consumer group, but records Restate has already enqueued still start runs \u2014 so `observedStatus` reads `disabling` until the subscription is gone, and `disabled` never means 'nothing in flight'. The response carries a `note` saying exactly that.\n\nRe-enabling reuses a stable `group.id`, so the consumer resumes from its committed offsets rather than replaying the topic."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('desired state is off, and the lag is documented', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.desiredEnabled).to.eql(false);",
+                  "  pm.expect(['disabling', 'disabled']).to.include(body.observedStatus);",
+                  "  pm.expect(body.note).to.match(/already enqueued/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Enable a Kafka trigger",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/workflows/{{workflow}}/triggers/{{triggerId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "workflows", "{{workflow}}", "triggers", "{{triggerId}}"]
+            },
+            "description": "Recreates the subscription. Run this after the request above, or the workflow stops consuming."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('active again, with a subscription', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.desiredEnabled).to.eql(true);",
+                  "  pm.expect(body.observedStatus).to.eql('active');",
+                  "  pm.expect(body.subscriptionId).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Runs",
+      "description": "Starting runs and reading them back. Restate is the run store \u2014 there is no run table \u2014 so these views are assembled from Restate's introspection plus the state each handler records at its start.",
+      "item": [
+        {
+          "name": "Start a run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json"
+              },
+              {
+                "key": "idempotency-key",
+                "value": "postman-{{$timestamp}}",
+                "description": "Optional. The run id is derived from it, so the same key returns the same run."
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"input\": {\n    \"contentId\": \"postman-1\",\n    \"title\": \"Restate\",\n    \"text\": \"Restate is a durable execution engine. It journals every step of a handler so that, after a crash, the handler replays from the journal and resumes where it left off.\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/workflows/{{workflow}}/runs",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "workflows", "{{workflow}}", "runs"]
+            },
+            "description": "202 with `{ runId, invocationId, status }` and a `Location` header.\n\n`status` is `Accepted`, or `PreviouslyAccepted` when an `Idempotency-Key` matched a run that already exists. Note the semantics: the run id is derived from the key, so **the same key with different input returns the first run and ignores the new input**.\n\nThe body carries only the input. The trigger context is attached by the control plane, so a caller cannot claim a run came from somewhere it did not.\n\nRefusals: `NOT_INVOCABLE` (not a public workflow), `NO_REST_TRIGGER`, `TRIGGER_DISABLED`, `NOT_DEPLOYED`, `INVALID_INPUT`. They are checked in that order, so the most useful one wins."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 with an opaque run id', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.runId).to.match(/^api_[0-9a-f]{32}$/);",
+                  "  pm.expect(['Accepted', 'PreviouslyAccepted']).to.include(body.status);",
+                  "  pm.collectionVariables.set('runId', body.runId);",
+                  "});",
+                  "pm.test('points at the run it created', () => {",
+                  "  pm.expect(pm.response.headers.get('location')).to.include(pm.collectionVariables.get('runId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Start a run \u2014 invalid input (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"input\": {\n    \"contentId\": \"missing-text\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/workflows/{{workflow}}/runs",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "workflows", "{{workflow}}", "runs"]
+            },
+            "description": "Validated with Ajv against the catalogued input schema of the version that will run. The message names the unit and version and lists the failing paths."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 INVALID_INPUT naming the version', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  const error = pm.response.json().error;",
+                  "  pm.expect(error.code).to.eql('INVALID_INPUT');",
+                  "  pm.expect(error.message).to.include(pm.collectionVariables.get('workflow'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List runs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/runs?workflow={{workflow}}&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "runs"],
+              "query": [
+                {
+                  "key": "workflow",
+                  "value": "{{workflow}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "1\u2013200, default 50"
+                },
+                {
+                  "key": "status",
+                  "value": "running",
+                  "disabled": true,
+                  "description": "running | completed | failed | cancelled | paused"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true,
+                  "description": "From a previous response's nextCursor"
+                }
+              ]
+            },
+            "description": "Keyset-paginated on `(createdAt, invocationId)`, newest first. `nextCursor` is present only when there is another page \u2014 pass it back as `cursor`.\n\nRun history is Restate's retention: 7 days. It is operational history, not an audit log."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns runs of the requested workflow only', () => {",
+                  "  const runs = pm.response.json().runs;",
+                  "  runs.forEach((r) => pm.expect(r.workflow).to.eql(pm.collectionVariables.get('workflow')));",
+                  "  if (runs.length) pm.collectionVariables.set('runId', runs[0].runId);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get a run",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/runs/{{workflow}}/{{runId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "runs", "{{workflow}}", "{{runId}}"]
+            },
+            "description": "A `RunView`: `status` (running | completed | failed | cancelled | paused), Restate's own `restateStatus` unmapped, the `trigger` the handler recorded, the `workflowVersion` that ran, the `deploymentId` it is pinned to, and `traceId`.\n\n`output` appears once the run has completed successfully. `traceId` leads to the run's trace \u2014 the same id Langfuse shows when the observability overlay is running."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('reports the version and deployment that ran it', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(['running', 'completed', 'failed', 'cancelled', 'paused']).to.include(body.status);",
+                  "  if (body.status === 'completed') pm.expect(body.output).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Run lifecycle",
+      "description": "Operator actions on a run in flight. Cancel asks the handler to unwind; kill does not; resume revives a run whose retries were exhausted.",
+      "item": [
+        {
+          "name": "Cancel a run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/runs/{{workflow}}/{{runId}}/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "runs", "{{workflow}}", "{{runId}}", "cancel"]
+            },
+            "description": "202 `cancellation_requested`. Graceful: the handler gets to unwind, so compensation runs.\n\n409 `RUN_COMPLETED` if it has already finished."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 requested, or 409 if it already finished', () => {",
+                  "  pm.expect([202, 409]).to.include(pm.response.code);",
+                  "  if (pm.response.code === 202) pm.expect(pm.response.json().status).to.eql('cancellation_requested');",
+                  "  else pm.expect(pm.response.json().error.code).to.eql('RUN_COMPLETED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Kill a run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/runs/{{workflow}}/{{runId}}/kill",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "runs", "{{workflow}}", "{{runId}}", "kill"]
+            },
+            "description": "202 `kill_requested`. Unlike cancel, the handler does not unwind: no compensation runs and children are abandoned. For a run that cancel cannot stop."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 requested, or 409 if it already finished', () => {",
+                  "  pm.expect([202, 409]).to.include(pm.response.code);",
+                  "  if (pm.response.code === 202) pm.expect(pm.response.json().status).to.eql('kill_requested');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resume a paused run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/runs/{{workflow}}/{{runId}}/resume",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "runs", "{{workflow}}", "{{runId}}", "resume"]
+            },
+            "description": "202 `resume_requested`.\n\nThis is the counterpart to a deliberate design choice: the LLM retry profile is uncapped and pauses an invocation when its retries are exhausted, rather than failing it \u2014 an LLM gateway outage should not destroy a run's journal. Once the cause is fixed, the run is resumed here.\n\nFind paused runs with `GET /v1/runs?status=paused`.\n\n409 `RUN_NOT_RESUMABLE` if the run is running or has completed."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 requested, or 409 if it is not paused', () => {",
+                  "  pm.expect([202, 409]).to.include(pm.response.code);",
+                  "  if (pm.response.code === 202) pm.expect(pm.response.json().status).to.eql('resume_requested');",
+                  "  else pm.expect(pm.response.json().error.code).to.eql('RUN_NOT_RESUMABLE');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List paused runs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/runs?status=paused&limit=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "runs"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "paused"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "The operator's starting point after an outage: everything waiting to be resumed."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Control plane",
+      "description": "Deployment registration and retirement. `pnpm pipeline deploy` is what normally calls these \u2014 it builds the image and starts the container first, which this collection cannot do.",
+      "item": [
+        {
+          "name": "List deployments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/deployments",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "deployments"],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "{{workflow}}",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Every deployment with its `inFlight` count \u2014 invocations still pinned to it, which must finish there before it can be retired.\n\n`status` mirrors Restate's routing rather than leading it: the deployment Restate sends new invocations to is `active`, every other live one is `draining`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('reports status and in-flight counts', () => {",
+                  "  const deployments = pm.response.json().deployments;",
+                  "  deployments.forEach((d) => {",
+                  "    pm.expect(['active', 'draining', 'retired']).to.include(d.status);",
+                  "    pm.expect(d.inFlight).to.be.a('number');",
+                  "  });",
+                  "});",
+                  "// Prefer one that is actually retirable. Failing that, take a live one so the retire request",
+                  "// below demonstrates the refusal rather than an id-validation error.",
+                  "const deployments = pm.response.json().deployments;",
+                  "const target =",
+                  "  deployments.find((d) => d.status === 'draining' && d.inFlight === 0) ??",
+                  "  deployments.find((d) => d.status !== 'retired');",
+                  "if (target) pm.collectionVariables.set('deploymentId', target.deploymentId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register a deployment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"metadata\": {\n    \"apiVersion\": \"ai-pipeline/v1alpha1\",\n    \"kind\": \"workflow\",\n    \"name\": \"example\",\n    \"restateName\": \"Example\",\n    \"version\": \"0.1.0\",\n    \"config\": {},\n    \"triggers\": [{ \"id\": \"api\", \"type\": \"rest\" }]\n  },\n  \"schemas\": {\n    \"input\": { \"type\": \"object\", \"properties\": { \"id\": { \"type\": \"string\" } }, \"required\": [\"id\"] },\n    \"output\": { \"type\": \"object\" },\n    \"config\": { \"type\": \"object\" }\n  },\n  \"contractHash\": \"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\n  \"artifactDigest\": \"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\n  \"endpoint\": \"http://example-000000000000:9080\",\n  \"mode\": \"immutable\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/deployments",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "deployments"]
+            },
+            "description": "**Use `pnpm pipeline deploy <unit>` instead.** This request is here to document the shape; sent as-is it fails, because no container serves that endpoint.\n\nThe order of operations matters. Everything that can be refused cheaply is refused first, while nothing has changed; then the endpoint is discovered with `dry_run` to check what it serves; only then is it registered with Restate. After that every step is idempotent, so a failure comes back as a retryable 503 rather than being rolled back \u2014 by then Restate may already be routing to the endpoint.\n\nPre-registration refusals (safe for the CLI to tear the container down again): `INVALID_METADATA`, `INVALID_SCHEMA`, `INVALID_CONFIG`, `RESTATE_NAME_TAKEN`, `VERSION_CONTRACT_CONFLICT`, `VERSION_ARTIFACT_CONFLICT`, `DEPENDENCY_NOT_REGISTERED`, `DEPENDENCY_NOT_DEPLOYED`, `SERVICE_MISMATCH`.\n\nA version binds to one contract and one artifact: the same `name@version` from different bytes is a 409."
+          }
+        },
+        {
+          "name": "Retire a deployment",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/deployments/{{deploymentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "deployments", "{{deploymentId}}"]
+            },
+            "description": "Refused in three cases, in order of how badly getting it wrong would hurt: the catalogue marks it `active`; Restate still routes to it (which wins over the catalogue if they disagree); or invocations are still pinned to it.\n\n`DEPLOYMENT_ACTIVE` or `DEPLOYMENT_NOT_DRAINED`. Idempotent once retired.\n\nThis removes the Restate deployment but not the container \u2014 `pnpm pipeline retire <id>` does both."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('retires a drained deployment, or explains why not', () => {",
+                  "  pm.expect([200, 404, 409]).to.include(pm.response.code);",
+                  "  if (pm.response.code === 200) {",
+                  "    pm.expect(pm.response.json().status).to.eql('retired');",
+                  "  } else {",
+                  "    // DEPLOYMENT_ACTIVE and DEPLOYMENT_NOT_DRAINED are the interesting ones: both mean Restate",
+                  "    // still needs this deployment, which is exactly what this endpoint exists to protect.",
+                  "    pm.expect(['DEPLOYMENT_ACTIVE', 'DEPLOYMENT_NOT_DRAINED', 'NOT_FOUND']).to.include(",
+                  "      pm.response.json().error.code,",
+                  "    );",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Guards",
+      "description": "There is no auth in v1. Every port binds to 127.0.0.1, and two guards carry the weight.",
+      "item": [
+        {
+          "name": "Foreign Host header is refused",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "host",
+                "value": "evil.example"
+              },
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/health/live",
+              "host": ["{{baseUrl}}"],
+              "path": ["health", "live"]
+            },
+            "description": "A Host allow-list is what stops DNS rebinding \u2014 a page on the public internet resolving a name it controls to 127.0.0.1 and talking to this API from the victim's browser.\n\nPostman may not let you override `Host`; if it does not, this returns 200 and the guard is untested here. `apps/core-api/src/app.test.ts` covers it."
+          }
+        },
+        {
+          "name": "Cross-site write is refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "origin",
+                "value": "https://evil.example"
+              },
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/runs/{{workflow}}/api_00000000000000000000000000000000/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "v1",
+                "runs",
+                "{{workflow}}",
+                "api_00000000000000000000000000000000",
+                "cancel"
+              ]
+            },
+            "description": "Unsafe methods carrying a foreign `Origin`, or `sec-fetch-site: cross-site|same-site`, are refused \u2014 so a foreign page cannot make a browser start or cancel runs. The CLI and curl send neither header, so they are unaffected."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 CROSS_SITE_REQUEST', () => {",
+                  "  pm.response.to.have.status(403);",
+                  "  pm.expect(pm.response.json().error.code).to.eql('CROSS_SITE_REQUEST');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown route",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/nope",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "nope"]
+            },
+            "description": "Even a 404 uses the error envelope, so a client never has to parse two failure shapes."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 ROUTE_NOT_FOUND in the envelope', () => {",
+                  "  pm.response.to.have.status(404);",
+                  "  pm.expect(pm.response.json().error.code).to.eql('ROUTE_NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
