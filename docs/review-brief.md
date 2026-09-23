@@ -318,12 +318,12 @@ must be added before this is exposed beyond localhost, and is the current code s
 
 ### 12. Operational gaps
 
-- **CI is written but not active.** The pipeline lives at `docs/ci-workflow.yml`, not
-  `.github/workflows/`, because pushing a workflow file needs a token scope this repo's credentials
-  lack. So nothing runs automatically yet: `pnpm check` and the replay suite run when someone
-  remembers. Read the file, judge whether the two jobs are the right ones, and note that `test:e2e` is
-  excluded because a hosted runner has no GPU for Ollama — say what the cheapest honest substitute
-  would be (a stub model behind LiteLLM, a self-hosted runner).
+- **There is no CI.** `.github/` does not exist, so `pnpm check`, the replay suite and the e2e suite
+  run only when someone remembers, and nothing verifies a branch before it merges. Propose the
+  pipeline: which jobs, and in particular what to do about `pnpm test:e2e`, which needs the compose
+  stack _and_ a host Ollama serving a real model — a hosted runner has no GPU for it. Say what the
+  cheapest honest substitute is (a stub model behind LiteLLM, a self-hosted runner) rather than
+  quietly dropping the suite.
 - **No coverage measurement** is configured in `vitest.config.ts`. Measure it, and report where the
   gaps are meaningful rather than reporting a percentage.
 - **The schema is provisioned, not migrated.** `infra/postgres/init/` is applied by Postgres itself;
