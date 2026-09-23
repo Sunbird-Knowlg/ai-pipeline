@@ -35,6 +35,30 @@ function compilerConfig(root: string): string[] {
 }
 
 /**
+ * The part of the lockfile that describes *external* package resolution.
+ *
+ * The whole lockfile is the wrong input. `turbo prune --docker` writes a pruned lockfile containing
+ * only the target package's subtree, so an unrelated package's `importers:` entry never reaches this
+ * unit's image — yet hashing the whole file would change this unit's artifact every time any package
+ * anywhere gained a dependency. Adding one workflow would force a version bump of every other one.
+ *
+ * The `importers:` block is also redundant here: it restates each package's declared specifiers, and
+ * every package.json in the closure is already hashed, as is the catalog in `pnpm-workspace.yaml`.
+ * What it adds is the resolved external graph — `packages:` and `snapshots:` — which is kept in full,
+ * because a shifted transitive resolution really does change the image.
+ */
+function externalResolutions(root: string): string {
+  const file = join(root, 'pnpm-lock.yaml');
+  if (!existsSync(file)) return '';
+  const lines = readFileSync(file, 'utf8').split('\n');
+  const importers = lines.findIndex((line) => line === 'importers:');
+  if (importers === -1) return lines.join('\n');
+  // Sections are top-level keys, so the block ends at the next unindented line.
+  const after = lines.findIndex((line, i) => i > importers && /^[a-zA-Z]/.test(line));
+  return [...lines.slice(0, importers), ...(after === -1 ? [] : lines.slice(after))].join('\n');
+}
+
+/**
  * Deterministic artifact identity: sha256 over everything that goes into the unit's image —
  * the build recipe, the lockfile, and the sources of the unit and its workspace dependencies.
  * (Docker image ids are not reproducible across rebuilds, so they can't identify an artifact.)
@@ -47,7 +71,12 @@ export function sourceDigest(root: string, packageName: string): string {
     const name = queue.pop()!;
     if (seen.has(name)) continue;
     seen.add(name);
-    const manifest = readManifest(join(packages.get(name)!, 'package.json'));
+    const dir = packages.get(name);
+    if (!dir)
+      throw new Error(
+        `"${name}" is not a package in this workspace; check pnpm-workspace.yaml covers its directory`,
+      );
+    const manifest = readManifest(join(dir, 'package.json'));
     for (const [dep, range] of Object.entries(manifest.dependencies))
       if (range.startsWith('workspace:') && packages.has(dep)) queue.push(dep);
   }
@@ -55,7 +84,6 @@ export function sourceDigest(root: string, packageName: string): string {
     'Dockerfile',
     '.dockerignore',
     'turbo.json',
-    'pnpm-lock.yaml',
     'pnpm-workspace.yaml',
     'package.json',
   ]
@@ -67,12 +95,12 @@ export function sourceDigest(root: string, packageName: string): string {
     inputs.push(join(dir, 'package.json'), join(dir, 'tsconfig.json'));
     if (existsSync(join(dir, 'tsconfig.build.json'))) inputs.push(join(dir, 'tsconfig.build.json'));
     if (existsSync(join(dir, 'metadata.json'))) inputs.push(join(dir, 'metadata.json'));
-    if (existsSync(join(dir, 'schema.sql'))) inputs.push(join(dir, 'schema.sql'));
     inputs.push(...files(join(dir, 'src')).filter(ships));
   }
   const hash = createHash('sha256');
   for (const file of inputs.sort()) {
     hash.update(relative(root, file)).update('\0').update(readFileSync(file)).update('\0');
   }
+  hash.update('pnpm-lock.yaml').update('\0').update(externalResolutions(root)).update('\0');
   return `sha256:${hash.digest('hex')}`;
 }

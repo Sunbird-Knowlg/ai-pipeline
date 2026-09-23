@@ -36,7 +36,7 @@ function workspace(packages: Pkg[]): string {
   );
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'repo' }));
   writeFileSync(join(root, 'Dockerfile'), 'FROM node\n');
-  writeFileSync(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
+  writeFileSync(join(root, 'pnpm-lock.yaml'), lockfile());
   writeFileSync(join(root, 'turbo.json'), '{}\n');
 
   mkdirSync(join(root, 'packages/typescript-config'), { recursive: true });
@@ -65,6 +65,38 @@ function workspace(packages: Pkg[]): string {
     }
   }
   return root;
+}
+
+/**
+ * A lockfile shaped like pnpm's: a header, per-package `importers:` entries, then the resolved
+ * external graph. The digest must react to the last part and ignore the middle.
+ */
+function lockfile(importers: string[] = ['workflows/example'], externalVersion = '4.6.5'): string {
+  return [
+    "lockfileVersion: '9.0'",
+    '',
+    'settings:',
+    '  autoInstallPeers: true',
+    '',
+    'importers:',
+    ...importers.flatMap((path) => [
+      `  ${path}:`,
+      '    dependencies:',
+      '      zod:',
+      "        specifier: 'catalog:'",
+      `        version: ${externalVersion}`,
+    ]),
+    '',
+    'packages:',
+    '',
+    `  zod@${externalVersion}:`,
+    '    resolution: { integrity: sha512-deadbeef }',
+    '',
+    'snapshots:',
+    '',
+    `  zod@${externalVersion}: {}`,
+    '',
+  ].join('\n');
 }
 
 const unit = (overrides: Partial<Pkg> = {}): Pkg => ({
@@ -112,17 +144,65 @@ describe('sourceDigest', () => {
     expect(sourceDigest(root, '@ai-pipeline/wf-example')).not.toBe(before);
   });
 
-  it('changes when the build recipe or the lockfile changes', () => {
+  it('changes when the build recipe changes', () => {
     for (const [file, content] of [
       ['Dockerfile', 'FROM node:24\n'],
-      ['pnpm-lock.yaml', 'lockfileVersion: 9.1\n'],
       ['turbo.json', '{"tasks":{}}\n'],
+      [
+        'pnpm-workspace.yaml',
+        'packages:\n  - packages/*\n  - services/*\n  - workflows/*\n\n# changed\n',
+      ],
     ] as const) {
       const root = workspace([unit()]);
       const before = sourceDigest(root, '@ai-pipeline/wf-example');
       writeFileSync(join(root, file), content);
       expect(sourceDigest(root, '@ai-pipeline/wf-example'), file).not.toBe(before);
     }
+  });
+
+  describe('the lockfile', () => {
+    it('changes the digest when an external resolution moves', () => {
+      const root = workspace([unit()]);
+      const before = sourceDigest(root, '@ai-pipeline/wf-example');
+      writeFileSync(join(root, 'pnpm-lock.yaml'), lockfile(['workflows/example'], '4.6.6'));
+      expect(sourceDigest(root, '@ai-pipeline/wf-example')).not.toBe(before);
+    });
+
+    it('ignores another package appearing in importers', () => {
+      // This is what adding a workflow does to the lockfile. `turbo prune --docker` writes a pruned
+      // lockfile per image, so another package's importer entry never reaches this unit's build —
+      // and if the digest reacted to it, adding one workflow would force a version bump of every
+      // other one.
+      const root = workspace([unit()]);
+      const before = sourceDigest(root, '@ai-pipeline/wf-example');
+      writeFileSync(
+        join(root, 'pnpm-lock.yaml'),
+        lockfile(['workflows/example', 'workflows/unrelated', 'packages/contract-unrelated']),
+      );
+      expect(sourceDigest(root, '@ai-pipeline/wf-example')).toBe(before);
+    });
+
+    it('tolerates a lockfile with no importers section at all', () => {
+      const root = workspace([unit()]);
+      writeFileSync(join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n");
+      expect(() => sourceDigest(root, '@ai-pipeline/wf-example')).not.toThrow();
+    });
+  });
+
+  it('is unchanged by a whole unrelated package being added to the workspace', () => {
+    // The property that makes units independently deployable, asserted end to end.
+    const before = workspace([unit()]);
+    const after = workspace([
+      unit(),
+      { name: '@ai-pipeline/wf-unrelated', dir: 'workflows/unrelated', metadata: '{}' },
+    ]);
+    writeFileSync(
+      join(after, 'pnpm-lock.yaml'),
+      lockfile(['workflows/example', 'workflows/unrelated']),
+    );
+    expect(sourceDigest(after, '@ai-pipeline/wf-example')).toBe(
+      sourceDigest(before, '@ai-pipeline/wf-example'),
+    );
   });
 
   it('changes when metadata.json changes, since it ships in the image', () => {
