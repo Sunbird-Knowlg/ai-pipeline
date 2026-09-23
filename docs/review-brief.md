@@ -318,8 +318,11 @@ must be added before this is exposed beyond localhost, and is the current code s
 
 ### 12. Operational gaps
 
-- **CI covers `check` and the replay suite, not e2e** (`.github/workflows/ci.yml`) — a hosted runner
-  has no GPU for Ollama. Judge whether the gap is acceptable and what the cheapest honest substitute
+- **CI is written but not active.** The pipeline lives at `docs/ci-workflow.yml`, not
+  `.github/workflows/`, because pushing a workflow file needs a token scope this repo's credentials
+  lack. So nothing runs automatically yet: `pnpm check` and the replay suite run when someone
+  remembers. Read the file, judge whether the two jobs are the right ones, and note that `test:e2e` is
+  excluded because a hosted runner has no GPU for Ollama — say what the cheapest honest substitute
   would be (a stub model behind LiteLLM, a self-hosted runner).
 - **No coverage measurement** is configured in `vitest.config.ts`. Measure it, and report where the
   gaps are meaningful rather than reporting a percentage.

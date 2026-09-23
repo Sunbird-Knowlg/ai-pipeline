@@ -231,6 +231,12 @@ The overlay needs about 4 GB of extra memory. The `traceId` in a `RunView` is th
 reformat changes a unit's artifact digest and therefore needs a version bump — so drift is a
 deployment problem here, not a cosmetic one.
 
+### Continuous integration
+
+The pipeline is in [`docs/ci-workflow.yml`](docs/ci-workflow.yml) rather than
+`.github/workflows/`: pushing a workflow file needs a token with the `workflow` scope. Its header has
+the two commands that activate it. Until then nothing runs automatically.
+
 ### Postman
 
 `manifests/` holds a collection covering every route, with assertions, and a local environment:
