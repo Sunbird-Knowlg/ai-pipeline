@@ -1,0 +1,91 @@
+# The CI pipeline, held here rather than at `.github/workflows/ci.yml`.
+#
+# Pushing a workflow file needs a token with the `workflow` scope, which this repo's push credentials
+# do not have. To activate it:
+#
+#   gh auth refresh -h github.com -s workflow     # grants the scope (opens a browser)
+#   mkdir -p .github/workflows
+#   git mv docs/ci-workflow.yml .github/workflows/ci.yml
+#   git commit -m 'ci: activate the pipeline' && git push
+#
+# Nothing else has to change — it is a complete, working workflow as it stands.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A superseded run on the same ref is worth nothing; cancel it rather than pay for it.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Turborepo prints its own summary; keep the log to the task output.
+  TURBO_TELEMETRY_DISABLED: 1
+  DO_NOT_TRACK: 1
+
+jobs:
+  check:
+    name: check (build · typecheck · lint · unit · format · boundaries)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # The task cache makes a re-run on an unchanged package close to free. Keyed on the lockfile
+      # and the source tree, so a real change misses and anything else hits.
+      - name: Restore the turbo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            turbo-${{ runner.os }}-
+
+      - run: pnpm install --frozen-lockfile
+
+      # One command, because that is what a contributor runs locally. If this passes and CI fails,
+      # the gate is lying.
+      - run: pnpm check
+
+  replay:
+    name: replay (always-replay Restate tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # Testcontainers starts a real Restate server with always-replay on, so any handler that is
+      # not deterministic fails here rather than on a production retry. Docker is preinstalled on
+      # the hosted runner.
+      - run: pnpm test:replay
+
+  # `pnpm test:e2e` is deliberately not run here. It needs the full compose stack *and* a host
+  # Ollama serving a real model, which a hosted runner has no GPU for. It runs against the local
+  # stack, and on a self-hosted runner if one is added — see docs/review-brief.md.

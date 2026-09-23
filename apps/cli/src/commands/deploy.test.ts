@@ -36,7 +36,6 @@ function fakeDocker(
     containerLabel: () => state.configLabel,
     runContainer: (options) => recorded.started.push(options),
     removeContainer: (name) => recorded.removedContainers.push(name),
-    startContainer: () => undefined,
   };
 }
 

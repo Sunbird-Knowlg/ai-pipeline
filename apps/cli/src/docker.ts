@@ -26,7 +26,6 @@ export interface Docker {
   containerLabel(name: string, label: string): string | undefined;
   runContainer(options: RunContainer): void;
   removeContainer(name: string): void;
-  startContainer(name: string): void;
 }
 
 const docker = (
@@ -108,10 +107,6 @@ export function runContainer(opts: RunContainer): void {
   docker(args, { quiet: true, env: opts.env });
 }
 
-export function startContainer(name: string): void {
-  docker(['start', name], { quiet: true });
-}
-
 /** The real Docker CLI. `deploy` takes this in production and a recording double in tests. */
 export const dockerCli: Docker = {
   imageExists,
@@ -121,5 +116,4 @@ export const dockerCli: Docker = {
   containerLabel,
   runContainer,
   removeContainer,
-  startContainer,
 };
