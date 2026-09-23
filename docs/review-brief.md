@@ -86,28 +86,35 @@ Layout, and where to expect what:
 
 ## Getting the code
 
-The repository is **private**. Clone the `main` branch — that is the only branch, and its tip is the
-state under review. You need to have been granted access first; if the clone 404s, that is an access
-problem, not a wrong URL.
+The same commit is in two places. Use whichever you have access to — they are identical, and the
+first needs no permissions at all.
 
 ```sh
-# with the GitHub CLI (uses your existing auth)
-gh repo clone yravinderkumar33/ai-pipeline-restate -- --branch main
-# or over HTTPS with a token that has `repo` scope
-git clone --branch main https://github.com/yravinderkumar33/ai-pipeline-restate.git
-# or over SSH, if your key is on the account
-git clone --branch main git@github.com:yravinderkumar33/ai-pipeline-restate.git
+# Public, no access needed. The branch in the Sunbird-Knowlg repo:
+git clone --branch feat/restate-pipeline https://github.com/Sunbird-Knowlg/ai-pipeline.git
+cd ai-pipeline
 
-cd ai-pipeline-restate
-git log --oneline          # confirm your tip matches the commit you were asked to review
+# Or the private origin, if you have been granted access:
+gh repo clone yravinderkumar33/ai-pipeline-restate -- --branch main
 ```
 
-Work on a branch off `main` (`git switch -c review/<your-name>`) so the tree stays clean and anything
-you write is easy to hand back as a patch. Do not push to `main`.
+Then confirm you are reviewing the commit you were asked to:
 
-There is no prior history to diff against: `main` starts with the initial import, so there is no
-"before" state and no pre-refactor baseline to compare behaviour to. Judge the code on its own terms
-and against the invariants below.
+```sh
+git log --oneline -1
+```
+
+Two things about the public copy. It is a **branch inside a repository whose `main` is a different
+codebase** — the existing Python pipeline (`core/`, `jobs/`, `pyproject.toml`). The two share no
+history, so do not diff against that `main`; there is no common ancestor and nothing to compare. And
+being a branch in someone else's repo, you have read access only: work locally and hand back a patch.
+
+Work on a branch off the tip (`git switch -c review/<your-name>`) so the tree stays clean and anything
+you write is easy to return as a patch. Do not push to either remote.
+
+There is no prior history to diff against: the history starts with an initial import, so there is no
+"before" state and no pre-refactor baseline. Judge the code on its own terms and against the
+invariants below.
 
 ## Getting it running
 
