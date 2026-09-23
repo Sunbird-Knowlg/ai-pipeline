@@ -20,13 +20,22 @@ export async function startRun(
   );
 }
 
+/**
+ * One page of runs.
+ *
+ * `limit` and `cursor` are part of this because the API pages: it answers at most 50 runs by
+ * default and returns a `nextCursor`, which the CLI used to print and give no way to use — so
+ * `pipeline runs` silently showed the first page and nothing said so.
+ */
 export async function listRuns(
   api: CoreApi,
-  filters: { workflow?: string; status?: string } = {},
+  filters: { workflow?: string; status?: string; limit?: number; cursor?: string } = {},
 ): Promise<RunList> {
   const query = new URLSearchParams();
   if (filters.workflow) query.set('workflow', filters.workflow);
   if (filters.status) query.set('status', filters.status);
+  if (filters.limit !== undefined) query.set('limit', String(filters.limit));
+  if (filters.cursor) query.set('cursor', filters.cursor);
   return api<RunList>('GET', `/v1/runs?${query.toString()}`);
 }
 

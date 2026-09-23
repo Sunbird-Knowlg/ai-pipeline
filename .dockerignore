@@ -6,3 +6,6 @@
 .claude
 docs
 tests/e2e
+# Shared test fakes. The artifact digest already excludes them (apps/cli/src/artifact.ts),
+# so if they reached the image one digest could describe two different images.
+**/src/testing

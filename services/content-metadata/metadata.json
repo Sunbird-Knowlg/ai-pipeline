@@ -1,0 +1,13 @@
+{
+  "apiVersion": "ai-pipeline/v1alpha1",
+  "kind": "service",
+  "name": "content-metadata",
+  "restateName": "ContentMetadataService",
+  "version": "0.1.2",
+  "description": "Extracts keywords, concepts and a difficulty from a text with an LLM",
+  "visibility": "private",
+  "config": {
+    "model": "chat-default",
+    "maxOutputTokens": 512
+  }
+}

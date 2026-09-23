@@ -1,6 +1,7 @@
 import type { TriggerView } from '@ai-pipeline/api-contract/triggers';
 import { notFound } from '../errors.js';
 import type { Subscription } from '../restate/admin.js';
+import type { Catalogue } from '../store/store.js';
 import { toTriggerView } from '../views.js';
 import type { ControlPlane } from './deps.js';
 import {
@@ -24,12 +25,13 @@ import {
  */
 export async function triggerViews(
   cp: ControlPlane,
+  catalogue: Catalogue,
   name: string,
   subscriptions?: Subscription[],
 ): Promise<TriggerView[]> {
-  const definition = await cp.store.definitions.current(name);
+  const definition = await catalogue.definitions.current(name);
   if (!definition) throw notFound(`workflow ${name}`);
-  const records = await cp.store.triggers.list(name);
+  const records = await catalogue.triggers.list(name);
   const prefix = sinkPrefix(definition.restateName);
   const live = (subscriptions ?? (await cp.admin.listSubscriptions())).filter((s) =>
     s.sink.startsWith(prefix),
@@ -40,16 +42,24 @@ export async function triggerViews(
   );
 }
 
+/** The lock a reconcile — or anything that ends in one, such as a registration — must hold. */
+export const reconcileLock = (name: string): string => `reconcile:${name}`;
+
 /** Converges Restate subscriptions to the catalogue's desired state; records the outcome. */
 export async function reconcileTriggers(cp: ControlPlane, name: string): Promise<TriggerView[]> {
   // POST /subscriptions is not idempotent: concurrent reconciles must not both create.
-  return cp.store.withLock(`reconcile:${name}`, () => reconcile(cp, name));
+  return cp.store.withLock([reconcileLock(name)], (locked) => reconcileWithin(cp, locked, name));
 }
 
-async function reconcile(cp: ControlPlane, name: string): Promise<TriggerView[]> {
-  const definition = await cp.store.definitions.current(name);
+/** The body of a reconcile, for a caller that already holds `reconcileLock(name)`. */
+export async function reconcileWithin(
+  cp: ControlPlane,
+  catalogue: Catalogue,
+  name: string,
+): Promise<TriggerView[]> {
+  const definition = await catalogue.definitions.current(name);
   if (!definition) throw notFound(`workflow ${name}`);
-  const records = await cp.store.triggers.list(name);
+  const records = await catalogue.triggers.list(name);
   const desiredFlag = new Map(records.map((r) => [r.triggerId, r.desiredEnabled]));
   const desired = desiredSubscriptions(definition.metadata, (id) => desiredFlag.get(id) ?? true);
   const prefix = sinkPrefix(definition.restateName);
@@ -85,13 +95,13 @@ async function reconcile(cp: ControlPlane, name: string): Promise<TriggerView[]>
       },
       subscription,
     );
-    await cp.store.triggers.setObserved(name, record.triggerId, {
+    await catalogue.triggers.setObserved(name, record.triggerId, {
       subscriptionId: subscription?.id ?? null,
       status,
       error: errors.get(record.triggerId) ?? null,
     });
   }
-  return triggerViews(cp, name, live);
+  return triggerViews(cp, catalogue, name, live);
 }
 
 export async function setTriggerEnabled(
@@ -100,10 +110,16 @@ export async function setTriggerEnabled(
   triggerId: string,
   enabled: boolean,
 ): Promise<TriggerView> {
-  const updated = await cp.store.triggers.setDesired(name, triggerId, enabled);
-  if (!updated) throw notFound(`trigger ${name}/${triggerId}`);
-  const views = await reconcileTriggers(cp, name);
-  return views.find((view) => view.id === triggerId)!;
+  // Inside the lock: writing the desired state and converging to it is one operation, and a
+  // concurrent deploy must not re-sync the triggers between the two halves.
+  return cp.store.withLock([reconcileLock(name)], async (catalogue) => {
+    const updated = await catalogue.triggers.setDesired(name, triggerId, enabled);
+    if (!updated) throw notFound(`trigger ${name}/${triggerId}`);
+    const view = (await reconcileWithin(cp, catalogue, name)).find((v) => v.id === triggerId);
+    // A concurrent deploy can drop the trigger from the unit between the two statements above.
+    if (!view) throw notFound(`trigger ${name}/${triggerId}`);
+    return view;
+  });
 }
 
 function subscriptionFor(

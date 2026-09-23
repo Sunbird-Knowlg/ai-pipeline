@@ -72,6 +72,13 @@ Use the Restate context directly (`ctx.run`, `ctx.client`, `ctx.sendClient`, `Re
 lints and deploys as it stands, with the conventions already applied. Do not hand-roll one: the files
 have to agree with each other, and the failure mode is a deploy-time error.
 
+**The reference is `workflows/content-authoring`, annotated in
+[docs/example-workflow.md](docs/example-workflow.md)** — read it before writing a workflow. It shows
+the whole shape once: both triggers, an adapter whose skip/fail rule is deliberate, three shared
+service calls (two in parallel via `RestatePromise.all`, one sequential because it depends on their
+answer), deterministic steps, one `ctx.run` side effect, and the four levels of test.
+`workflows/content-enrichment` is the minimal version of the same skeleton.
+
 ## The catalogue schema
 
 Created when Postgres is provisioned (`infra/postgres/init/`), never by the API. The service assumes

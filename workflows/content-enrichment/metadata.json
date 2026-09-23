@@ -3,7 +3,7 @@
   "kind": "workflow",
   "name": "content-enrichment",
   "restateName": "ContentEnrichment",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Summarises published content and attaches metadata",
   "config": {
     "summaryMaxWords": 120

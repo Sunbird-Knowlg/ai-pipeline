@@ -13,6 +13,17 @@ import { expect, vi } from 'vitest';
 export const API = process.env.CORE_API_URL ?? 'http://127.0.0.1:3000';
 export const ADMIN = process.env.RESTATE_ADMIN_URL ?? 'http://127.0.0.1:9070';
 
+/**
+ * A keep-alive socket the server closed while the client was about to reuse it.
+ *
+ * These suites idle for minutes between calls — waiting on a run, or on a deploy — which is long
+ * enough for core-api to close an idle connection that undici still has pooled. The request never
+ * reached the server, so retrying it once is safe even for a POST, and not retrying it fails a
+ * whole suite on a race that has nothing to do with what it is testing.
+ */
+const isClosedSocket = (error: unknown): boolean =>
+  (error as { cause?: { code?: string } })?.cause?.code === 'UND_ERR_SOCKET';
+
 /** `T` is the body this call expects — `ErrorEnvelope` when the test asserts a refusal. */
 export async function api<T>(
   method: string,
@@ -20,10 +31,18 @@ export async function api<T>(
   body?: unknown,
   headers: Record<string, string> = {},
 ) {
-  const response = await fetch(new URL(path, API), {
-    method,
-    headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
+  const send = () =>
+    fetch(new URL(path, API), {
+      method,
+      headers: {
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...headers,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  const response = await send().catch((error: unknown) => {
+    if (!isClosedSocket(error)) throw error;
+    return send();
   });
   const text = await response.text();
   return {

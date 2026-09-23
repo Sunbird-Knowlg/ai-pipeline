@@ -69,9 +69,13 @@ services:
         condition: service_healthy
     entrypoint: ['/bin/sh', '-c']
     command:
+      # One line per topic a unit subscribes to. Auto-creation is off, so a Kafka trigger whose
+      # topic is missing leaves Restate's consumer stopped — add the topic here first.
       - >-
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
-        --topic content.published --partitions 3 --replication-factor 1
+        --topic content.published --partitions 3 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
+        --topic diksha.content.published --partitions 3 --replication-factor 1
     restart: 'no'
 
   restate:

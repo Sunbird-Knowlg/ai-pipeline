@@ -3,7 +3,7 @@
   "kind": "service",
   "name": "summary",
   "restateName": "SummaryService",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Summarises text with an LLM through LiteLLM",
   "visibility": "private",
   "config": {

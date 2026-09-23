@@ -1,0 +1,13 @@
+{
+  "apiVersion": "ai-pipeline/v1alpha1",
+  "kind": "service",
+  "name": "quiz-generate",
+  "restateName": "QuizGenerateService",
+  "version": "0.1.2",
+  "description": "Writes multiple-choice questions from a text with an LLM",
+  "visibility": "private",
+  "config": {
+    "model": "chat-default",
+    "maxOutputTokens": 1200
+  }
+}

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { UnitKind } from '@ai-pipeline/api-contract/params';
+import { parseMetadata } from '@ai-pipeline/metadata/metadata';
 
 /**
  * `pipeline new <workflow|service> <name> [--kafka <topic>]`.
@@ -27,6 +28,26 @@ export interface ScaffoldOptions {
 
 const NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
+/**
+ * A trigger id derived from a Kafka topic name.
+ *
+ * The two vocabularies do not agree: Kafka allows `[A-Za-z0-9._-]`, `metadata.json` requires a
+ * lower-case kebab identifier. `Orders.Placed`, `orders..placed` and `orders_placed_` are all legal
+ * topics that a naive `.replace(/[._]/g, '-')` turns into an id the metadata schema rejects — and
+ * because the CLI parses *every* unit's metadata before deploying any of them, one such unit makes
+ * `pipeline deploy` fail for every other unit in the repo until someone edits the file by hand.
+ *
+ * Anything that cannot be made into a valid id (a topic that is all digits, say) falls back to the
+ * unit's own name, which is valid by construction. The caller is told which id was chosen.
+ */
+export function triggerIdFor(topic: string, unitName: string): string {
+  const derived = topic
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return NAME.test(derived) ? derived : `${unitName}-events`;
+}
+
 /** `content-enrichment` → `ContentEnrichment`; the Restate service name. */
 const pascal = (name: string): string =>
   name.replace(/(^|-)([a-z0-9])/g, (_, __, c: string) => c.toUpperCase());
@@ -50,6 +71,16 @@ export function scaffold(o: ScaffoldOptions): string {
   const restateName = pascal(o.name);
   const files =
     o.kind === 'workflow' ? workflowFiles(o, restateName) : serviceFiles(o, restateName);
+
+  // Nothing is written until the metadata this scaffold would produce parses. A unit that cannot be
+  // loaded is not just broken in itself — `pipeline deploy` reads every unit's metadata, so it
+  // would block deploying any of them.
+  parseMetadata(JSON.parse(files['metadata.json']!) as unknown);
+
+  if (o.kafkaTopic) {
+    const id = triggerIdFor(o.kafkaTopic, o.name);
+    if (id !== o.kafkaTopic) o.log(`  trigger id for "${o.kafkaTopic}" is "${id}"`);
+  }
 
   mkdirSync(join(dir, 'src'), { recursive: true });
   for (const [path, content] of Object.entries(files)) {
@@ -145,7 +176,7 @@ const metadataJson = (o: ScaffoldOptions, restateName: string) => {
     o.kind === 'workflow' ? [{ id: 'api', type: 'rest' }] : [];
   if (o.kafkaTopic)
     triggers.push({
-      id: o.kafkaTopic.replace(/[._]/g, '-'),
+      id: triggerIdFor(o.kafkaTopic, o.name),
       type: 'kafka',
       cluster: 'local',
       topic: o.kafkaTopic,

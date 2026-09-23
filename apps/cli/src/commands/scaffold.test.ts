@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseMetadata } from '@ai-pipeline/metadata/metadata';
 import { afterEach, describe, expect, it } from 'vitest';
-import { scaffold } from './scaffold.js';
+import { scaffold, triggerIdFor } from './scaffold.js';
 
 /**
  * A generator's failure mode is drifting away from the conventions it is supposed to encode, quietly,
@@ -177,5 +177,29 @@ describe('scaffold: refusals', () => {
     const options = { root, kind: 'workflow' as const, name: 'dup', log: () => undefined };
     scaffold(options);
     expect(() => scaffold(options)).toThrow(/already exists/);
+  });
+});
+
+describe('triggerIdFor', () => {
+  it('derives a valid trigger id from topic names Kafka allows but metadata.json does not', () => {
+    // Each of these is a legal Kafka topic whose naive `.replace(/[._]/g, '-')` produces an id the
+    // metadata schema rejects — and one such unit used to block `deploy` for every other unit.
+    expect(triggerIdFor('content.published', 'content-enrichment')).toBe('content-published');
+    expect(triggerIdFor('Orders.Placed', 'order-fulfilment')).toBe('orders-placed');
+    expect(triggerIdFor('orders..placed', 'order-fulfilment')).toBe('orders-placed');
+    expect(triggerIdFor('orders_placed_', 'order-fulfilment')).toBe('orders-placed');
+    expect(triggerIdFor('__orders__', 'order-fulfilment')).toBe('orders');
+  });
+
+  it('falls back to the unit name when nothing valid can be derived', () => {
+    // A metadata name must start with a letter, so a numeric topic has no valid derivation.
+    expect(triggerIdFor('2024.events', 'order-fulfilment')).toBe('order-fulfilment-events');
+    expect(triggerIdFor('...', 'order-fulfilment')).toBe('order-fulfilment-events');
+  });
+
+  it('always produces something metadata.json accepts', () => {
+    const topics = ['a', 'A.B_c-D', '1', '---', 'x'.repeat(200), 'Orders.Placed.v2'];
+    for (const topic of topics)
+      expect(triggerIdFor(topic, 'unit'), topic).toMatch(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/);
   });
 });

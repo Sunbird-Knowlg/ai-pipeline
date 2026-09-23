@@ -40,6 +40,86 @@ describe('startRun', () => {
     });
   });
 
+  it('records a digest of the input, so a reused key can be checked against it', async () => {
+    const cp = ready();
+    await startRun(cp, 'content-enrichment', { text: 'hello' }, 'key-1');
+    expect(cp.ingress.submissions[0]!.request).toMatchObject({
+      trigger: { inputDigest: expect.stringMatching(/^[0-9a-f]{32}$/) },
+    });
+  });
+
+  it('digests the input canonically, so key order in the JSON is not a different request', async () => {
+    const cp = ready();
+    await startRun(cp, 'content-enrichment', { text: 'a', n: 1 }, 'key-1');
+    await startRun(cp, 'content-enrichment', { n: 1, text: 'a' }, 'key-2');
+    const digests = cp.ingress.submissions.map(
+      (s) => (s.request as { trigger: { inputDigest: string } }).trigger.inputDigest,
+    );
+    expect(digests[0]).toBe(digests[1]);
+  });
+
+  it('does not record a digest when there is no key to bind it to', async () => {
+    const cp = ready();
+    await startRun(cp, 'content-enrichment', { text: 'hello' });
+    expect(cp.ingress.submissions[0]!.request).not.toMatchObject({
+      trigger: { inputDigest: expect.anything() },
+    });
+  });
+
+  describe('a reused Idempotency-Key', () => {
+    /** Restate has seen this run before, and the run recorded the trigger it started with. */
+    const seen = (recordedTrigger: unknown) => {
+      const cp = ready();
+      cp.ingress.submitWorkflow = async () => ({
+        invocationId: 'inv_1',
+        status: 'PreviouslyAccepted',
+      });
+      cp.admin.rows =
+        recordedTrigger === undefined ? [] : [{ value_utf8: JSON.stringify(recordedTrigger) }];
+      return cp;
+    };
+
+    it('is accepted when the body really is the same', async () => {
+      const digest = await startRun(ready(), 'content-enrichment', { text: 'same' }, 'k').then(
+        async () => {
+          const probe = ready();
+          await startRun(probe, 'content-enrichment', { text: 'same' }, 'k');
+          return (probe.ingress.submissions[0]!.request as { trigger: { inputDigest: string } })
+            .trigger.inputDigest;
+        },
+      );
+      const cp = seen({ type: 'rest', id: 'api', inputDigest: digest });
+      await expect(
+        startRun(cp, 'content-enrichment', { text: 'same' }, 'k'),
+      ).resolves.toMatchObject({ status: 'PreviouslyAccepted' });
+    });
+
+    it('is refused when it carries a different body, instead of dropping the new work', async () => {
+      const cp = seen({ type: 'rest', id: 'api', inputDigest: 'f'.repeat(32) });
+      await expect(
+        startRun(cp, 'content-enrichment', { text: 'different' }, 'k'),
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED', statusCode: 409 });
+    });
+
+    it('is allowed through when the run has not recorded anything to compare yet', async () => {
+      // The handler writes its trigger as its first act; a submit that arrives before it does has
+      // nothing to check, and guessing would refuse a legitimate retry.
+      await expect(
+        startRun(seen(undefined), 'content-enrichment', { text: 'x' }, 'k'),
+      ).resolves.toMatchObject({ status: 'PreviouslyAccepted' });
+      await expect(
+        startRun(seen({ type: 'rest', id: 'api' }), 'content-enrichment', { text: 'x' }, 'k'),
+      ).resolves.toMatchObject({ status: 'PreviouslyAccepted' });
+    });
+
+    it('is not checked at all when no key was given', async () => {
+      const cp = seen({ type: 'rest', id: 'api', inputDigest: 'f'.repeat(32) });
+      await expect(startRun(cp, 'content-enrichment', { text: 'x' })).resolves.toMatchObject({
+        status: 'PreviouslyAccepted',
+      });
+    });
+  });
+
   it('derives the same run id from the same Idempotency-Key, and a fresh one without', async () => {
     const cp = ready();
     const first = await startRun(cp, 'content-enrichment', { text: 'a' }, 'key-1');

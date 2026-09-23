@@ -23,7 +23,7 @@ export async function listUnits(cp: ControlPlane, kind?: UnitKind): Promise<Work
       toWorkflowSummary(
         definition,
         deployments.find((d) => d.name === definition.name && d.status === 'active')?.deploymentId,
-        await triggerViews(cp, definition.name, subscriptions),
+        await triggerViews(cp, cp.store, definition.name, subscriptions),
       ),
     ),
   );
@@ -36,7 +36,7 @@ export async function describeUnit(cp: ControlPlane, name: string): Promise<Work
     cp.store.definitions.versions(definition.name),
     cp.store.deployments.list(definition.name),
     cp.store.dependencies.list(definition.name, definition.version),
-    triggerViews(cp, definition.name),
+    triggerViews(cp, cp.store, definition.name),
   ]);
   return toWorkflowDetail({ definition, versions, deployments, dependencies, triggers });
 }

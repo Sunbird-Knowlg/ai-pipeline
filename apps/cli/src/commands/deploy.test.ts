@@ -34,6 +34,7 @@ function fakeDocker(
     imageExists: () => state.image ?? false,
     buildImage: (_root, _pkg, tag) => recorded.built.push(tag),
     removeImage: (tag) => recorded.removedImages.push(tag),
+    containerImage: () => 'ai-pipeline/unit:1.0.0-abc',
     containerState: () => state.container ?? 'missing',
     containerLabel: () => state.configLabel,
     runContainer: (options) => recorded.started.push(options),

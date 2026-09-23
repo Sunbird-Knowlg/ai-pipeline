@@ -155,6 +155,16 @@ export async function runState(
 export const stateKey = (row: InvocationRow): string =>
   `${row.target_service_name}/${row.target_service_key}`;
 
+/**
+ * The `trigger` a single run recorded, for the one question that needs it before the run is read:
+ * whether a reused Idempotency-Key carries the same request as the run it would return.
+ */
+export function runTriggerSql(service: string, runId: string): string {
+  if (!RESTATE_NAME.test(service) || !RUN_KEY.test(runId))
+    throw new PipelineError('INVALID_REQUEST', 'invalid workflow or run id', 400);
+  return `SELECT value_utf8 FROM state WHERE service_name = ${quote(service)} AND service_key = ${quote(runId)} AND key = 'trigger' LIMIT 1`;
+}
+
 function safeJson(text: string): unknown {
   try {
     return JSON.parse(text);

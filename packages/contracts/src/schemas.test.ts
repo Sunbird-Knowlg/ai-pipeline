@@ -28,6 +28,48 @@ describe('contractSchemas', () => {
     }
   });
 
+  it('refuses a contract whose rule JSON Schema cannot express, naming where it is', () => {
+    // A dropped refinement is worse than a rejected contract: the catalogue would accept input the
+    // handler goes on to reject, and `contractHash` could not tell the two contracts apart.
+    expect(() =>
+      contractSchemas(entry({ input: z.strictObject({ id: z.string().refine((s) => s !== '') }) })),
+    ).toThrow(/input schema uses \.refine\(\).*at id,/s);
+
+    expect(() =>
+      contractSchemas(
+        entry({ output: z.strictObject({ ok: z.boolean() }).superRefine(() => undefined) }),
+      ),
+    ).toThrow(/output schema uses .*\(root\)/s);
+
+    expect(() =>
+      contractSchemas(
+        entry({
+          config: z.strictObject({ nested: z.object({ n: z.array(z.number().refine(Boolean)) }) }),
+        }),
+      ),
+    ).toThrow(/config schema uses .*at nested\.n\[\]/s);
+  });
+
+  it('still accepts every constraint JSON Schema *can* express', () => {
+    // The check must not fire on built-ins, or ordinary contracts become undeployable.
+    expect(() =>
+      contractSchemas(
+        entry({
+          input: z.strictObject({
+            id: z.string().min(1).max(10).regex(/^do_/),
+            email: z.email(),
+            uuid: z.uuid(),
+            when: z.iso.datetime(),
+            n: z.number().int().positive().multipleOf(2),
+            tags: z.array(z.string()).max(3),
+            kind: z.enum(['a', 'b']),
+            either: z.union([z.string(), z.number()]),
+          }),
+        }),
+      ),
+    ).not.toThrow();
+  });
+
   it('validates the way zod does, including refusing unknown keys', () => {
     const { input } = contractSchemas(entry());
     const validate = new Ajv({ strict: true }).compile(input);

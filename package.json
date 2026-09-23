@@ -14,6 +14,7 @@
     "check": "turbo run build typecheck lint //#typecheck:tests //#lint:tests //#test:unit //#format:check && turbo boundaries",
     "test": "vitest run --project unit",
     "test:replay": "vitest run --project replay",
+    "verify": "pnpm check && pnpm test:replay && pnpm test:e2e",
     "test:e2e": "vitest run --project e2e",
     "pipeline": "turbo run build --output-logs=errors-only > /dev/null && node apps/cli/dist/main.js",
     "format": "prettier --write .",

@@ -6,7 +6,9 @@ import type {
   RunResuming,
   RunView,
 } from '@ai-pipeline/api-contract/runs';
+import { createHash } from 'node:crypto';
 import type { StartRunAccepted } from '@ai-pipeline/api-contract/workflows';
+import { canonicalJson } from '@ai-pipeline/contracts/schemas';
 import { apiRunId } from '@ai-pipeline/metadata/run-ids';
 import { assert, notFound, PipelineError } from '../errors.js';
 import { validator } from '../json-schema.js';
@@ -15,6 +17,7 @@ import {
   getRunSql,
   listRunsSql,
   runState,
+  runTriggerSql,
   stateKey,
   type InvocationRow,
 } from '../restate/invocations.js';
@@ -72,6 +75,7 @@ export async function startRun(
 
   validateInput(definition, input);
 
+  const inputDigest = requestDigest(input);
   const runId = apiRunId(definition.name, idempotencyKey);
   const submission = await cp.ingress.submitWorkflow(definition.restateName, runId, {
     input,
@@ -79,10 +83,52 @@ export async function startRun(
       type: 'rest',
       id: rest.triggerId,
       receivedAt: Date.now(),
-      ...(idempotencyKey ? { idempotencyKey } : {}),
+      ...(idempotencyKey ? { idempotencyKey, inputDigest } : {}),
     },
   });
+  // An idempotency key promises "this is the same request", and Restate answered that it has seen
+  // this one before. If the body is not in fact the same, saying 202 would drop the new work
+  // silently — so the caller is told instead.
+  if (submission.status === 'PreviouslyAccepted' && idempotencyKey)
+    await assertSameRequest(cp, definition, runId, inputDigest);
   return { runId, invocationId: submission.invocationId, status: submission.status };
+}
+
+/** Digest of the canonical input, so key order in the JSON does not make two requests differ. */
+const requestDigest = (input: unknown): string =>
+  createHash('sha256').update(canonicalJson(input)).digest('hex').slice(0, 32);
+
+/**
+ * Refuses a reused key that carries a different body.
+ *
+ * The comparison is against what the run itself recorded, so it needs no storage of its own: every
+ * workflow writes its trigger context to workflow state as its first act. A run whose handler has
+ * not reached that point yet — or one started before this field existed — records nothing to
+ * compare, and the call is allowed through rather than refused on a guess.
+ */
+async function assertSameRequest(
+  cp: ControlPlane,
+  definition: Definition,
+  runId: string,
+  inputDigest: string,
+): Promise<void> {
+  const recorded = await cp.admin.query<{ value_utf8: string | null }>(
+    runTriggerSql(definition.restateName, runId),
+  );
+  const trigger = recorded[0]?.value_utf8;
+  if (!trigger) return;
+  let previous: string | undefined;
+  try {
+    previous = (JSON.parse(trigger) as { inputDigest?: string }).inputDigest;
+  } catch {
+    return;
+  }
+  if (previous !== undefined && previous !== inputDigest)
+    throw new PipelineError(
+      'IDEMPOTENCY_KEY_REUSED',
+      `this Idempotency-Key already started run ${runId} with a different input; use a new key`,
+      409,
+    );
 }
 
 /** Validated against the schema of the version that will run, not the newest one registered. */

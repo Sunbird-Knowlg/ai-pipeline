@@ -8,37 +8,55 @@ A Restate-native AI pipeline platform.
 - Each **workflow or service** is an independently deployable container.
 - LLM calls go through **LiteLLM**, which routes to host Ollama.
 
-The shipped example is `content-enrichment`. It is triggered by REST or by Kafka `content.published`, makes a durable call to the private `summary` service, and returns `{ summary, metadata }`.
+Two examples ship with it:
+
+- **`content-authoring` is the reference.** A DIKSHA content item arrives by REST or by Kafka
+  `diksha.content.published`, and the run returns an authoring pack: a summary, extracted metadata
+  (keywords, concepts, difficulty) and a quiz. It calls three shared services — two of them at the
+  same time, the third after them because it needs their answer — and owns exactly one side effect
+  of its own. **Read [docs/example-workflow.md](docs/example-workflow.md) before writing a
+  workflow**: it walks through every decision the handler makes and why.
+- **`content-enrichment` is the minimal one.** REST or Kafka `content.published`, one durable call
+  to the private `summary` service, `{ summary, metadata }` back. Read it for the skeleton.
 
 ```
-REST ──► core-api ──(restate-sdk-clients)──┐
-                                           ▼
-Kafka ──(Restate subscription)──► ContentEnrichmentTrigger ──► ContentEnrichment ──► SummaryService (private)
-                                                                  workflow              └ ctx.run → LiteLLM → Ollama
+REST  ──► core-api ──(restate-sdk-clients)──┐
+                                            ▼
+                                     ContentAuthoring ─┬─► SummaryService          ─┐
+Kafka ──► ContentAuthoringTrigger ──────────┘ (workflow)│                            ├ parallel
+   diksha.content.published                             └─► ContentMetadataService ─┘
+                                                             │   └ ctx.run → LiteLLM → Ollama
+                                                             └─► QuizGenerateService  (needs the
+                                                                   concepts found above)
+
 core-api (control plane) ──► Restate admin: deployments · subscriptions · SQL introspection
                          ──► Postgres catalogue: definitions · deployments · dependencies · triggers
 ```
 
-The design is in [docs/plan.md](docs/plan.md). Settled decisions and lessons learned are in [docs/decisions.md](docs/decisions.md).
+The design is in [docs/plan.md](docs/plan.md). Settled decisions and lessons learned are in [docs/decisions.md](docs/decisions.md). The annotated example is in [docs/example-workflow.md](docs/example-workflow.md).
 
 ## Layout
 
-| Path                               | What it holds                                                                       |
-| ---------------------------------- | ----------------------------------------------------------------------------------- |
-| `packages/contracts`               | zod schemas (`./<unit>`) and `restate.iface` bindings (`./<unit>/api`), per unit    |
-| `packages/api-contract`            | the HTTP surface: request/response schemas, the error envelope and its code union   |
-| `packages/metadata`                | the `metadata.json` schema (`./metadata`), Restate naming (`./naming`), `./run-ids` |
-| `packages/runtime`                 | small helpers: `./retry`, `./options`, `./kafka-trigger`, `./config`, `./serve`     |
-| `packages/ai`                      | `Generate` over LiteLLM (AI SDK); providers stay behind it                          |
-| `packages/observability`           | pino logger and optional OTel SDK                                                   |
-| `packages/typescript-config`       | the shared `tsc` presets every package extends                                      |
-| `packages/eslint-config`           | the shared lint rules, including the handler determinism checks                     |
-| `services/summary`                 | `SummaryService`, private; one durable LLM step                                     |
-| `workflows/content-enrichment`     | `ContentEnrichment` workflow, its Kafka trigger service and adapter                 |
-| `apps/core-api`                    | Fastify: HTTP (`routes/`, `plugins/`) over rules (`domain/`) over stores (`store/`) |
-| `apps/cli`                         | `pnpm pipeline …`: `commands/` over a typed API client and a Docker port            |
-| `tests/fixtures/versioned-sleeper` | test-only workflow used for the versioning e2e                                      |
-| `tests/e2e`                        | end-to-end suites against the compose stack                                         |
+| Path                               | What it holds                                                                                  |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `packages/contracts`               | zod schemas (`./<unit>`) and `restate.iface` bindings (`./<unit>/api`), per unit               |
+| `packages/api-contract`            | the HTTP surface: request/response schemas, the error envelope and its code union              |
+| `packages/metadata`                | the `metadata.json` schema (`./metadata`), Restate naming (`./naming`), `./run-ids`            |
+| `packages/runtime`                 | small helpers: `./retry`, `./options`, `./kafka-trigger`, `./config`, `./serve`                |
+| `packages/ai`                      | `Generate` over LiteLLM (AI SDK); providers stay behind it                                     |
+| `packages/observability`           | pino logger and optional OTel SDK                                                              |
+| `packages/typescript-config`       | the shared `tsc` presets every package extends                                                 |
+| `packages/eslint-config`           | the shared lint rules, including the handler determinism checks                                |
+| `packages/contract-<name>`         | a contract a _second_ unit needs: `summary`, `content-metadata`, `quiz-generate`               |
+| `services/summary`                 | `SummaryService`, private; one durable LLM step                                                |
+| `services/content-metadata`        | `ContentMetadataService`, private; keywords, concepts and a difficulty                         |
+| `services/quiz-generate`           | `QuizGenerateService`, private; multiple-choice questions                                      |
+| `workflows/content-authoring`      | the reference workflow ([walkthrough](docs/example-workflow.md)); two triggers, three services |
+| `workflows/content-enrichment`     | `ContentEnrichment` workflow, its Kafka trigger service and adapter                            |
+| `apps/core-api`                    | Fastify: HTTP (`routes/`, `plugins/`) over rules (`domain/`) over stores (`store/`)            |
+| `apps/cli`                         | `pnpm pipeline …`: `commands/` over a typed API client and a Docker port                       |
+| `tests/fixtures/versioned-sleeper` | test-only workflow used for the versioning e2e                                                 |
+| `tests/e2e`                        | end-to-end suites against the compose stack                                                    |
 
 Packages export one entry point per purpose rather than a barrel `index.ts`, so a consumer pulls in
 what it uses and no more — the deploy CLI reads contracts without loading the Restate SDK, and a
@@ -53,8 +71,8 @@ You need Docker, Node 22.13 or newer, pnpm 11 (`corepack enable`), and a host Ol
 cp .env.example .env
 pnpm install && pnpm build
 docker compose up -d --build            # postgres, kafka, restate, litellm, otel, core-api
-pnpm pipeline deploy summary            # dependencies first
-pnpm pipeline deploy content-enrichment
+pnpm pipeline deploy summary content-metadata quiz-generate   # dependencies first
+pnpm pipeline deploy content-enrichment content-authoring
 ```
 
 All ports bind to `127.0.0.1` only:
@@ -74,15 +92,20 @@ The Restate ingress (8080) stays internal; REST requests go through core-api.
 
 ```sh
 # REST: start a run (Idempotency-Key makes it idempotent), then read it
-curl -s localhost:3000/v1/workflows/content-enrichment/runs -H 'content-type: application/json' \
-  -H 'idempotency-key: demo-1' -d '{"input":{"contentId":"c-1","text":"…"}}'
-pnpm pipeline run content-enrichment <runId>
+curl -s localhost:3000/v1/workflows/content-authoring/runs -H 'content-type: application/json' \
+  -H 'idempotency-key: demo-1' \
+  -d '{"input":{"contentId":"do_1","name":"Photosynthesis","text":"Green plants use sunlight to make food…","subject":"Science","gradeLevel":"Class 7"}}'
+pnpm pipeline run content-authoring <runId>
 
-# Kafka: publish a content.published event (the adapter maps it to the workflow input)
-echo '{"identifier":"do_1","objectType":"Content","edata":{"title":"T","body":"…"}}' | \
-  docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic content.published
-pnpm pipeline runs content-enrichment
+# Kafka: publish a DIKSHA content event (the adapter maps it to the workflow input)
+echo '{"objectType":"Content","identifier":"do_2","edata":{"state":"Live","name":"The Water Cycle","body":"Heat from the sun makes water evaporate…","language":["Hindi"]}}' | \
+  docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic diksha.content.published
+pnpm pipeline runs content-authoring
 ```
+
+A run takes about a minute on the local `qwen3.5:4b`: three model calls, two of them concurrent.
+[docs/example-workflow.md](docs/example-workflow.md) explains what it returns and why it is built
+the way it is.
 
 ### Core API
 
@@ -123,6 +146,12 @@ pnpm pipeline workflows | start <wf> --input '{…}' [--key k] | runs [wf] | run
 
 ## Add a workflow or service
 
+**Start from [docs/example-workflow.md](docs/example-workflow.md).** It walks through
+`content-authoring` — the reference workflow — decision by decision: the two triggers, the adapter's
+skip-versus-fail rule, when to call services in parallel and when not to, where `ctx.run` belongs,
+which contracts move into a package, and what each level of test proves. Its last section is the
+checklist below in long form.
+
 ```sh
 pnpm pipeline new workflow order-fulfilment --kafka orders.placed   # or: new service embedding
 pnpm install
@@ -156,8 +185,9 @@ What it generates, and why:
 
 **Each unit is independently deployable, and adding one does not disturb the others.** A unit owns
 its own contract; there is no shared registry to edit. `packages/contract-*` exists only for a
-contract that a _second_ unit needs — `contract-summary` is shared because `content-enrichment` calls
-that service. This is not just tidiness: the artifact digest covers a unit's workspace dependencies,
+contract that a _second_ unit needs — `contract-summary` is shared because two workflows call that
+service, and `contract-quiz-generate` because `content-authoring` does. This is not just tidiness:
+the artifact digest covers a unit's workspace dependencies,
 so a shared registry would mean adding one workflow changed every other unit's artifact and forced a
 round of version bumps. `apps/cli/src/artifact.test.ts` pins the property.
 
@@ -230,6 +260,15 @@ The overlay needs about 4 GB of extra memory. The `traceId` in a `RunView` is th
 `pnpm check` is the gate. It fails on a formatting drift as readily as on a type error, because a
 reformat changes a unit's artifact digest and therefore needs a version bump — so drift is a
 deployment problem here, not a cosmetic one.
+
+`pnpm verify` runs all three in order, which `check` alone does not — the replay and e2e suites are
+the ones that catch durability and stack problems, and nothing else runs them.
+
+The findings from testing the pipeline end to end, and what was done about each, are in
+[docs/qa-report.md](docs/qa-report.md). One is worth knowing while operating it: a trigger's
+`observedStatus: active` means Restate holds a subscription, not that records are being consumed.
+If ingestion ever stops, toggle the trigger off and on — the subscription is recreated and the
+backlog drains from the committed offsets.
 
 ### Postman
 

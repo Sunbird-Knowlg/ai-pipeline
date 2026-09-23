@@ -1,0 +1,40 @@
+{
+  "apiVersion": "ai-pipeline/v1alpha1",
+  "kind": "workflow",
+  "name": "content-authoring",
+  "restateName": "ContentAuthoring",
+  "version": "0.1.2",
+  "description": "Turns a published DIKSHA content item into an authoring pack: summary, metadata and a quiz",
+  "config": {
+    "summaryMaxWords": 80,
+    "maxKeywords": 8,
+    "questionCount": 3
+  },
+  "triggers": [
+    {
+      "id": "api",
+      "type": "rest"
+    },
+    {
+      "id": "diksha-content-published",
+      "type": "kafka",
+      "cluster": "local",
+      "topic": "diksha.content.published",
+      "adapter": "dikshaContentPublished"
+    }
+  ],
+  "dependencies": [
+    {
+      "kind": "service",
+      "name": "summary"
+    },
+    {
+      "kind": "service",
+      "name": "content-metadata"
+    },
+    {
+      "kind": "service",
+      "name": "quiz-generate"
+    }
+  ]
+}

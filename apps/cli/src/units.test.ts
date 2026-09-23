@@ -31,7 +31,7 @@ describe('workspace', () => {
 });
 
 describe('discoverUnits', () => {
-  const units = discoverUnits(ROOT);
+  const units = discoverUnits(ROOT).units;
 
   it('finds the example units', () => {
     // Asserted as a subset on purpose: a hardcoded list would mean adding a workflow breaks this
@@ -62,7 +62,7 @@ describe('discoverUnits', () => {
 });
 
 describe('units and contracts agree', () => {
-  const units = discoverUnits(ROOT);
+  const units = discoverUnits(ROOT).units;
 
   /**
    * Loads a unit's contract from its source, the way `pipeline deploy` loads it from `dist`. There is

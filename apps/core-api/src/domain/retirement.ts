@@ -2,6 +2,7 @@ import type { DeploymentRetired } from '@ai-pipeline/api-contract/deployments';
 import { assert, notFound } from '../errors.js';
 import type { RestateAdminPort } from '../restate/admin.js';
 import { inFlightByDeploymentSql, inFlightSql } from '../restate/invocations.js';
+import type { Catalogue } from '../store/store.js';
 import type { ControlPlane } from './deps.js';
 
 /** Invocations still pinned to a deployment. They must finish there before it can be removed. */
@@ -37,7 +38,23 @@ export async function retireDeployment(
   cp: ControlPlane,
   deploymentId: string,
 ): Promise<DeploymentRetired> {
-  const deployment = await cp.store.deployments.find(deploymentId);
+  // Which unit this deployment belongs to is fixed; reading it outside the lock is safe, and it is
+  // what tells us which lock to take.
+  const target = await cp.store.deployments.find(deploymentId);
+  if (!target) throw notFound(`deployment ${deploymentId}`);
+  // Under the same lock a registration takes: retiring is check-then-act across Restate *and* the
+  // catalogue, and a concurrent deploy of the same unit moves the routing this reads.
+  return cp.store.withLock([`register:${target.name}`], (catalogue) =>
+    retire(cp, catalogue, deploymentId),
+  );
+}
+
+async function retire(
+  cp: ControlPlane,
+  catalogue: Catalogue,
+  deploymentId: string,
+): Promise<DeploymentRetired> {
+  const deployment = await catalogue.deployments.find(deploymentId);
   if (!deployment) throw notFound(`deployment ${deploymentId}`);
   if (deployment.status === 'retired') return { deploymentId, status: 'retired' };
 
@@ -48,7 +65,7 @@ export async function retireDeployment(
     409,
   );
 
-  const definition = await cp.store.definitions.find(deployment.name, deployment.version);
+  const definition = await catalogue.definitions.find(deployment.name, deployment.version);
   const routedTo = definition && (await cp.admin.service(definition.restateName))?.deployment_id;
   assert(
     routedTo !== deploymentId,
@@ -66,6 +83,6 @@ export async function retireDeployment(
   );
 
   await cp.admin.deleteDeployment(deploymentId);
-  await cp.store.deployments.retire(deploymentId);
+  await catalogue.deployments.retire(deploymentId);
   return { deploymentId, status: 'retired' };
 }

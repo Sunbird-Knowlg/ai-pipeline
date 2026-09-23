@@ -136,6 +136,15 @@ async function register(
       if (target.startedHere && error instanceof ApiError && isPreRegistration(error.code)) {
         o.docker.removeContainer(target.container);
         if (target.builtHere) o.docker.removeImage(target.image);
+      } else if (target.startedHere) {
+        // Anything else may have registered the endpoint before failing — a 503 from the catalogue
+        // sync certainly did, and a transport error cannot be distinguished from one. Removing the
+        // container could break invocations Restate is already routing to it, so it stays, and the
+        // operator is told rather than left to find it. Re-running the deploy adopts it.
+        o.log(
+          `▸ ${target.container} is still running and may be registered; re-run the deploy to retry, ` +
+            `or \`docker rm -f ${target.container}\` once you have checked \`pipeline deployments\``,
+        );
       }
       throw error;
     }

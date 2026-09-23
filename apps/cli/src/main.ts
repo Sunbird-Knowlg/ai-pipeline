@@ -22,7 +22,8 @@ const USAGE = `pipeline <command>
   retire <deploymentId>           retire a drained deployment and stop its container
   workflows                       list the catalogue
   start <workflow> --input <json> [--key <idempotency-key>]
-  runs [workflow] [--status s]    list runs
+  runs [workflow] [--status s] [--limit n] [--cursor c]
+                                  list runs (one page; the reply carries nextCursor)
   run <workflow> <runId>          show one run
   cancel <workflow> <runId>       cancel a run
 
@@ -35,6 +36,8 @@ const { positionals, values } = parseArgs({
     input: { type: 'string' },
     key: { type: 'string' },
     status: { type: 'string' },
+    limit: { type: 'string' },
+    cursor: { type: 'string' },
     kafka: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   },
@@ -118,7 +121,14 @@ async function main(): Promise<void> {
     }
 
     case 'runs':
-      return print(await listRuns(api, { workflow: args[0], status: values.status }));
+      return print(
+        await listRuns(api, {
+          ...(args[0] ? { workflow: args[0] } : {}),
+          ...(values.status ? { status: values.status } : {}),
+          ...(values.limit ? { limit: Number(values.limit) } : {}),
+          ...(values.cursor ? { cursor: values.cursor } : {}),
+        }),
+      );
 
     case 'run':
       return print(

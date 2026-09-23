@@ -8,6 +8,15 @@ export const TriggerContext = z.strictObject({
   partition: z.number().int().nonnegative().optional(),
   offset: z.number().int().nonnegative().optional(),
   idempotencyKey: z.string().optional(),
+  /**
+   * Digest of the canonical input this run was started with.
+   *
+   * The handler records the whole trigger context in workflow state, which is what lets the control
+   * plane answer the question an idempotency key really asks: is this the *same* request? Without
+   * it, reusing a key with a different body is answered `202 PreviouslyAccepted` and the new work
+   * is silently dropped.
+   */
+  inputDigest: z.string().optional(),
   receivedAt: z.number().int(),
 });
 export type TriggerContext = z.infer<typeof TriggerContext>;

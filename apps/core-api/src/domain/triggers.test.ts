@@ -44,10 +44,10 @@ describe('reconcileTriggers', () => {
       expect.objectContaining({
         source: 'kafka://local/content.published',
         sink: 'service://ContentEnrichmentTrigger/onContentPublished',
-        options: {
+        options: expect.objectContaining({
           'group.id': 'wf.content-enrichment.content-published',
           'auto.offset.reset': 'earliest',
-        },
+        }) as unknown,
       }),
     ]);
     expect(views).toEqual([
@@ -166,7 +166,7 @@ describe('triggerViews', () => {
     cp.store.seed.triggers[1]!.observedStatus = 'active';
     cp.store.seed.triggers[1]!.subscriptionId = 'sub_gone';
 
-    const views = await triggerViews(cp, 'content-enrichment');
+    const views = await triggerViews(cp, cp.store, 'content-enrichment');
     expect(views.find((v) => v.id === 'content-published')).toMatchObject({
       observedStatus: 'pending',
     });

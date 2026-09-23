@@ -30,6 +30,8 @@ export const ERROR_CODES = [
   'TRIGGER_DISABLED',
   'RUN_COMPLETED',
   'RUN_NOT_RESUMABLE',
+  // The same Idempotency-Key was reused for a different request body.
+  'IDEMPOTENCY_KEY_REUSED',
   // Registration conflicts: bump the version, or deploy the dependency first.
   'RESTATE_NAME_TAKEN',
   'VERSION_CONTRACT_CONFLICT',

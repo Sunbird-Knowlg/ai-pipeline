@@ -6,9 +6,10 @@ import { parseMetadata, type Metadata } from '@ai-pipeline/metadata/metadata';
 import { triggerServiceName } from '@ai-pipeline/metadata/naming';
 import { assert, PipelineError } from '../errors.js';
 import { compileOrThrow, validateOnce } from '../json-schema.js';
+import type { Catalogue } from '../store/store.js';
 import type { ControlPlane } from './deps.js';
 import { registrationConflict } from './reconcile.js';
-import { reconcileTriggers } from './triggers.js';
+import { reconcileLock, reconcileWithin } from './triggers.js';
 
 /**
  * Registering one build.
@@ -35,23 +36,30 @@ export async function registerDeployment(
   } catch (error) {
     throw new PipelineError('INVALID_METADATA', (error as Error).message.slice(0, 1000), 400);
   }
-  return cp.store.withLock(`register:${metadata.name}`, () => register(cp, request, metadata));
+  // Both locks up front, on one connection. This section ends in a trigger reconcile, and taking
+  // that lock from a nested `withLock` would check out a second connection while this one is still
+  // held — which starves the pool rather than serialising anything.
+  return cp.store.withLock(
+    [`register:${metadata.name}`, reconcileLock(metadata.name)],
+    (catalogue) => register(cp, catalogue, request, metadata),
+  );
 }
 
 async function register(
   cp: ControlPlane,
+  catalogue: Catalogue,
   request: DeploymentRequest,
   metadata: Metadata,
 ): Promise<DeploymentRegistered> {
   await checkSchemas(request);
-  await checkNameIsFree(cp, metadata);
-  await checkVersionRule(cp, request, metadata);
-  await checkDependencies(cp, metadata);
+  await checkNameIsFree(catalogue, metadata);
+  await checkVersionRule(catalogue, request, metadata);
+  await checkDependencies(cp, catalogue, metadata);
   await checkEndpointServes(cp, request, metadata);
 
   const deployment = await cp.admin.registerDeployment(request.endpoint, request.mode === 'dev');
   try {
-    return await syncCatalogue(cp, request, metadata, deployment.id);
+    return await syncCatalogue(cp, catalogue, request, metadata, deployment.id);
   } catch (error) {
     if (error instanceof PipelineError && error.statusCode < 500) throw error;
     throw new PipelineError(
@@ -81,8 +89,8 @@ async function checkSchemas(request: DeploymentRequest): Promise<void> {
   }
 }
 
-async function checkNameIsFree(cp: ControlPlane, metadata: Metadata): Promise<void> {
-  const others = await cp.store.definitions.namesUsingRestateName(
+async function checkNameIsFree(catalogue: Catalogue, metadata: Metadata): Promise<void> {
+  const others = await catalogue.definitions.namesUsingRestateName(
     metadata.restateName,
     metadata.name,
   );
@@ -96,7 +104,7 @@ async function checkNameIsFree(cp: ControlPlane, metadata: Metadata): Promise<vo
 
 /** A semantic version names one contract and, in immutable mode, one artifact. */
 async function checkVersionRule(
-  cp: ControlPlane,
+  catalogue: Catalogue,
   request: DeploymentRequest,
   metadata: Metadata,
 ): Promise<void> {
@@ -104,8 +112,8 @@ async function checkVersionRule(
   if (configErrors)
     throw new PipelineError('INVALID_CONFIG', `metadata.json config: ${configErrors}`, 400);
 
-  const existing = await cp.store.definitions.find(metadata.name, metadata.version);
-  const artifacts = await cp.store.deployments.artifactsOfVersion(metadata.name, metadata.version);
+  const existing = await catalogue.definitions.find(metadata.name, metadata.version);
+  const artifacts = await catalogue.deployments.artifactsOfVersion(metadata.name, metadata.version);
   const conflict = registrationConflict(
     request.mode,
     existing && { contractHash: existing.contractHash },
@@ -115,9 +123,13 @@ async function checkVersionRule(
   if (conflict) throw new PipelineError(conflict.code, conflict.message, 409);
 }
 
-async function checkDependencies(cp: ControlPlane, metadata: Metadata): Promise<void> {
+async function checkDependencies(
+  cp: ControlPlane,
+  catalogue: Catalogue,
+  metadata: Metadata,
+): Promise<void> {
   for (const dependency of metadata.dependencies) {
-    const target = await cp.store.definitions.current(dependency.name);
+    const target = await catalogue.definitions.current(dependency.name);
     assert(
       target,
       'DEPENDENCY_NOT_REGISTERED',
@@ -152,6 +164,7 @@ async function checkEndpointServes(
 
 async function syncCatalogue(
   cp: ControlPlane,
+  catalogue: Catalogue,
   request: DeploymentRequest,
   metadata: Metadata,
   deploymentId: string,
@@ -160,7 +173,7 @@ async function syncCatalogue(
   const routedTo = (await cp.admin.service(metadata.restateName))?.deployment_id ?? deploymentId;
   const active = routedTo === deploymentId;
 
-  await cp.store.transaction(async (tx) => {
+  await catalogue.transaction(async (tx) => {
     await tx.definitions.upsert({
       name: metadata.name,
       version: metadata.version,
@@ -192,7 +205,8 @@ async function syncCatalogue(
     if (active) await tx.triggers.sync(metadata.name, metadata.triggers);
   });
 
-  const triggers = await reconcileTriggers(cp, metadata.name);
+  // The caller already holds the reconcile lock, so this runs on the same connection.
+  const triggers = await reconcileWithin(cp, catalogue, metadata.name);
   cp.log.info(
     { name: metadata.name, version: metadata.version, deploymentId, routedTo },
     'deployment registered',

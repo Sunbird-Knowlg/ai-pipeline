@@ -38,7 +38,7 @@ export const runList = z.object({
 });
 export type RunList = z.infer<typeof runList>;
 
-export const runQuery = z.object({
+export const runQuery = z.strictObject({
   workflow: unitName.optional(),
   status: runStatus.optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),

@@ -67,7 +67,7 @@ export const workflowDetail = z.object({
 });
 export type WorkflowDetail = z.infer<typeof workflowDetail>;
 
-export const workflowQuery = z.object({ kind: unitKind.optional() });
+export const workflowQuery = z.strictObject({ kind: unitKind.optional() });
 
 /**
  * Starting a run. The body carries only the canonical input; the trigger context is added by the

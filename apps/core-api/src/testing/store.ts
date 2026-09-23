@@ -23,6 +23,8 @@ export interface FakeStore extends Store {
   seed: Seed;
   /** Keys passed to `withLock`, in order — the serialisation guarantees are worth asserting. */
   locks: string[];
+  /** How many lock sections are open at once; a nested one would mean a second real connection. */
+  maxNestedLocks: number;
 }
 
 export function fakeStore(seed: Partial<Seed> = {}): FakeStore {
@@ -184,18 +186,42 @@ export function fakeStore(seed: Partial<Seed> = {}): FakeStore {
     },
   };
 
-  return {
+  let open = 0;
+  // One promise chain per key, so the fake really does serialise — the way one session holding the
+  // advisory locks does. A fake that merely recorded the key would let a test assert serialisation
+  // it never had.
+  const chains = new Map<string, Promise<unknown>>();
+
+  const fake: FakeStore = {
     ...repositories,
     seed: state,
     locks,
-    // No isolation: the tests that care assert on `locks` instead.
+    maxNestedLocks: 0,
+    // No rollback: the tests that care about atomicity assert on the resulting state instead.
     transaction: (fn) => fn(repositories),
-    withLock: (key, fn) => {
-      locks.push(key);
-      return fn();
+    withLock: (keys, fn) => {
+      const ordered = [...new Set(keys)].sort();
+      const waitFor = Promise.all(ordered.map((key) => chains.get(key) ?? Promise.resolve()));
+      const section = waitFor.then(async () => {
+        locks.push(...keys);
+        open += 1;
+        fake.maxNestedLocks = Math.max(fake.maxNestedLocks, open);
+        try {
+          return await fn({ ...repositories, transaction: (inner) => inner(repositories) });
+        } finally {
+          open -= 1;
+        }
+      });
+      const settled = section.then(
+        () => undefined,
+        () => undefined,
+      );
+      for (const key of ordered) chains.set(key, settled);
+      return section;
     },
     reachable: async () => true,
   };
+  return fake;
 }
 
 /** The "current definition" rule, implemented the same way the SQL does. */

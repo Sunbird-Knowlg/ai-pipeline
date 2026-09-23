@@ -26,29 +26,53 @@ export function createDb(
 export async function transaction<T>(db: Db, fn: (tx: Tx) => Promise<T>): Promise<T> {
   const tx = await db.connect();
   try {
-    await tx.query('BEGIN');
-    const result = await fn(tx);
-    await tx.query('COMMIT');
-    return result;
-  } catch (error) {
-    await tx.query('ROLLBACK').catch(() => undefined);
-    throw error;
+    return await transactionOn(tx, () => fn(tx));
   } finally {
     tx.release();
   }
 }
 
-/**
- * Serialises control-plane work on one key across requests (session-level advisory lock on a
- * dedicated connection). Use distinct keys for nested sections — the lock is per session.
- */
-export async function withLock<T>(db: Db, key: string, fn: () => Promise<T>): Promise<T> {
-  const client = await db.connect();
+/** BEGIN/COMMIT on a client the caller already holds — e.g. the one holding an advisory lock. */
+export async function transactionOn<T>(client: Tx, fn: () => Promise<T>): Promise<T> {
+  await client.query('BEGIN');
   try {
-    await client.query('SELECT pg_advisory_lock(hashtext($1))', [key]);
-    return await fn();
+    const result = await fn();
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * Serialises control-plane work across requests, on session-level advisory locks.
+ *
+ * The locked client is handed to `fn` and the section must do its work **on that client**. Holding
+ * a pooled connection while the body asks the same pool for another one is a self-deadlock, not
+ * contention: with `max: 8`, eight concurrent lock holders leave nothing for any of them to work
+ * with, and every one fails after `connectionTimeoutMillis` — with entirely distinct keys.
+ *
+ * All the keys a section needs are taken here, in order, on the one session. That is why this takes
+ * a list: advisory locks are per session, so a nested `withLock` would need a second connection and
+ * reintroduce exactly the problem.
+ */
+export async function withLock<T>(
+  db: Db,
+  keys: readonly string[],
+  fn: (client: Tx) => Promise<T>,
+): Promise<T> {
+  const client = await db.connect();
+  const taken: string[] = [];
+  try {
+    for (const key of keys) {
+      await client.query('SELECT pg_advisory_lock(hashtext($1))', [key]);
+      taken.push(key);
+    }
+    return await fn(client);
   } finally {
-    await client.query('SELECT pg_advisory_unlock(hashtext($1))', [key]).catch(() => undefined);
+    for (const key of taken.reverse())
+      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [key]).catch(() => undefined);
     client.release();
   }
 }

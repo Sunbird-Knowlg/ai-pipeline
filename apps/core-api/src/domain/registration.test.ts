@@ -73,11 +73,47 @@ describe('registerDeployment', () => {
     ]);
   });
 
-  it('serialises concurrent registrations of the same unit', async () => {
+  it('takes both locks it needs in one section, and never nests them', async () => {
+    // Nesting is the bug this asserts against, not a style point: a second `withLock` inside the
+    // first checks out a second pooled connection while this request still holds one, so a handful
+    // of concurrent deploys exhaust the pool and every one of them times out.
     const cp = fakeControlPlane();
     serving(cp.admin);
     await registerDeployment(cp, request());
-    expect(cp.store.locks).toContain('register:content-enrichment');
+
+    expect(cp.store.locks).toEqual(['register:content-enrichment', 'reconcile:content-enrichment']);
+    expect(cp.store.maxNestedLocks).toBe(1);
+  });
+
+  it('really does serialise two concurrent registrations of the same unit', async () => {
+    // The lock is what stops two reconciles each creating a subscription, so run two at once and
+    // assert the sections did not interleave.
+    const cp = fakeControlPlane();
+    serving(cp.admin);
+    const order: string[] = [];
+    const store = cp.store;
+    let inside = 0;
+    cp.store = {
+      ...store,
+      withLock: (keys, fn) =>
+        store.withLock(keys, async (locked) => {
+          inside += 1;
+          order.push(`enter:${inside}`);
+          await new Promise((resolve) => setImmediate(resolve));
+          const result = await fn(locked);
+          order.push(`exit:${inside}`);
+          inside -= 1;
+          return result;
+        }),
+    };
+
+    const both = await Promise.all([
+      registerDeployment(cp, request()),
+      registerDeployment(cp, request()),
+    ]);
+    // Each section ran to completion before the next began — never `enter, enter, exit, exit`.
+    expect(order).toEqual(['enter:1', 'exit:1', 'enter:1', 'exit:1']);
+    expect(both.every((r) => r.name === 'content-enrichment')).toBe(true);
   });
 
   it('refuses before touching Restate, and only with pre-registration codes', async () => {

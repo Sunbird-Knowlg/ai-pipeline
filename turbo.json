@@ -57,9 +57,17 @@
       "dependsOn": ["@ai-pipeline/api-contract#build"],
       "inputs": ["tests/e2e/**", "eslint.config.js", "tsconfig.json", "vitest.config.ts"]
     },
+    // `infra/postgres/init/**` and `manifests/**` are inputs because two unit tests read them as
+    // drift guards: `store/schema.test.ts` checks the provisioning SQL creates every table the
+    // repositories query, and `routes/collection.test.ts` checks the Postman collection covers every
+    // route. Without them turbo replays a cached PASS after either file drifts, and the guard —
+    // which is the whole point of those tests — never runs.
     "//#test:unit": {
       "inputs": [
         "{packages,services,workflows,apps,tests/fixtures}/*/src/**",
+        "infra/postgres/init/**",
+        "manifests/**",
+        "compose.yaml",
         "vitest.config.ts",
         "pnpm-workspace.yaml"
       ]

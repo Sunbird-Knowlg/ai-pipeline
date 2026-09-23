@@ -65,8 +65,8 @@ function handlerFor(
     { input: restate.serde.binary },
     async (ctx: restate.Context, record: Uint8Array): Promise<KafkaTriggerResult> => {
       const headers = ctx.request().headers;
-      const partition = integerHeader(headers, 'kafka.partition');
-      const offset = integerHeader(headers, 'kafka.offset');
+      const partition = decimalHeader(headers, 'kafka.partition');
+      const offset = decimalHeader(headers, 'kafka.offset');
       if (partition === undefined || offset === undefined)
         throw new restate.TerminalError('not a Kafka delivery: kafka.partition/offset missing', {
           errorCode: 400,
@@ -100,22 +100,25 @@ function handlerFor(
           },
         });
 
-      const timestamp = integerHeader(headers, 'kafka.timestamp');
+      const timestamp = decimalHeader(headers, 'kafka.timestamp');
       const trigger_: TriggerContext = {
         type: 'kafka',
         id: trigger.id,
         source: trigger.topic,
-        partition,
-        offset,
-        receivedAt: timestamp && timestamp > 0 ? timestamp : await ctx.date.now(),
+        partition: partition.value,
+        offset: offset.value,
+        receivedAt: timestamp && timestamp.value > 0 ? timestamp.value : await ctx.date.now(),
       };
+      // Derived from the exact header text, never the narrowed number: past 2^53 two adjacent
+      // offsets round to the same double, and Restate would dedupe the second record as a replay
+      // of the first. The run id must distinguish records the broker distinguishes.
       const runId = kafkaRunId({
         cluster: trigger.cluster,
         triggerId: trigger.id,
         topic: trigger.topic,
-        partition,
-        offset,
-        timestamp,
+        partition: partition.text,
+        offset: offset.text,
+        ...(timestamp ? { timestamp: timestamp.text } : {}),
       });
       const handle = ctx.genericSend({
         service: metadata.restateName,
@@ -129,9 +132,19 @@ function handlerFor(
   );
 }
 
-/** A non-negative integer header, or undefined when missing/empty/malformed. */
-function integerHeader(headers: ReadonlyMap<string, string>, name: string): number | undefined {
+/**
+ * A non-negative decimal header, or undefined when missing/empty/malformed.
+ *
+ * Both forms are returned on purpose. `value` is what the trigger context reports, where a number
+ * is the contract; `text` is the digits exactly as the broker sent them, which is what identity
+ * must be derived from — `Number('9007199254740993')` is `9007199254740992`, so two distinct
+ * offsets would otherwise produce one run id.
+ */
+function decimalHeader(
+  headers: ReadonlyMap<string, string>,
+  name: string,
+): { text: string; value: number } | undefined {
   const raw = headers.get(name);
   if (raw === undefined || !/^\d+$/.test(raw)) return undefined;
-  return Number(raw);
+  return { text: raw, value: Number(raw) };
 }

@@ -24,6 +24,8 @@ export interface Docker {
   removeImage(tag: string): void;
   containerState(name: string): ContainerState;
   containerLabel(name: string, label: string): string | undefined;
+  /** The image tag a container was started from, so retiring can reclaim it. */
+  containerImage(name: string): string | undefined;
   runContainer(options: RunContainer): void;
   removeContainer(name: string): void;
 }
@@ -78,6 +80,15 @@ export function removeImage(tag: string): void {
   }
 }
 
+export function containerImage(name: string): string | undefined {
+  try {
+    const value = docker(['inspect', '-f', '{{.Config.Image}}', name], { quiet: true });
+    return value || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function containerLabel(name: string, label: string): string | undefined {
   try {
     const value = docker(['inspect', '-f', `{{index .Config.Labels "${label}"}}`, name], {
@@ -114,6 +125,7 @@ export const dockerCli: Docker = {
   removeImage,
   containerState,
   containerLabel,
+  containerImage,
   runContainer,
   removeContainer,
 };
