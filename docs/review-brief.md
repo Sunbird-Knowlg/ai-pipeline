@@ -99,7 +99,7 @@ git clone --branch main https://github.com/yravinderkumar33/ai-pipeline-restate.
 git clone --branch main git@github.com:yravinderkumar33/ai-pipeline-restate.git
 
 cd ai-pipeline-restate
-git log --oneline          # eight commits; confirm your tip matches what you were asked to review
+git log --oneline          # confirm your tip matches the commit you were asked to review
 ```
 
 Work on a branch off `main` (`git switch -c review/<your-name>`) so the tree stays clean and anything
