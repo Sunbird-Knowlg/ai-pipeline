@@ -68,6 +68,14 @@ export function fakeStore(seed: Partial<Seed> = {}): FakeStore {
         ),
       ],
 
+      // Newest first, the same anchor the SQL picks.
+      identity: async (name) => {
+        const [latest] = state.definitions
+          .filter((d) => d.name === name)
+          .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+        return latest && { restateName: latest.restateName, kind: latest.kind };
+      },
+
       upsert: async (definition: UpsertDefinition) => {
         const at = new Date();
         const index = state.definitions.findIndex(

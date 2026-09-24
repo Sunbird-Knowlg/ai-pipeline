@@ -5,6 +5,7 @@ import {
   runList,
   runParams,
   runQuery,
+  runResumeBody,
   runResuming,
   runView,
 } from '@ai-pipeline/api-contract/runs';
@@ -47,13 +48,16 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  // The counterpart to the retry policy pausing an invocation rather than failing it.
+  // The counterpart to the retry policy pausing an invocation rather than failing it. The body may
+  // name one of the paused calls `GET /runs/:workflow/:runId` reports in `blocked`; without it, the
+  // run's own invocation is resumed.
   app.post(
     '/runs/:workflow/:runId/resume',
     { schema: { response: { 202: responseSchema(runResuming) } } },
     async (request, reply) => {
       const { workflow, runId } = runParams.parse(request.params);
-      return reply.code(202).send(await resumeRun(cp, workflow, runId));
+      const { invocationId } = runResumeBody.parse(request.body ?? {});
+      return reply.code(202).send(await resumeRun(cp, workflow, runId, invocationId));
     },
   );
 }

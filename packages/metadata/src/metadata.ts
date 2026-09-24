@@ -73,6 +73,11 @@ export const metadataSchema = z
         ctx.addIssue({ code: 'custom', message: `duplicate dependency "${d.name}"` });
       deps.add(d.name);
     }
+    // The REST start path resolves one trigger (`triggers.find(t => t.type === 'rest')` in the core
+    // API's `startRun`), so a second one would be silently unreachable. Refuse it here rather than
+    // adding a way to choose between them: there is one REST surface per workflow.
+    if (m.triggers.filter((t) => t.type === 'rest').length > 1)
+      ctx.addIssue({ code: 'custom', message: 'a unit declares at most one rest trigger' });
     if (m.kind !== 'workflow' && m.triggers.length > 0)
       ctx.addIssue({ code: 'custom', message: 'only workflows declare triggers in v1' });
     if (m.visibility === 'private' && m.triggers.length > 0)

@@ -1,10 +1,15 @@
 import type { DeploymentView } from '@ai-pipeline/api-contract/deployments';
-import type { RunView } from '@ai-pipeline/api-contract/runs';
+import type { BlockedInvocation, RunView } from '@ai-pipeline/api-contract/runs';
 import type { TriggerView } from '@ai-pipeline/api-contract/triggers';
 import type { WorkflowDetail, WorkflowSummary } from '@ai-pipeline/api-contract/workflows';
 import type { Dependency } from '@ai-pipeline/metadata/metadata';
 import { observedStatus } from './domain/reconcile.js';
-import { mapStatus, type InvocationRow, type RunState } from './restate/invocations.js';
+import {
+  mapStatus,
+  type ChildInvocationRow,
+  type InvocationRow,
+  type RunState,
+} from './restate/invocations.js';
 import type { Subscription } from './restate/admin.js';
 import type { Definition, DefinitionVersion } from './store/definitions.js';
 import type { Deployment } from './store/deployments.js';
@@ -109,6 +114,21 @@ export function toWorkflowDetail(parts: {
       artifactDigest: d.artifactDigest,
       registeredAt: iso(d.registeredAt),
     })),
+  };
+}
+
+/**
+ * A call a run is waiting on. `target` is assembled here rather than read from Restate's own
+ * `invoked_by_target`, which describes the *caller*, not the callee.
+ */
+export function toBlockedInvocation(row: ChildInvocationRow): BlockedInvocation {
+  return {
+    invocationId: row.id,
+    target: `${row.target_service_name}/${row.target_handler_name}`,
+    restateStatus: row.status,
+    // Truncated like a trigger's `lastError`: a provider failure arrives as a stack trace through
+    // node_modules, which is neither useful on the wire nor ours to publish.
+    ...(row.last_failure ? { lastError: row.last_failure.slice(0, 500) } : {}),
   };
 }
 

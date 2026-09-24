@@ -401,7 +401,9 @@ describe('resumeRun', () => {
       (e: unknown) => e,
     )) as PipelineError;
     expect(error).toMatchObject({ code: 'RUN_NOT_RESUMABLE', statusCode: 409 });
-    expect(error.message).toMatch(/only a paused run can be resumed/);
+    expect(error.message).toMatch(/only a paused invocation can be resumed/);
+    // …and points at where the id of the thing that actually paused can be found.
+    expect(error.message).toMatch(/blocked/);
   });
 
   it('404s on a run Restate does not know', async () => {
@@ -422,5 +424,101 @@ describe('resumeRun', () => {
     await expect(getRun(cp, 'content-enrichment', 'api_1')).resolves.toMatchObject({
       status: 'paused',
     });
+  });
+});
+
+/**
+ * The case the parent-oriented API used to have no answer for: what pauses is usually not the
+ * workflow but a service it called, and the workflow waiting on it is merely suspended — so the run
+ * reads `running` while nothing is happening.
+ */
+describe('a run blocked on a paused call', () => {
+  const running = {
+    id: 'inv_1',
+    target_service_name: 'ContentEnrichment',
+    target_service_key: 'api_1',
+    status: 'running',
+    created_at: '2026-01-01T00:00:00.000Z',
+  };
+  const child = {
+    id: 'inv_2',
+    target_service_name: 'SummaryService',
+    target_handler_name: 'summarize',
+    status: 'paused',
+    last_failure: 'litellm unreachable',
+  };
+  const blocked = () => {
+    const cp = fakeControlPlane({ seed: { definitions: [definitionOf()] } });
+    cp.admin.rows = [running];
+    cp.admin.childRows = [child];
+    return cp;
+  };
+
+  it('names the paused call on the run, with what failed', async () => {
+    const run = await getRun(blocked(), 'content-enrichment', 'api_1');
+    expect(run.status).toBe('running');
+    expect(run.blocked).toEqual([
+      {
+        invocationId: 'inv_2',
+        target: 'SummaryService/summarize',
+        restateStatus: 'paused',
+        lastError: 'litellm unreachable',
+      },
+    ]);
+  });
+
+  it('reports a call that is failing and retrying, not only one that has given up', async () => {
+    // With the uncapped `retry.llm` profile a gateway outage leaves the callee in `backing-off`
+    // indefinitely rather than exhausting its attempts, so this is the state an operator finds.
+    const cp = blocked();
+    cp.admin.childRows = [{ ...child, status: 'backing-off' }];
+    const run = await getRun(cp, 'content-enrichment', 'api_1');
+    expect(run.blocked).toMatchObject([{ invocationId: 'inv_2', restateStatus: 'backing-off' }]);
+  });
+
+  it('leaves `blocked` off a run whose calls are all progressing', async () => {
+    const cp = blocked();
+    cp.admin.childRows = [{ ...child, status: 'running' }];
+    expect(await getRun(cp, 'content-enrichment', 'api_1')).not.toHaveProperty('blocked');
+  });
+
+  it('truncates the failure, which arrives as a provider stack trace', async () => {
+    const cp = blocked();
+    cp.admin.childRows = [{ ...child, last_failure: 'x'.repeat(5_000) }];
+    const run = await getRun(cp, 'content-enrichment', 'api_1');
+    expect(run.blocked![0]!.lastError).toHaveLength(500);
+  });
+
+  it('resumes the named call rather than the run that is waiting on it', async () => {
+    await expect(resumeRun(blocked(), 'content-enrichment', 'api_1', 'inv_2')).resolves.toEqual({
+      runId: 'api_1',
+      invocationId: 'inv_2',
+      status: 'resume_requested',
+    });
+  });
+
+  it('refuses an invocation that is not a call of this run', async () => {
+    await expect(
+      resumeRun(blocked(), 'content-enrichment', 'api_1', 'inv_999'),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND', statusCode: 404 });
+  });
+
+  it('never interpolates the requested invocation id into SQL', async () => {
+    // The id is matched against the rows Restate returned for *this* run, in memory — the only
+    // value that reaches the query is the parent invocation id, which came from Restate.
+    const cp = blocked();
+    const hostile = "inv_1' OR '1'='1";
+    await expect(resumeRun(cp, 'content-enrichment', 'api_1', hostile)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+    });
+    expect(cp.admin.queries.some((sql) => sql.includes(hostile))).toBe(false);
+  });
+
+  it('does not ask for a run listing what each run is blocked on', async () => {
+    // One query per row is the N+1 this deliberately avoids: `blocked` is a single-run concern.
+    const cp = blocked();
+    const runs = await listRuns(cp, { limit: 50 });
+    expect(runs.runs[0]).not.toHaveProperty('blocked');
   });
 });

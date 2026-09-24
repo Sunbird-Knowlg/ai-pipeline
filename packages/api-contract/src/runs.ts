@@ -10,6 +10,26 @@ export const RUN_STATUSES = ['running', 'completed', 'failed', 'cancelled', 'pau
 export const runStatus = z.enum(RUN_STATUSES);
 export type RunStatus = z.infer<typeof runStatus>;
 
+/**
+ * A call this run is waiting on that is not making progress.
+ *
+ * A workflow waiting on a call is merely suspended, not failed, so the run reads `running` while
+ * nothing is happening. Two statuses mean that: `backing-off` (failing and retrying — with the
+ * uncapped `retry.llm` profile, a gateway outage stays here indefinitely) and `paused` (invocation
+ * retries exhausted, journal kept, waiting for an operator). Without this the invocation that
+ * actually needs attention is only visible in the Restate UI.
+ */
+export const blockedInvocation = z.object({
+  invocationId: z.string(),
+  /** Restate's own target string, e.g. `SummaryService/summarize`. */
+  target: z.string(),
+  /** Restate's invocation status, unmapped: `backing-off` or `paused`. Only `paused` is resumable. */
+  restateStatus: z.string(),
+  /** The most recent attempt's failure, truncated — these carry provider stack traces. */
+  lastError: z.string().optional(),
+});
+export type BlockedInvocation = z.infer<typeof blockedInvocation>;
+
 export const runView = z.object({
   runId: z.string(),
   invocationId: z.string(),
@@ -29,6 +49,11 @@ export const runView = z.object({
   error: z.string().optional(),
   /** Present once the run has completed successfully. */
   output: opaqueJson.optional(),
+  /**
+   * Calls this run is waiting on that are not progressing. Only on a single-run read: collecting it
+   * per row would put one query per run on the list path.
+   */
+  blocked: z.array(blockedInvocation).optional(),
 });
 export type RunView = z.infer<typeof runView>;
 
@@ -64,10 +89,18 @@ export type RunCancelling = z.infer<typeof runCancelling>;
  */
 export const runResuming = z.object({
   runId: z.string(),
+  /** The invocation that was resumed: the run itself, or the blocked call named in the request. */
   invocationId: z.string(),
   status: z.literal('resume_requested'),
 });
 export type RunResuming = z.infer<typeof runResuming>;
+
+/**
+ * Which invocation to resume. Omitted means the run's own — what `blocked` reports is a *call* the
+ * run is waiting on, and resuming the waiting parent would do nothing.
+ */
+export const runResumeBody = z.strictObject({ invocationId: z.string().max(200).optional() });
+export type RunResumeBody = z.infer<typeof runResumeBody>;
 
 /**
  * Killing a run. Unlike cancel, this does not let the handler unwind: no compensation runs and

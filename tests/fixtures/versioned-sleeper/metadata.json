@@ -3,7 +3,7 @@
   "kind": "workflow",
   "name": "versioned-sleeper",
   "restateName": "VersionedSleeper",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Test fixture: sleeps durably and reports the version that ran it",
   "config": {
     "version": "1.1.0"

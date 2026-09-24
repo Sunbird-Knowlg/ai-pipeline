@@ -3,7 +3,7 @@
   "kind": "service",
   "name": "quiz-generate",
   "restateName": "QuizGenerateService",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Writes multiple-choice questions from a text with an LLM",
   "visibility": "private",
   "config": {

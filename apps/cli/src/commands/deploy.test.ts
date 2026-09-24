@@ -58,7 +58,11 @@ const summaryContract: ContractEntry = {
 const options = (
   api: CoreApi,
   docker: Docker & { recorded: Recorded },
-  overrides: { dev?: boolean; loadContract?: () => Promise<ContractEntry> } = {},
+  overrides: {
+    dev?: boolean;
+    loadContract?: () => Promise<ContractEntry>;
+    log?: (line: string) => void;
+  } = {},
 ) => ({
   root: ROOT,
   name: UNIT,
@@ -67,7 +71,7 @@ const options = (
   env: { LITELLM_URL: 'http://litellm:4000' },
   api,
   docker,
-  log: () => undefined,
+  log: overrides.log ?? (() => undefined),
   sleep: async () => undefined,
   loadContract: overrides.loadContract ?? (async () => summaryContract),
 });
@@ -122,11 +126,17 @@ describe('deploy', () => {
     expect(docker.recorded.removedContainers).toEqual([]);
   });
 
-  it('recreates a running container whose runtime config changed', async () => {
+  it('recreates a running container whose runtime config changed, and says so', async () => {
     const docker = fakeDocker({ image: true, container: 'running', configLabel: 'stale' });
-    await deploy(options(accepted, docker));
+    const lines: string[] = [];
+    await deploy(options(accepted, docker, { log: (line) => lines.push(line) }));
     expect(docker.recorded.removedContainers).toHaveLength(1);
     expect(docker.recorded.started).toHaveLength(1);
+    // Replacing a container Restate already routes to interrupts that endpoint; it must not be
+    // something a deploy does quietly.
+    expect(lines).toContainEqual(
+      expect.stringMatching(/^! replacing container summary-[0-9a-f]{12}/),
+    );
   });
 
   it('always recreates in dev mode, under a single reusable name', async () => {

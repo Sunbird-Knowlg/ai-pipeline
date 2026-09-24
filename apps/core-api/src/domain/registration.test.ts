@@ -179,6 +179,63 @@ describe('registerDeployment', () => {
         code: 'RESTATE_NAME_TAKEN',
       },
       {
+        what: 'a unit renaming its own Restate service between versions',
+        run: () => {
+          // Old runs are found through the *current* Restate name and Kafka subscriptions are owned
+          // by a sink prefix built from it, so a rename strands both. It is a migration, not a bump.
+          const cp = fakeControlPlane({
+            seed: {
+              definitions: [
+                definitionOf({
+                  metadata: metadataOf({ restateName: 'ContentEnrichmentV2', version: '0.0.9' }),
+                }),
+              ],
+            },
+          });
+          serving(cp.admin);
+          return registerDeployment(cp, request());
+        },
+        code: 'UNIT_IDENTITY_CHANGED',
+      },
+      {
+        what: 'a unit changing its own kind between versions',
+        run: () => {
+          const cp = fakeControlPlane({
+            seed: {
+              definitions: [
+                definitionOf({ metadata: metadataOf({ kind: 'service', version: '0.0.9' }) }),
+              ],
+            },
+          });
+          serving(cp.admin);
+          return registerDeployment(cp, request());
+        },
+        code: 'UNIT_IDENTITY_CHANGED',
+      },
+      {
+        what: 'a dependency declared as the wrong kind',
+        run: () => {
+          const cp = fakeControlPlane({
+            seed: {
+              definitions: [
+                definitionOf({
+                  metadata: metadataOf({ name: 'summary', restateName: 'SummaryWorkflow' }),
+                }),
+              ],
+            },
+          });
+          serving(cp.admin);
+          return registerDeployment(
+            cp,
+            request({
+              // Catalogued as a workflow; declared here as a service.
+              metadata: metadataOf({ dependencies: [{ kind: 'service', name: 'summary' }] }),
+            }),
+          );
+        },
+        code: 'DEPENDENCY_KIND_MISMATCH',
+      },
+      {
         what: 'a dependency that is not in the catalogue',
         run: () => {
           const cp = fakeControlPlane();

@@ -97,6 +97,15 @@ function ensureContainer(
     o.log(`▸ container ${target.container} already running (same artifact and config)`);
     return { startedHere };
   }
+  // In immutable mode the container name is the artifact, so getting here with a container already
+  // in place means the same code with different env or network. Docker cannot swap that in place, so
+  // the endpoint goes away until the replacement is serving, and invocations pinned to it retry
+  // meanwhile (and pause if the replacement never comes up). Worth saying out loud; in production
+  // this is a Deployment's rollout, not ours — see docs/decisions.md.
+  if (!o.dev && !startedHere)
+    o.log(
+      `! replacing container ${target.container}: same artifact, different runtime config. The endpoint is down until the replacement serves, and invocations pinned to it will retry.`,
+    );
   o.docker.removeContainer(target.container);
   o.log(`▸ starting container ${target.container}`);
   o.docker.runContainer({

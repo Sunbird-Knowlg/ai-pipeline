@@ -16,6 +16,16 @@ export interface FakeAdmin extends RestateAdminPort {
   /** Endpoints `dryRunDeployment`/`registerDeployment` report as served. */
   served: Map<string, string[]>;
   rows: Record<string, unknown>[];
+  /**
+   * Answers the child-invocation query instead of `rows`.
+   *
+   * `query` is otherwise SQL-blind, which is fine while a test issues one kind of query — but a
+   * single-run read now also asks what calls the run is waiting on, and answering that with the run
+   * row itself would make every run look blocked on itself.
+   */
+  childRows: Record<string, unknown>[];
+  /** Every SQL string this fake was handed, so a test can assert what did (not) reach it. */
+  queries: string[];
   deleted: string[];
   clusters: string[];
   /** How many times each method was called — the read paths' round-trip counts are worth asserting. */
@@ -31,6 +41,8 @@ export function fakeAdmin(overrides: Partial<FakeAdmin> = {}): FakeAdmin {
     routing: new Map(),
     served: new Map(),
     rows: [],
+    childRows: [],
+    queries: [],
     deleted: [],
     clusters: [],
     calls: {},
@@ -78,8 +90,10 @@ export function fakeAdmin(overrides: Partial<FakeAdmin> = {}): FakeAdmin {
       admin.subscriptions = admin.subscriptions.filter((s) => s.id !== id);
     },
 
-    query: async <T>() => {
+    query: async <T>(sql: string) => {
       admin.calls.query = (admin.calls.query ?? 0) + 1;
+      admin.queries.push(sql);
+      if (sql.includes('invoked_by_id')) return admin.childRows as T[];
       return admin.rows as T[];
     },
 

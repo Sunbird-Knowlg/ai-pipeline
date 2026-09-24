@@ -8,7 +8,13 @@ import { z } from 'zod';
  * them: `workflows/content-authoring` calls this service and has to type the call.
  */
 
-/** One learning resource's text. Generous, but well inside the model's context window. */
+/**
+ * One learning resource's text.
+ *
+ * A bound on what a *caller* may send, which is not the same as what the configured model reads:
+ * `num_ctx` in `infra/litellm/config.yaml` is the operational limit and is currently smaller. See
+ * docs/decisions.md — an oversized prompt is truncated by the backend, not refused.
+ */
 export const METADATA_TEXT_MAX = 40_000;
 
 /** How hard the material is, as a closed set: a caller can `switch` on it. */

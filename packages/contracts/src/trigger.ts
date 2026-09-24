@@ -15,6 +15,10 @@ export const TriggerContext = z.strictObject({
    * plane answer the question an idempotency key really asks: is this the *same* request? Without
    * it, reusing a key with a different body is answered `202 PreviouslyAccepted` and the new work
    * is silently dropped.
+   *
+   * Best-effort, deliberately: the handler writes this as its first act, so a second submit that
+   * arrives before it does has nothing to compare against and is answered `PreviouslyAccepted`
+   * without the check. See `assertSameRequest` in the core API for why that beats failing closed.
    */
   inputDigest: z.string().optional(),
   receivedAt: z.number().int(),

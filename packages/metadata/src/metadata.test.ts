@@ -28,6 +28,15 @@ describe('metadata', () => {
     expect(() => parseMetadata({ ...base, schemas: {} })).toThrow(/invalid metadata/);
   });
 
+  it('rejects a second rest trigger, which the start path could never reach', () => {
+    const two = [
+      { id: 'api', type: 'rest' },
+      { id: 'also-api', type: 'rest' },
+    ];
+    expect(() => parseMetadata({ ...base, triggers: two })).toThrow(/at most one rest trigger/);
+    expect(parseMetadata({ ...base, triggers: [two[0]] }).triggers).toHaveLength(1);
+  });
+
   it('rejects ids whose kafka handler names collide, and duplicate dependencies', () => {
     const kafka = (id: string) => ({ id, type: 'kafka', cluster: 'local', topic: 't' });
     expect(() => parseMetadata({ ...base, triggers: [kafka('order-1'), kafka('order1')] })).toThrow(

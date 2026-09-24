@@ -34,6 +34,11 @@
       "key": "triggerId",
       "value": "content-published",
       "description": "A Kafka trigger of the workflow above."
+    },
+    {
+      "key": "blockedInvocationId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -581,6 +586,10 @@
               {
                 "key": "accept",
                 "value": "application/json"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
               }
             ],
             "url": {
@@ -588,7 +597,16 @@
               "host": ["{{baseUrl}}"],
               "path": ["v1", "runs", "{{workflow}}", "{{runId}}", "resume"]
             },
-            "description": "202 `resume_requested`.\n\nThis is the counterpart to a deliberate design choice: the LLM retry profile is uncapped and pauses an invocation when its retries are exhausted, rather than failing it \u2014 an LLM gateway outage should not destroy a run's journal. Once the cause is fixed, the run is resumed here.\n\nFind paused runs with `GET /v1/runs?status=paused`.\n\n409 `RUN_NOT_RESUMABLE` if the run is running or has completed."
+            "description": "202 `resume_requested`.\n\nThe counterpart to a deliberate design choice: the LLM retry profile is uncapped, so a gateway outage leaves work retrying rather than failing it \u2014 an outage should not destroy a run's journal.\n\n**Usually the thing that needs resuming is not the run.** A workflow waiting on a stuck service call is only suspended, so it reads `running`. `GET /v1/runs/{workflow}/{runId}` lists those calls in `blocked`, with the invocation id, the target and the last failure. Send that id as `invocationId` to resume the call itself; omit the body to resume the run's own invocation.\n\nOnly a `paused` call is resumable \u2014 one that is `backing-off` is still retrying and needs the cause fixed, not a resume.\n\n409 `RUN_NOT_RESUMABLE` if the target is running or has completed. 404 if `invocationId` is not a call of this run.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"invocationId\": \"{{blockedInvocationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           },
           "event": [
             {

@@ -70,10 +70,35 @@ describe('dikshaContentPublished adapter', () => {
     expect(text({ description: 'd' })).toBe('d');
   });
 
+  it('treats a blank field as unfilled, so it falls through to the next one', () => {
+    // The schema types these `.nullish()`, so `body: ''` is a valid parse. `??` would have picked
+    // it over the transcript and then failed the record for having no text.
+    const text = (edata: Record<string, unknown>) =>
+      adapters.dikshaContentPublished({ identifier: 'do_4', edata: { name: 'N', ...edata } })?.text;
+    for (const blank of ['', '   ', '\n\t', null]) {
+      expect(text({ body: blank, transcript: 't', description: 'd' })).toBe('t');
+      expect(text({ body: blank, transcript: blank, description: 'd' })).toBe('d');
+    }
+    // A blank description is not carried through as one either.
+    expect(
+      adapters.dikshaContentPublished({
+        identifier: 'do_4',
+        edata: { name: 'N', body: 'b', description: '  ' },
+      }),
+    ).not.toHaveProperty('description');
+  });
+
   it('fails a Live Content with no text at all, rather than dropping it quietly', () => {
     // It is this workflow's business and it arrived broken: a producer bug worth seeing.
     expect(() =>
       adapters.dikshaContentPublished({ ...event, edata: { state: 'Live', name: 'N' } }),
+    ).toThrow(/no body, transcript or description/);
+    // Present but blank is the same producer bug, and must fail the same way.
+    expect(() =>
+      adapters.dikshaContentPublished({
+        ...event,
+        edata: { state: 'Live', name: 'N', body: '', transcript: '  ', description: null },
+      }),
     ).toThrow(/no body, transcript or description/);
   });
 

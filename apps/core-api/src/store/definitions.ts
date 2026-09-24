@@ -74,6 +74,13 @@ export interface DefinitionStore {
   versions(name: string): Promise<DefinitionVersion[]>;
   /** Other catalogue names already bound to this Restate name (names are global in Restate). */
   namesUsingRestateName(restateName: string, except: string): Promise<string[]>;
+  /**
+   * The Restate identity this logical unit is already bound to, across every version.
+   *
+   * Deliberately not `current()`: that is undefined once nothing is active, which is exactly the
+   * case where old runs and subscriptions still exist and must stay reachable.
+   */
+  identity(name: string): Promise<{ restateName: string; kind: UnitKind } | undefined>;
   upsert(definition: UpsertDefinition): Promise<void>;
 }
 
@@ -133,6 +140,14 @@ export function definitionStore(db: Queryable): DefinitionStore {
         [restateName, except],
       );
       return rows.map((r) => r.name);
+    },
+
+    async identity(name) {
+      const { rows } = await db.query<{ restate_name: string; kind: UnitKind }>(
+        'SELECT restate_name, kind FROM workflow_definitions WHERE name = $1 ORDER BY updated_at DESC LIMIT 1',
+        [name],
+      );
+      return rows[0] && { restateName: rows[0].restate_name, kind: rows[0].kind };
     },
 
     async upsert(d) {

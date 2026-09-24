@@ -32,6 +32,16 @@ function first(value: unknown): string | undefined {
 }
 
 /**
+ * Whether a nullable DIKSHA string actually carries something.
+ *
+ * The schema types `body`, `transcript` and `description` as `.nullish()`, so `''` is a valid parse
+ * and `??` would accept it. A producer that sends `body: ''` has not filled the field in, and the
+ * caller wants the next one.
+ */
+const filled = (value: string | null | undefined): value is string =>
+  typeof value === 'string' && value.trim() !== '';
+
+/**
  * Trigger adapters: pure maps from a trigger's event to `ContentAuthoringInput`.
  *
  * Three outcomes, and the difference matters operationally:
@@ -56,9 +66,10 @@ export const adapters = {
 
     const e = DikshaContentEvent.parse(event);
     // Whichever of these the platform filled in: a video has a transcript, an explainer a body,
-    // and a link nothing but its description.
-    const text = e.edata.body ?? e.edata.transcript ?? e.edata.description ?? '';
-    if (text.trim() === '')
+    // and a link nothing but its description. `find(filled)` rather than `??`, so an empty or
+    // whitespace-only field falls through to the next one instead of winning and then failing.
+    const text = [e.edata.body, e.edata.transcript, e.edata.description].find(filled);
+    if (text === undefined)
       throw new Error(
         `content ${e.identifier} is Live but carries no body, transcript or description`,
       );
@@ -67,7 +78,7 @@ export const adapters = {
     return {
       contentId: e.identifier,
       name: e.edata.name,
-      ...(e.edata.description ? { description: e.edata.description } : {}),
+      ...(filled(e.edata.description) ? { description: e.edata.description } : {}),
       text,
       ...(first(e.edata.subject) ? { subject: first(e.edata.subject)! } : {}),
       ...(first(e.edata.gradeLevel) ? { gradeLevel: first(e.edata.gradeLevel)! } : {}),

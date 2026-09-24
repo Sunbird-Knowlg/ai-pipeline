@@ -18,7 +18,8 @@ import { config, metadata } from './unit.js';
  * 2. put the input in order with plain deterministic code (`./steps.ts`);
  * 3. call the shared services — durably, in parallel where they are independent and in sequence
  *    where one genuinely needs the other's answer;
- * 4. perform the one side effect this workflow owns, inside `ctx.run` so it happens exactly once;
+ * 4. perform the one side effect this workflow owns, inside `ctx.run` so a replay does not repeat
+ *    it (see `docs/example-workflow.md` for what that does and does not promise a real sink);
  * 5. return the pack, which the runs API serves as the run's output.
  *
  * The workflow does no I/O of its own beyond step 4: the model calls live in the services it calls,

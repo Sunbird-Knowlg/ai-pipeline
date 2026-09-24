@@ -2,7 +2,7 @@ import { RUN_STATUSES, type RunStatus } from '@ai-pipeline/api-contract/runs';
 import { z } from 'zod';
 import { PipelineError } from '../errors.js';
 import type { RestateAdminPort } from './admin.js';
-import { quote, RESTATE_NAME, RUN_KEY } from './sql.js';
+import { INVOCATION_ID, quote, RESTATE_NAME, RUN_KEY } from './sql.js';
 
 /**
  * Reading runs out of Restate. Restate is the run store — there is no run table — so this module
@@ -105,6 +105,29 @@ export function getRunSql(service: string, runId: string): string {
   if (!RESTATE_NAME.test(service) || !RUN_KEY.test(runId))
     throw new PipelineError('INVALID_REQUEST', 'invalid workflow or run id', 400);
   return `SELECT ${COLUMNS} FROM sys_invocation WHERE target_service_name = ${quote(service)} AND target_service_key = ${quote(runId)} AND target_handler_name = 'run' ORDER BY created_at DESC LIMIT 1`;
+}
+
+/**
+ * The calls one invocation made that have not completed.
+ *
+ * Restate records the relationship itself — `invoked_by = 'service'` with the caller in
+ * `invoked_by_id` — so this needs no bookkeeping of ours. Direct children only: this pipeline's call
+ * graph is workflow → service, one level deep, and walking further would cost a query per level for
+ * a shape that does not exist yet.
+ */
+export function childInvocationsSql(parentInvocationId: string): string {
+  if (!INVOCATION_ID.test(parentInvocationId))
+    throw new PipelineError('INVALID_REQUEST', 'invalid invocation id', 400);
+  return `SELECT id, target_service_name, target_handler_name, status, last_failure FROM sys_invocation WHERE invoked_by_id = ${quote(parentInvocationId)} AND status <> 'completed' ORDER BY created_at ASC`;
+}
+
+/** One row of `childInvocationsSql`. */
+export interface ChildInvocationRow {
+  id: string;
+  target_service_name: string;
+  target_handler_name: string;
+  status: string;
+  last_failure?: string | null;
 }
 
 /** In-flight invocations still pinned to a deployment (they must finish there). */

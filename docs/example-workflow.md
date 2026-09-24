@@ -162,15 +162,33 @@ announcement is its own, and it must happen **once per run, not once per replay*
 entire purpose of `ctx.run`. Outside it, the line would be emitted again every time the handler
 replayed.
 
+**Be precise about what that buys you, because this publisher is a log line and yours may not be.**
+`ctx.run` journals the step's result: the body does not run again on a replay, and it does not run
+again on a retry that gets past it. What it cannot do is make an _external_ effect happen once — if
+the process dies after the HTTP call succeeded but before Restate recorded that it did, the retry
+calls again. Restate's own [durable steps][durable-steps] docs are careful about this too, and offer
+the tool for it: `ctx.rand.uuidv4()` is stable across replays, "to generate stable UUIDs for things
+like idempotency keys".
+
+So a real sink — publishing back to DIKSHA, posting to a queue, writing a row — takes a key derived
+once inside the handler (that UUID, or the run id plus the step name) and deduplicates on it at the
+far end. A step whose effect is idempotent anyway, like this log line or a `PUT` of the whole
+resource, needs nothing. What you must not do is read "inside `ctx.run`" as "exactly once, whatever
+the sink does".
+
 `publish` is a _parameter_ of `createContentAuthoring`, not an import, for the same reason
 `services/summary` takes `generate` as a parameter: the replay test substitutes a counter and proves
-the step ran exactly once while the body ran many times. You can see the same thing on the running
-stack:
+the step ran exactly once while the body ran many times. Note what that proves and what it does not:
+the counter and the `sys_journal` assertion in `tests/e2e/crash.test.ts` both count _journal
+entries_, which is the replay guarantee. Counting requests at the sink is the other question, and it
+belongs to whatever sink you write. You can see the same thing on the running stack:
 
 ```sh
 docker logs $(docker ps --format '{{.Names}}' | grep content-authoring) | grep -c 'authoring pack ready'
 # one line per completed run, however many times the handler replayed
 ```
+
+[durable-steps]: https://docs.restate.dev/develop/ts/durable-steps
 
 ### 5. Return the pack
 

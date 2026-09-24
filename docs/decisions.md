@@ -98,7 +98,7 @@ These are settled. Reopen one only with new evidence. [plan.md](plan.md) holds t
   - Restate network errors map to `502 RESTATE_UNAVAILABLE`.
   - The Postgres pool has an idle-error listener; without one, a database restart would crash core-api.
 - **CSRF.** With no auth, core-api refuses unsafe methods that come with a foreign `Origin` or `sec-fetch-site: cross-site|same-site`. The CLI and curl send neither, so they are unaffected.
-- **LLM retries are uncapped.** `retry.llm` sets intervals only, so a gateway or model outage pauses the invocation (resumable) instead of failing the run. Non-retryable model errors (client 4xx) become `TerminalError`. The call is aborted when the Restate attempt ends (`attemptCompletedSignal`).
+- **LLM retries are uncapped.** `retry.llm` sets intervals only, so a gateway or model outage leaves the invocation retrying instead of failing the run. Measured 2026-09-24 with litellm stopped: the callees stay `backing-off` and do not reach `paused`, because an uncapped `ctx.run` never exhausts the invocation-level `maxAttempts`. A run's `blocked` reports both (see the 2026-09-24 review below). Non-retryable model errors (client 4xx) become `TerminalError`. The call is aborted when the Restate attempt ends (`attemptCompletedSignal`).
 - **The replay test replays for real.**
   - Service-level `inactivityTimeout` overrides the server's always-replay setting, so the test forces `inactivityTimeout: 0` per service and pins `restate:1.7.10`.
   - It asserts that the workflow body ran more than once while the LLM step ran once.
@@ -258,6 +258,117 @@ SeaweedFS is for, dead code, over-engineering.
   becoming a Restate virtual object — turning the control plane into a Restate service to borrow its
   serialisation would be a far larger change than two `pg_advisory_lock` calls, and core-api is
   deliberately not a Restate service.
+
+## External review (2026-09-24)
+
+An outside agent reviewed the tree against `docs/review-brief.md`. Most of what it found was real;
+some of what it recommended was not, and the difference is recorded here so it is not re-litigated.
+
+**Fixed.** A blank `body` in the DIKSHA adapter beat a perfectly good transcript, because `??` falls
+through only on nullish and the schema types the field `.nullish()` — a Live Content with usable text
+failed terminally. A paused _child_ invocation was unreachable through the runs API (below). A unit
+could change its own `restateName` or `kind` on a version bump. A declared dependency's `kind` was
+never checked against the catalogue. `metadata.json` accepted a second REST trigger the start path
+could never reach. Retirement decided whether an endpoint was still wanted from a snapshot taken
+before the retire.
+
+**What "resumable" means now.** `retryPolicy.onMaxAttempts: 'pause'` applies per invocation, and what
+stops making progress during a model outage is a _service_, not the workflow — which is only
+suspended waiting for it, so the run reads `running`. `GET /v1/runs/:workflow/:runId` therefore
+reports those calls in `blocked`, and `POST …/resume` takes an `invocationId` naming one of them.
+Restate holds the relationship (`invoked_by_id` in `sys_invocation`); nothing here tracks it. Direct
+children only, because the call graph is workflow → service, and only on a single-run read —
+collecting it per row would be one query per run on the list path.
+
+Drilling it corrected a claim made further up this file: with litellm stopped, the callees sit in
+`backing-off`, not `paused`, because `retry.llm` is uncapped and so never exhausts the invocation's
+`maxAttempts`. `blocked` therefore reports both and says which is which — a `paused` call is
+resumable, a `backing-off` one needs the gateway back. Reporting only `paused` would have answered
+"why is this run stuck?" with silence in exactly the case the field exists for.
+
+**A unit's Restate identity is immutable.** `name → restateName` and `name → kind` cannot change once
+a unit is catalogued (`UNIT_IDENTITY_CHANGED`). The runs API resolves a run through the _current_
+Restate name, and a workflow owns the Kafka subscriptions under a sink prefix built from it — so a
+rename hides old runs and orphans a consumer that keeps reading into a trigger service nothing routes
+to. Renaming is a migration: retire what the old name owns, or deploy under a new catalogue name.
+
+**Contracts must evolve compatibly under a stable Restate name.** Restate pins an _invocation_ to the
+deployment it started on, not a whole call graph: an in-flight workflow's later call to a service
+resolves to whatever serves that service name at the moment it is made. Keeping the old parent's
+container alive does not make a new callee compatible with it. So a version bump under a stable
+`restateName` must stay backward compatible at the handler boundary, and a breaking protocol change
+needs a new `restateName` — which the identity rule above turns into a deliberate new unit rather
+than a routine bump. Nothing here routes by version; adding that would be a far bigger machine than
+the rule.
+
+**The registration window is accepted, not closed.** Registration hands the endpoint to Restate
+before it commits the catalogue, so a request arriving in between is validated against the outgoing
+version's schema and reaches the incoming one. Both ends fail closed — the API validates against the
+catalogued schema, and `restate.iface.schemas` validates again at the handler — so the worst case is
+a visibly failed run, not a silently misread one, and a retry converges. An admission gate sharing
+`register:<name>` would put a Postgres advisory lock on every run submission and still not make two
+systems atomic.
+
+**Idempotency-key reuse detection is best-effort.** The digest is compared against what the run
+recorded, and the handler records it as its first act, so a second submit that arrives before it does
+is answered `PreviouslyAccepted` without a comparison. Failing closed would 5xx a client retrying in
+the first milliseconds, which is the _correct_ use of a key; storing the digest here would mean a run
+table. `PreviouslyAccepted` is honest either way: it says the key already has a run, never that the
+body just sent is the one running.
+
+**Input size is bounded by the contract; the prompt is bounded by the model.** The contract maxima
+(110k chars for `summary`, ~40k for the authoring chain) say what a caller may send. `num_ctx: 8192`
+in `infra/litellm/config.yaml` says what the model reads, and it is smaller — Ollama truncates rather
+than erroring, so an oversized input costs quality, not a failed run. A known limit, stated rather
+than enforced: token budgets and chunking are worth building when a real corpus needs them, and
+`schemas.test.ts` already pins the arithmetic between a workflow and its callees.
+
+**What the words mean on the wire.**
+
+- `Accepted` / `PreviouslyAccepted` — Restate took the submission; `PreviouslyAccepted` means this
+  run id already existed.
+- `active`, of a deployment — Restate routes new invocations here. Of a trigger — Restate holds the
+  subscription. Neither means records are being consumed; see P1-1 in `docs/qa-report.md`.
+- `paused` — an invocation exhausted `maxAttempts` and kept its journal, waiting to be resumed.
+- `disabling` — the subscription is gone or going, but records already enqueued still run.
+- `retired` — the deployment is deregistered, which is refused while anything is pinned to it.
+- Run history is Restate's 7-day retention, and operational history rather than an audit log.
+
+**Not done, and why.** A Kafka lag watchdog: built once and removed in favour of the librdkafka
+timeouts (P1-1), and rebuilding it would re-add the machinery that removal was the point of. An
+authenticated boundary: still v2, below. Failing closed on missing idempotency evidence, an admission
+gate, and per-model token budgets: above. Pruning the lockfile to a unit's own closure for the
+artifact digest: `artifact.ts` keeps `packages:`/`snapshots:` whole on purpose, so it over-invalidates
+(extra version bumps) rather than under-invalidates (shipping stale bytes), and that is the safe
+direction.
+
+## Production on Kubernetes
+
+Local development runs on Docker Compose and `pnpm pipeline deploy`, which builds an image, starts a
+container and registers it. **In production the CLI is not in the path**: a Deployment serves each
+unit and the [Restate Operator][k8s] takes over registration and drain — which is why it is listed as
+deferred below rather than as missing.
+
+The operator's `RestateDeployment` CRD is the same model this repo already enforces by hand: it keeps
+the old ReplicaSet and its Service alive so in-flight invocations drain against the code they started
+on. So the move is a substitution, not a redesign.
+
+What moves, and what does not:
+
+- **Keeps working as-is:** the catalogue, registration, trigger reconciliation and the runs API.
+  core-api talks to Restate's admin API and to Postgres; neither cares what started the runtime.
+- **Belongs to the platform:** building images, container lifecycle, rollout and rollback, secrets.
+  The two container-lifecycle sharp edges the review found are local-dev only for this reason — a
+  deploy replacing a container in place (`ensureContainer`) and retirement removing one from a list
+  that can be stale. Both are `docker rm -f` in the CLI. A Deployment does not have them.
+- **Must survive the move:** one immutable endpoint per artifact, registered only once it is
+  serving, and retired only once drained. That is what keeps in-flight invocations pinned to code
+  that still exists.
+- **Must be added before shared exposure:** an authenticated boundary. There is none (see below);
+  the guards in `plugins/security.ts` are a Host allow-list and a cross-site check, which stop a
+  browser, not a client. Restate's admin and ingress ports stay inside the cluster.
+
+[k8s]: https://docs.restate.dev/services/deploy/kubernetes
 
 ## Deferred (v2+)
 

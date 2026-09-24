@@ -3,7 +3,7 @@
   "kind": "workflow",
   "name": "content-authoring",
   "restateName": "ContentAuthoring",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Turns a published DIKSHA content item into an authoring pack: summary, metadata and a quiz",
   "config": {
     "summaryMaxWords": 80,

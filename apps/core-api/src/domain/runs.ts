@@ -13,16 +13,18 @@ import { apiRunId } from '@ai-pipeline/metadata/run-ids';
 import { assert, notFound, PipelineError } from '../errors.js';
 import { validator } from '../json-schema.js';
 import {
+  childInvocationsSql,
   encodeCursor,
   getRunSql,
   listRunsSql,
   runState,
   runTriggerSql,
   stateKey,
+  type ChildInvocationRow,
   type InvocationRow,
 } from '../restate/invocations.js';
 import type { Definition } from '../store/definitions.js';
-import { toRunView } from '../views.js';
+import { toBlockedInvocation, toRunView } from '../views.js';
 import type { ControlPlane } from './deps.js';
 
 /**
@@ -99,12 +101,22 @@ const requestDigest = (input: unknown): string =>
   createHash('sha256').update(canonicalJson(input)).digest('hex').slice(0, 32);
 
 /**
- * Refuses a reused key that carries a different body.
+ * Refuses a reused key that carries a different body — when it can tell.
  *
  * The comparison is against what the run itself recorded, so it needs no storage of its own: every
  * workflow writes its trigger context to workflow state as its first act. A run whose handler has
  * not reached that point yet — or one started before this field existed — records nothing to
  * compare, and the call is allowed through rather than refused on a guess.
+ *
+ * So this is **best-effort detection of a client bug, not a guarantee**, and deliberately so. The
+ * two alternatives are worse:
+ *
+ * - failing closed until the evidence exists would answer 5xx to a client retrying in the first
+ *   milliseconds, which is the common and *correct* use of an idempotency key;
+ * - recording the digest here instead would mean a run table, and Restate is the run store.
+ *
+ * What the caller always gets is honest: `PreviouslyAccepted` says this key already has a run, never
+ * that the body it just sent is the one running.
  */
 async function assertSameRequest(
   cp: ControlPlane,
@@ -180,7 +192,32 @@ export async function getRun(cp: ControlPlane, name: string, runId: string): Pro
   const view = toRunView(row, definition.name, state.get(stateKey(row)));
   if (view.status === 'completed')
     view.output = await cp.ingress.workflowOutput(definition.restateName, runId);
+  else {
+    // A run waiting on a stuck call reads `running`, because waiting is not failing. Surfacing the
+    // call is what makes it diagnosable, and a paused one recoverable — `resumeRun` takes one of
+    // these ids. One extra query, and only here: `listRuns` must not pay it per row.
+    const blocked = (await blockedChildren(cp, row.id)).map(toBlockedInvocation);
+    if (blocked.length > 0) view.blocked = blocked;
+  }
   return view;
+}
+
+/**
+ * The calls a run is waiting on that are not progressing.
+ *
+ * `backing-off` as well as `paused`, because with the uncapped `retry.llm` profile a gateway outage
+ * leaves a service retrying forever rather than exhausting its attempts — so `backing-off` is the
+ * state an operator actually finds, and reporting only `paused` would answer "why is this run
+ * stuck?" with silence. The other in-flight statuses are ordinary progress.
+ */
+const NOT_PROGRESSING = new Set(['backing-off', 'paused']);
+
+async function blockedChildren(
+  cp: ControlPlane,
+  invocationId: string,
+): Promise<ChildInvocationRow[]> {
+  const children = await cp.admin.query<ChildInvocationRow>(childInvocationsSql(invocationId));
+  return children.filter((child) => NOT_PROGRESSING.has(child.status));
 }
 
 export async function cancelRun(
@@ -208,27 +245,50 @@ export async function killRun(cp: ControlPlane, name: string, runId: string): Pr
 }
 
 /**
- * Resuming a paused run.
+ * Resuming a paused invocation of a run.
  *
  * Runs pause instead of failing when their retries run out, which is deliberate: an LLM gateway
- * outage should not destroy a run's journal. That choice only works if a paused run can be resumed
- * once the cause is fixed, which is what this is for.
+ * outage should not destroy a run's journal. That choice only works if what paused can be resumed
+ * once the cause is fixed — and usually what paused is not the workflow but a service it called.
+ * Restate pauses and resumes individual invocations, so `invocationId` names which one; it must be
+ * the run's own or one of the calls `getRun` reports in `blocked`, so this cannot be used to reach
+ * an arbitrary invocation through a run the caller happens to know.
  */
 export async function resumeRun(
   cp: ControlPlane,
   name: string,
   runId: string,
+  invocationId?: string,
 ): Promise<RunResuming> {
   const { row } = await findRun(cp, name, runId);
-  const outcome = await cp.admin.resumeInvocation(row.id);
-  assert(outcome !== 'not_found', 'NOT_FOUND', 'run not found', 404);
+  const target = await resumeTarget(cp, row, invocationId);
+  const outcome = await cp.admin.resumeInvocation(target);
+  assert(outcome !== 'not_found', 'NOT_FOUND', 'invocation not found', 404);
   assert(
     outcome !== 'not_paused',
     'RUN_NOT_RESUMABLE',
-    'only a paused run can be resumed; this one is running or has completed',
+    target === row.id
+      ? 'only a paused invocation can be resumed; this run is running or has completed. If it is waiting on a paused call, resume that call: its id is in the run\'s "blocked"'
+      : 'that call is no longer paused',
     409,
   );
-  return { runId, invocationId: row.id, status: 'resume_requested' };
+  return { runId, invocationId: target, status: 'resume_requested' };
+}
+
+async function resumeTarget(
+  cp: ControlPlane,
+  row: InvocationRow,
+  invocationId?: string,
+): Promise<string> {
+  if (!invocationId || invocationId === row.id) return row.id;
+  const children = await cp.admin.query<ChildInvocationRow>(childInvocationsSql(row.id));
+  assert(
+    children.some((child) => child.id === invocationId),
+    'NOT_FOUND',
+    `${invocationId} is not a call of run ${row.target_service_key}`,
+    404,
+  );
+  return invocationId;
 }
 
 async function findRun(

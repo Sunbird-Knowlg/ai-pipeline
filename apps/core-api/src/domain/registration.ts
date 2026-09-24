@@ -52,7 +52,7 @@ async function register(
   metadata: Metadata,
 ): Promise<DeploymentRegistered> {
   await checkSchemas(request);
-  await checkNameIsFree(catalogue, metadata);
+  await checkIdentity(catalogue, metadata);
   await checkVersionRule(catalogue, request, metadata);
   await checkDependencies(cp, catalogue, metadata);
   await checkEndpointServes(cp, request, metadata);
@@ -89,7 +89,19 @@ async function checkSchemas(request: DeploymentRequest): Promise<void> {
   }
 }
 
-async function checkNameIsFree(catalogue: Catalogue, metadata: Metadata): Promise<void> {
+/**
+ * A logical unit's Restate identity: nobody else's, and never its own changed.
+ *
+ * The second half is the load-bearing one. Restate names are how everything outside the catalogue
+ * addresses a unit, so a new version that renames itself strands what the old name still owns: the
+ * runs API resolves `name` → the *current* `restateName`, so older runs stop being findable, and
+ * `sinkPrefix` moves, so `diffSubscriptions` no longer recognises the old Kafka subscription as
+ * this workflow's and leaves its consumer running against a trigger service nothing routes to.
+ *
+ * Renaming is therefore a migration, not a version bump: retire what the old name owns, or deploy
+ * under a new catalogue name. Both are deliberate acts, which is the point.
+ */
+async function checkIdentity(catalogue: Catalogue, metadata: Metadata): Promise<void> {
   const others = await catalogue.definitions.namesUsingRestateName(
     metadata.restateName,
     metadata.name,
@@ -98,6 +110,15 @@ async function checkNameIsFree(catalogue: Catalogue, metadata: Metadata): Promis
     others.length === 0,
     'RESTATE_NAME_TAKEN',
     `Restate name ${metadata.restateName} is used by ${others.join(', ')}`,
+    409,
+  );
+
+  const bound = await catalogue.definitions.identity(metadata.name);
+  if (!bound) return;
+  assert(
+    bound.restateName === metadata.restateName && bound.kind === metadata.kind,
+    'UNIT_IDENTITY_CHANGED',
+    `${metadata.name} is already registered as ${bound.kind} ${bound.restateName}; a version bump cannot change that to ${metadata.kind} ${metadata.restateName} — retire the old deployments and their triggers, or deploy under a new name`,
     409,
   );
 }
@@ -134,6 +155,12 @@ async function checkDependencies(
       target,
       'DEPENDENCY_NOT_REGISTERED',
       `dependency ${dependency.name} is not in the catalogue; deploy it first`,
+      409,
+    );
+    assert(
+      target.kind === dependency.kind,
+      'DEPENDENCY_KIND_MISMATCH',
+      `dependency ${dependency.name} is declared as a ${dependency.kind} but is catalogued as a ${target.kind}`,
       409,
     );
     assert(
