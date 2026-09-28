@@ -32,7 +32,7 @@ jobs:
         id: discover
         run: |
           set -euo pipefail
-          units=$(pnpm --filter=@ai-pipeline/cli build >&2 && node apps/cli/dist/main.js units)
+          units=$(pnpm pipeline units)
           # core-api isn't a Restate unit, so `pipeline units` doesn't discover it — add it here.
           units=$(jq '. + [{"name": "core-api", "image": "core-api", "package": "@ai-pipeline/core-api"}]' <<<"$units")
 
