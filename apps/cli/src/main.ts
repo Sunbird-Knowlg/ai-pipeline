@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import { cancelRun, getRun, listRuns, listUnits, startRun } from './commands/runs.js';
 import { deploy } from './commands/deploy.js';
@@ -7,6 +8,7 @@ import { scaffold } from './commands/scaffold.js';
 import { coreApi } from './core-api.js';
 import { dockerCli } from './docker.js';
 import { readDotEnv, root, setting } from './env.js';
+import { discoverUnits } from './units.js';
 
 /**
  * `pnpm pipeline …`. This file does argument handling and printing only; each command is a function
@@ -21,6 +23,7 @@ const USAGE = `pipeline <command>
   deployments [name]              list deployments with in-flight counts
   retire <deploymentId>           retire a drained deployment and stop its container
   workflows                       list the catalogue
+  units                           list deployable units (local only, for CI)
   start <workflow> --input <json> [--key <idempotency-key>]
   runs [workflow] [--status s] [--limit n] [--cursor c]
                                   list runs (one page; the reply carries nextCursor)
@@ -116,6 +119,22 @@ async function main(): Promise<void> {
 
     case 'workflows':
       return print(await listUnits(api));
+
+    // Local discovery, no core-api call — so CI can use this before anything is deployed.
+    case 'units': {
+      const { units, broken } = discoverUnits(repo);
+      for (const b of broken) console.error(`✖ ${b.dir} has an invalid metadata.json: ${b.error}`);
+      return print(
+        units
+          // tests/fixtures/* are real units for deploy/vitest, but not for CI to push images of.
+          .filter((u) => !u.dir.includes(`${sep}tests${sep}fixtures${sep}`))
+          .map((u) => ({
+            name: u.metadata.name,
+            image: u.packageName.replace(/^@ai-pipeline\//, ''),
+            package: u.packageName,
+          })),
+      );
+    }
 
     case 'start': {
       const workflow = required(args[0], 'start needs <workflow> --input <json>');

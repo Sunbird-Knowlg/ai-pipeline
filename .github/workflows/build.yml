@@ -1,0 +1,75 @@
+name: Build and Push ai-pipeline Images
+
+# GITHUB_TOKEN needs packages: write to push to ghcr.io.
+permissions:
+  contents: read
+  packages: write
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      units: ${{ steps.discover.outputs.units }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Discover deployable units
+        id: discover
+        run: |
+          set -euo pipefail
+          units=$(pnpm pipeline units)
+          # core-api isn't a Restate unit, so `pipeline units` doesn't discover it — add it here.
+          units=$(jq '. + [{"name": "core-api", "image": "core-api", "package": "@ai-pipeline/core-api"}]' <<<"$units")
+
+          echo "units=$(jq -c . <<<"$units")" >> "$GITHUB_OUTPUT"
+          echo "discovered: $(jq -c . <<<"$units")"
+
+  build-and-push:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include: ${{ fromJson(needs.discover.outputs.units) }}
+      fail-fast: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        run: |
+          set -euo pipefail
+          IMAGE_TAG=$(echo "${{ github.ref_name }}_$(echo "$GITHUB_SHA" | cut -c1-7)" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/sunbird-knowlg/ai-pipeline/${{ matrix.image }}:${IMAGE_TAG}"
+
+          # ARTIFACT_DIGEST is baked into the image (Dockerfile's own ARG/ENV) rather than passed
+          # at deploy time — a unit's self-registration (@ai-pipeline/runtime's serve()) reads it
+          # straight from its own environment, no Helm/Kubernetes value needed for this.
+          docker build \
+            --build-arg PACKAGE="${{ matrix.package }}" \
+            --build-arg ARTIFACT_DIGEST="${IMAGE_TAG}" \
+            -t "$IMAGE" .
+          docker push "$IMAGE"
+
+          echo "pushed $IMAGE"
