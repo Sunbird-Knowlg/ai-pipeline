@@ -19,10 +19,18 @@ export async function deploymentRoutes(app: FastifyInstance): Promise<void> {
 
   app.post(
     '/deployments',
-    { schema: { response: { 201: responseSchema(deploymentRegistered) } } },
+    {
+      schema: {
+        response: {
+          200: responseSchema(deploymentRegistered),
+          201: responseSchema(deploymentRegistered),
+        },
+      },
+    },
     async (request, reply) => {
       const result = await registerDeployment(cp, deploymentRequest.parse(request.body));
-      return reply.code(201).send(result);
+      // 200: this exact build was already registered, and nothing changed.
+      return reply.code(result.alreadyRegistered ? 200 : 201).send(result);
     },
   );
 

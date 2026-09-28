@@ -57,6 +57,7 @@ function fakes(lists: DeploymentView[][]): {
     containerImage: () => 'ai-pipeline/summary:0.1.0-abc123def456',
     runContainer: () => undefined,
     removeContainer: (name) => recorded.removedContainers.push(name),
+    containerLogs: () => '',
   };
   return { api, docker, recorded };
 }

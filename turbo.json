@@ -5,9 +5,12 @@
   // pass-through, not cache keys: none of them changes a build output, but declaring them keeps
   // `turbo/no-undeclared-env-vars` honest and documents the runtime contract in one place.
   "globalPassThroughEnv": [
+    "ADVERTISED_ENDPOINT",
     "ALLOWED_HOSTS",
+    "ARTIFACT_DIGEST",
     "CORE_API_URL",
     "DATABASE_URL",
+    "DEPLOYMENT_MODE",
     "DOCKER_NETWORK",
     "HOST",
     "KAFKA_BOOTSTRAP_SERVERS",
@@ -24,6 +27,7 @@
     "PORT",
     "RESTATE_ADMIN_URL",
     "RESTATE_INGRESS_URL",
+    "UNIT_CORE_API_URL",
     "UNIT_LITELLM_URL",
     "UNIT_OTEL_ENDPOINT"
   ],

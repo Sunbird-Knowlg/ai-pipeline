@@ -3,8 +3,8 @@ import type { z } from 'zod';
 /**
  * The catalogue view of one unit's contract.
  *
- * Every deployable unit exports one of these as `contract` from its own `src/contract.ts`, which the
- * deploy CLI loads from `dist/contract.js`. Keeping it per-unit rather than in a shared registry is
+ * Every deployable unit exports one of these as `contract` from its own `src/contract.ts`, and
+ * passes it to `serve()`, which registers it with the control plane on boot. Keeping it per-unit rather than in a shared registry is
  * what makes units independently deployable: a shared registry would be a file every unit's artifact
  * digest depends on, so adding a workflow would force a version bump of every other one.
  *

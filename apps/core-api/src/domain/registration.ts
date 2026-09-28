@@ -2,10 +2,12 @@ import type {
   DeploymentRegistered,
   DeploymentRequest,
 } from '@ai-pipeline/api-contract/deployments';
+import { canonicalJson } from '@ai-pipeline/contracts/schemas';
 import { parseMetadata, type Metadata } from '@ai-pipeline/metadata/metadata';
 import { triggerServiceName } from '@ai-pipeline/metadata/naming';
 import { assert, PipelineError } from '../errors.js';
 import { compileOrThrow, validateOnce } from '../json-schema.js';
+import type { Deployment } from '../store/deployments.js';
 import type { Catalogue } from '../store/store.js';
 import type { ControlPlane } from './deps.js';
 import { registrationConflict } from './reconcile.js';
@@ -22,6 +24,10 @@ import { reconcileLock, reconcileWithin } from './triggers.js';
  *  3. Restate registration happens next, so a failure there leaves the catalogue untouched;
  *  4. every step after that is idempotent, so a failure is reported as retryable (503) rather than
  *     torn down — by then Restate may already be routing invocations to the new endpoint.
+ *
+ * Units register themselves on every boot, so the same build arrives again whenever its container
+ * restarts or another replica starts behind the same endpoint. When it is already registered and
+ * still live on both sides, nothing is registered again (see `alreadyRegistered`).
  *
  * The deploy CLI depends on that split: it removes the container it started only for the refusals
  * in step 1 and 2 (`PRE_REGISTRATION_CODES` in the API contract).
@@ -54,6 +60,10 @@ async function register(
   await checkSchemas(request);
   await checkIdentity(catalogue, metadata);
   await checkVersionRule(catalogue, request, metadata);
+
+  const existing = await alreadyRegistered(cp, catalogue, request, metadata);
+  if (existing) return reportExisting(cp, catalogue, metadata, existing);
+
   await checkDependencies(cp, catalogue, metadata);
   await checkEndpointServes(cp, request, metadata);
 
@@ -72,6 +82,82 @@ async function register(
       { cause: error },
     );
   }
+}
+
+/** Endpoints compare by URL, not spelling: Restate reports them back with a trailing slash. */
+const sameEndpoint = (a: string, b: string): boolean => new URL(a).href === new URL(b).href;
+
+/**
+ * This exact build, already registered at this endpoint and still live.
+ *
+ * "Exact" is every input registration writes — version, mode, artifact, contract and metadata — so
+ * a build that changed anything registers normally. "Live" is checked on both sides, because they
+ * can disagree: a catalogue row whose Restate deployment is gone (Restate's state was wiped, or the
+ * deployment deleted out of band) must be registered again, not skipped, or nothing would route
+ * to it. A retired row never matches; retiring deleted it from Restate.
+ */
+async function alreadyRegistered(
+  cp: ControlPlane,
+  catalogue: Catalogue,
+  request: DeploymentRequest,
+  metadata: Metadata,
+): Promise<Deployment | undefined> {
+  const candidates = (await catalogue.deployments.list(metadata.name)).filter(
+    (d) =>
+      d.status !== 'retired' &&
+      sameEndpoint(d.endpoint, request.endpoint) &&
+      d.version === metadata.version &&
+      d.mode === request.mode &&
+      d.artifactDigest === request.artifactDigest,
+  );
+  if (candidates.length === 0) return undefined;
+
+  const definition = await catalogue.definitions.find(metadata.name, metadata.version);
+  if (
+    definition?.contractHash !== request.contractHash ||
+    canonicalJson(definition.metadata) !== canonicalJson(metadata)
+  )
+    return undefined;
+
+  for (const candidate of candidates) {
+    const known = await cp.admin.deployment(candidate.deploymentId);
+    if (known && sameEndpoint(known.uri, request.endpoint)) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * Reports an already-registered build without registering it again. Routing is still read from
+ * Restate and mirrored, and triggers are reconciled: both are idempotent, and a previous attempt
+ * may have registered the endpoint and then failed before they finished (`CATALOGUE_SYNC_FAILED`).
+ */
+async function reportExisting(
+  cp: ControlPlane,
+  catalogue: Catalogue,
+  metadata: Metadata,
+  existing: Deployment,
+): Promise<DeploymentRegistered> {
+  const routedTo = (await cp.admin.service(metadata.restateName))?.deployment_id;
+  if (routedTo) await catalogue.deployments.setActive(metadata.name, routedTo);
+  const active = routedTo === existing.deploymentId;
+  const triggers = await reconcileWithin(cp, catalogue, metadata.name);
+  cp.log.info(
+    { name: metadata.name, version: metadata.version, deploymentId: existing.deploymentId },
+    'deployment already registered',
+  );
+  return {
+    name: metadata.name,
+    version: metadata.version,
+    deploymentId: existing.deploymentId,
+    active,
+    alreadyRegistered: true,
+    ...(active
+      ? {}
+      : {
+          note: `already registered; Restate routes new invocations to ${routedTo ?? 'no deployment'}. Deploy a new build to roll forward.`,
+        }),
+    triggers,
+  };
 }
 
 /** The schemas must compile with the same Ajv the API validates input with. */
@@ -243,6 +329,7 @@ async function syncCatalogue(
     version: metadata.version,
     deploymentId,
     active,
+    alreadyRegistered: false,
     ...(active
       ? {}
       : {

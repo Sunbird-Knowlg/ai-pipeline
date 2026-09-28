@@ -20,7 +20,12 @@ export type ContainerState = 'running' | 'stopped' | 'missing';
  */
 export interface Docker {
   imageExists(tag: string): boolean;
-  buildImage(root: string, packageName: string, tag: string): void;
+  buildImage(
+    root: string,
+    packageName: string,
+    tag: string,
+    buildArgs?: Record<string, string>,
+  ): void;
   removeImage(tag: string): void;
   containerState(name: string): ContainerState;
   containerLabel(name: string, label: string): string | undefined;
@@ -28,6 +33,8 @@ export interface Docker {
   containerImage(name: string): string | undefined;
   runContainer(options: RunContainer): void;
   removeContainer(name: string): void;
+  /** Everything the container has written to stdout, across restarts. */
+  containerLogs(name: string): string;
 }
 
 const docker = (
@@ -51,8 +58,15 @@ export function imageExists(tag: string): boolean {
 }
 
 /** Builds the unit's image (tagged with its source digest, so an unchanged unit is never rebuilt). */
-export function buildImage(root: string, packageName: string, tag: string): void {
-  execFileSync('docker', ['build', '--build-arg', `PACKAGE=${packageName}`, '-t', tag, '.'], {
+export function buildImage(
+  root: string,
+  packageName: string,
+  tag: string,
+  buildArgs: Record<string, string> = {},
+): void {
+  const args = ['build', '--build-arg', `PACKAGE=${packageName}`];
+  for (const [k, v] of Object.entries(buildArgs)) args.push('--build-arg', `${k}=${v}`);
+  execFileSync('docker', [...args, '-t', tag, '.'], {
     cwd: root,
     stdio: ['ignore', 'inherit', 'inherit'],
   });
@@ -118,6 +132,14 @@ export function runContainer(opts: RunContainer): void {
   docker(args, { quiet: true, env: opts.env });
 }
 
+export function containerLogs(name: string): string {
+  try {
+    return docker(['logs', name], { quiet: true });
+  } catch {
+    return '';
+  }
+}
+
 /** The real Docker CLI. `deploy` takes this in production and a recording double in tests. */
 export const dockerCli: Docker = {
   imageExists,
@@ -128,4 +150,5 @@ export const dockerCli: Docker = {
   containerImage,
   runContainer,
   removeContainer,
+  containerLogs,
 };

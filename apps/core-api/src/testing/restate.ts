@@ -27,6 +27,10 @@ export interface FakeAdmin extends RestateAdminPort {
   /** Every SQL string this fake was handed, so a test can assert what did (not) reach it. */
   queries: string[];
   deleted: string[];
+  /** Deployments Restate knows: id → uri. `registerDeployment` adds, `deleteDeployment` removes. */
+  known: Map<string, string>;
+  /** How many times `registerDeployment` really registered something. */
+  registered: number;
   clusters: string[];
   /** How many times each method was called — the read paths' round-trip counts are worth asserting. */
   calls: Record<string, number>;
@@ -44,6 +48,8 @@ export function fakeAdmin(overrides: Partial<FakeAdmin> = {}): FakeAdmin {
     childRows: [],
     queries: [],
     deleted: [],
+    known: new Map(),
+    registered: 0,
     clusters: [],
     calls: {},
 
@@ -60,11 +66,19 @@ export function fakeAdmin(overrides: Partial<FakeAdmin> = {}): FakeAdmin {
 
     registerDeployment: async (uri) => {
       const id = `dp_${String(nextId++)}`;
+      admin.known.set(id, `${uri}/`);
+      admin.registered += 1;
       return { id, services: (admin.served.get(uri) ?? []).map((name) => ({ name })) };
     },
 
     deleteDeployment: async (id) => {
       admin.deleted.push(id);
+      admin.known.delete(id);
+    },
+
+    deployment: async (id) => {
+      const uri = admin.known.get(id);
+      return uri === undefined ? undefined : { id, uri };
     },
 
     serviceExists: async (name) => admin.routing.has(name),

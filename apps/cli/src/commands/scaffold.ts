@@ -214,7 +214,7 @@ const contractTs = (o: ScaffoldOptions, restateName: string, handler: string) =>
 import { ${pascal(o.name)}Config, ${pascal(o.name)}Input, ${pascal(o.name)}Output } from './schemas.js';
 
 /**
- * The catalogue view of this unit's contract, loaded by \`pipeline deploy\` from \`dist/contract.js\`.
+ * The catalogue view of this unit's contract, registered by \`serve()\` on boot.
  *
  * It lives here rather than in a shared package because nothing else calls this unit yet. Move the
  * schemas into their own \`packages/contract-${o.name}\` only when a second unit needs them.
@@ -342,18 +342,20 @@ import { metadata } from './unit.js';
 export const ${c}Trigger = kafkaTrigger({ metadata, input: ${P}Input, adapters });
 `;
     files['src/main.ts'] = `import { serve } from '@ai-pipeline/runtime/serve';
+import { contract } from './contract.js';
 import { ${c}Trigger } from './trigger.js';
 import { metadata } from './unit.js';
 import { ${c} } from './workflow.js';
 
-await serve(metadata.name, [${c}, ${c}Trigger]);
+await serve({ metadata, contract }, [${c}, ${c}Trigger]);
 `;
   } else {
     files['src/main.ts'] = `import { serve } from '@ai-pipeline/runtime/serve';
+import { contract } from './contract.js';
 import { metadata } from './unit.js';
 import { ${c} } from './workflow.js';
 
-await serve(metadata.name, [${c}]);
+await serve({ metadata, contract }, [${c}]);
 `;
   }
 
@@ -432,10 +434,11 @@ export function create${P}Service() {
 `,
 
     'src/main.ts': `import { serve } from '@ai-pipeline/runtime/serve';
+import { contract } from './contract.js';
 import { create${P}Service } from './service.js';
 import { metadata } from './unit.js';
 
-await serve(metadata.name, [create${P}Service()]);
+await serve({ metadata, contract }, [create${P}Service()]);
 `,
   };
 }

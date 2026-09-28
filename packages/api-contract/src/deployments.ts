@@ -35,6 +35,12 @@ export const deploymentRegistered = z.object({
   deploymentId,
   /** Whether Restate now routes new invocations here. False when an older build was re-registered. */
   active: z.boolean(),
+  /**
+   * True when this exact build (endpoint, version, artifact, contract and metadata) was already
+   * registered and still live in both Restate and the catalogue, so nothing was registered again —
+   * a restarted container, or another replica behind the same endpoint. Answered with 200, not 201.
+   */
+  alreadyRegistered: z.boolean(),
   note: z.string().optional(),
   triggers: z.array(triggerView),
 });

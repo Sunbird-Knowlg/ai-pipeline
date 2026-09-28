@@ -26,17 +26,24 @@ Use the Restate context directly (`ctx.run`, `ctx.client`, `ctx.sendClient`, `Re
 
 ## Contracts and metadata
 
-- **A unit owns its contract.** `src/contract.ts` exports a `ContractEntry`, which the deploy CLI reads
-  from `dist/contract.js`. There is no shared registry, and adding one would be a regression: the
-  artifact digest covers a unit's workspace dependencies, so a file every unit imports means adding
-  one workflow changes every other unit's artifact and forces a round of version bumps.
+- **A unit registers itself.** `serve({ metadata, contract }, services)` serves the handlers, then
+  posts `POST /v1/deployments` to `CORE_API_URL`; core-api still does the registering (Restate,
+  catalogue, triggers). The process needs `ADVERTISED_ENDPOINT`, `DEPLOYMENT_MODE` and
+  `ARTIFACT_DIGEST` (baked into the image). It logs one `ai-pipeline.registration` line
+  (`@ai-pipeline/api-contract/registration`) and exits non-zero if not registered.
+  `pipeline deploy` builds, starts the container and reads that line back.
+- **A unit owns its contract.** `src/contract.ts` exports a `ContractEntry`, which the unit passes
+  to `serve()` and registers on boot. There is no shared registry, and adding one would be a
+  regression: the artifact digest covers a unit's workspace dependencies, so a file every unit
+  imports means adding one workflow changes every other unit's artifact and forces a round of
+  version bumps.
 - `packages/contract-<name>` exists only for a contract a **second** unit needs (a caller needs its
   callee's contract). `packages/contracts` is the shared kit: the trigger envelope, the JSON Schema
   generation, the `ContractEntry` type. Nothing unit-specific belongs in it.
 - Split every contract into schemas (zod) and api (`restate.iface`), so the catalogue side of a
   contract does not drag the Restate SDK into tools that only read schemas.
 - A workflow's entry handler **must** be named `run` — the runs API selects invocations by that name.
-  `pipeline deploy` enforces it.
+  The runtime enforces it before registering.
 - Types and schemas are zod; never hand-write JSON Schema.
 - `metadata.json` is operational metadata only: kind, restateName, version, config, triggers and dependencies.
 - **Any change to a unit or its workspace dependencies is a new artifact.** Bump the unit's `version` to deploy it immutably, or iterate with `pnpm pipeline deploy <unit> --dev`.

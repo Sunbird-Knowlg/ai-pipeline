@@ -24,6 +24,11 @@
       "types": "./dist/params.d.ts",
       "default": "./dist/params.js"
     },
+    "./registration": {
+      "@ai-pipeline/source": "./src/registration.ts",
+      "types": "./dist/registration.d.ts",
+      "default": "./dist/registration.js"
+    },
     "./runs": {
       "@ai-pipeline/source": "./src/runs.ts",
       "types": "./dist/runs.d.ts",

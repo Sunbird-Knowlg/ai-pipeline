@@ -58,9 +58,10 @@ The load-bearing design decisions:
 - **An artifact is a source digest**, not a Docker image id: sha256 over the build recipe, the
   lockfile, and the sources of the unit and its workspace dependencies. A version binds to exactly
   one contract and one artifact; re-registering the same version from different bytes is a 409.
-- **The control plane deploys; runtimes only serve handlers.** `pnpm pipeline deploy` builds the
-  image, starts the container, then `POST /v1/deployments` — core-api registers it with Restate,
-  writes the catalogue and reconciles Kafka subscriptions.
+- **Units register themselves through the control plane.** `pnpm pipeline deploy` builds the
+  image and starts the container; the unit posts `POST /v1/deployments` on boot — core-api
+  registers it with Restate, writes the catalogue and reconciles Kafka subscriptions. (Changed after
+  this review; see decisions.md.)
 - **Contracts are zod**, in `packages/contracts`, split into schemas and `restate.iface` bindings.
   The deploy CLI turns them into draft-07 JSON Schema for the catalogue; core-api validates REST
   input against the catalogued schema of the version that will run.

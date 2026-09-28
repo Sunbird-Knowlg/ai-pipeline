@@ -1,49 +1,45 @@
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import type {
-  DeploymentRegistered,
-  DeploymentRequest,
-} from '@ai-pipeline/api-contract/deployments';
+import type { DeploymentRegistered } from '@ai-pipeline/api-contract/deployments';
 import { PRE_REGISTRATION_CODES, type PipelineErrorCode } from '@ai-pipeline/api-contract/errors';
-import type { ContractEntry } from '@ai-pipeline/contracts/entry';
-import { canonicalJson, contractHash, contractSchemas } from '@ai-pipeline/contracts/schemas';
+import {
+  REGISTRATION_EVENT,
+  registrationOutcome,
+  type RegistrationOutcome,
+} from '@ai-pipeline/api-contract/registration';
+import { canonicalJson } from '@ai-pipeline/contracts/schemas';
 import { sourceDigest } from '../artifact.js';
 import { ApiError, type CoreApi } from '../core-api.js';
 import type { Docker } from '../docker.js';
 import { findUnit, type Unit } from '../units.js';
+import { listDeployments } from './deployments.js';
 
 /**
  * `pipeline deploy`: build the image → start one container per artifact (`--dev` reuses
- * `<name>-dev`) → `POST /v1/deployments`, where core-api registers it with Restate, updates the
- * catalogue and reconciles triggers. The runtime process itself never registers anything.
+ * `<name>-dev`) → wait for the unit to register itself. The runtime posts `POST /v1/deployments` on
+ * boot (`@ai-pipeline/runtime/serve`), where core-api registers it with Restate, updates the
+ * catalogue and reconciles triggers; this command reads the outcome back from the container's logs.
  */
 export interface DeployOptions {
   root: string;
   name: string;
   dev: boolean;
   network: string;
+  /** The unit's runtime environment, including the `CORE_API_URL` it registers with. */
   env: Record<string, string>;
+  /** Read-only here: asks core-api where routing stands when a container is reused. */
   api: CoreApi;
   docker: Docker;
   log: (line: string) => void;
-  /** Injected so tests need not actually wait between retries. */
+  /** Injected so tests need not actually wait between polls. */
   sleep?: (ms: number) => Promise<void>;
-  /**
-   * How a unit's contract is loaded. The default reads the built `dist/contract.js`, which is what
-   * `pnpm pipeline` produces before invoking this — injected so a test does not need a build.
-   */
-  loadContract?: (unit: Unit) => Promise<ContractEntry>;
 }
 
-const RETRYABLE_STATUS = new Set([502, 503]);
-const MAX_ATTEMPTS = 20;
+const POLL_MS = 1000;
+/** Longer than the runtime's own retry budget, so a slow core-api is reported by the runtime. */
+const WAIT_MS = 150_000;
 
 export async function deploy(o: DeployOptions): Promise<DeploymentRegistered> {
   const unit = findUnit(o.root, o.name);
-  const contract = await (o.loadContract ?? contractFromDist)(unit);
-  const schemas = contractSchemas(contract);
 
   const artifact = sourceDigest(o.root, unit.packageName);
   const digest = artifact.replace(/^sha256:/, '').slice(0, 12);
@@ -51,22 +47,15 @@ export async function deploy(o: DeployOptions): Promise<DeploymentRegistered> {
   const builtHere = !o.docker.imageExists(image);
   if (builtHere) {
     o.log(`▸ building ${image}`);
-    o.docker.buildImage(o.root, unit.packageName, image);
+    // Baked in, not passed at run time: the image does not carry the source the digest covers, and
+    // a container started by anything other than this CLI must still register the right artifact.
+    o.docker.buildImage(o.root, unit.packageName, image, { ARTIFACT_DIGEST: artifact });
   } else o.log(`▸ image ${image} is up to date`);
 
   const container = o.dev ? `${unit.metadata.name}-dev` : `${unit.metadata.name}-${digest}`;
   const { startedHere } = ensureContainer(o, unit, { container, image, artifact });
 
-  const request: DeploymentRequest = {
-    metadata: unit.metadata,
-    schemas,
-    contractHash: contractHash(schemas),
-    artifactDigest: artifact,
-    endpoint: `http://${container}:9080`,
-    mode: o.dev ? 'dev' : 'immutable',
-  };
-
-  return register(o, request, { container, image, builtHere, startedHere });
+  return awaitRegistration(o, { container, image, builtHere, startedHere });
 }
 
 /**
@@ -79,7 +68,12 @@ function ensureContainer(
   unit: Unit,
   target: { container: string; image: string; artifact: string },
 ): { startedHere: boolean } {
-  const env = { ...o.env, OTEL_SERVICE_NAME: unit.metadata.name };
+  const env = {
+    ...o.env,
+    OTEL_SERVICE_NAME: unit.metadata.name,
+    ADVERTISED_ENDPOINT: `http://${target.container}:9080`,
+    DEPLOYMENT_MODE: o.dev ? 'dev' : 'immutable',
+  };
   const config = createHash('sha256')
     .update(canonicalJson({ image: target.image, env, network: o.network }))
     .digest('hex')
@@ -123,78 +117,115 @@ function ensureContainer(
   return { startedHere };
 }
 
-async function register(
+/**
+ * Waits for the unit's own registration outcome (see `@ai-pipeline/api-contract/registration`).
+ *
+ * The latest outcome wins: a container that exits after a refusal is restarted by Docker and logs
+ * another. A container reused from an earlier deploy already logged its outcome when it booted.
+ */
+async function awaitRegistration(
   o: DeployOptions,
-  request: DeploymentRequest,
   target: { container: string; image: string; builtHere: boolean; startedHere: boolean },
 ): Promise<DeploymentRegistered> {
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const result = await o.api<DeploymentRegistered>('POST', '/v1/deployments', request);
-      o.log(`✔ ${result.name}@${result.version} → ${result.deploymentId} (${target.container})`);
+  o.log(`▸ waiting for ${target.container} to register`);
+  for (let waited = 0; ; waited += POLL_MS) {
+    const outcome = latestOutcome(o.docker.containerLogs(target.container));
+    if (outcome?.outcome === 'registered') {
+      const result = target.startedHere ? outcome.result : await current(o, outcome.result);
+      const already = result.alreadyRegistered ? ', already registered' : '';
+      o.log(
+        `✔ ${result.name}@${result.version} → ${result.deploymentId} (${target.container}${already})`,
+      );
       return result;
-    } catch (error) {
-      // Restate is still discovering the endpoint (502), or the catalogue sync after registration
-      // needs another idempotent pass (503).
-      const retryable = error instanceof ApiError && RETRYABLE_STATUS.has(error.status);
-      if (retryable && attempt < MAX_ATTEMPTS) {
-        await sleep(1000);
-        continue;
-      }
-      if (target.startedHere && error instanceof ApiError && isPreRegistration(error.code)) {
-        o.docker.removeContainer(target.container);
-        if (target.builtHere) o.docker.removeImage(target.image);
-      } else if (target.startedHere) {
-        // Anything else may have registered the endpoint before failing — a 503 from the catalogue
-        // sync certainly did, and a transport error cannot be distinguished from one. Removing the
-        // container could break invocations Restate is already routing to it, so it stays, and the
-        // operator is told rather than left to find it. Re-running the deploy adopts it.
-        o.log(
-          `▸ ${target.container} is still running and may be registered; re-run the deploy to retry, ` +
-            `or \`docker rm -f ${target.container}\` once you have checked \`pipeline deployments\``,
-        );
-      }
+    }
+    if (outcome) {
+      const error =
+        outcome.outcome === 'refused'
+          ? new ApiError(outcome.status, outcome.code, outcome.message)
+          : new Error(outcome.message);
+      tearDownOrWarn(o, target, beforeRegistration(outcome));
       throw error;
     }
+    if (waited >= WAIT_MS) {
+      tearDownOrWarn(o, target, false);
+      throw new Error(
+        `${target.container} logged no registration outcome in ${WAIT_MS / 1000}s; see \`docker logs ${target.container}\``,
+      );
+    }
+    await sleep(POLL_MS);
   }
 }
 
 /**
- * Whether core-api refused *before* registering the endpoint with Restate. Only then may this deploy
- * remove the container it started: afterwards Restate may already route invocations to it, and
- * removing the container would break them. The list is part of the wire contract.
+ * A container this deploy did not start logged its outcome when it booted, and routing may have
+ * moved since — another build registered after it, or it was retired. Its `active` is re-read from
+ * the catalogue rather than repeated from an old log line.
  */
-const isPreRegistration = (code: string): boolean =>
-  PRE_REGISTRATION_CODES.includes(code as PipelineErrorCode);
+async function current(
+  o: DeployOptions,
+  booted: DeploymentRegistered,
+): Promise<DeploymentRegistered> {
+  const { deployments } = await listDeployments(o.api, booted.name);
+  const now = deployments.find((d) => d.deploymentId === booted.deploymentId);
+  if (!now || now.status === 'retired')
+    throw new Error(
+      `${booted.deploymentId} is no longer live in the catalogue; restart its container to register it again`,
+    );
+  const { note: _stale, ...rest } = booted;
+  if (now.status === 'active') return { ...rest, active: true };
+  const routed = deployments.find((d) => d.status === 'active');
+  return {
+    ...rest,
+    active: false,
+    note: `this deployment is ${now.status}; Restate routes new invocations to ${routed?.deploymentId ?? 'another deployment'}. Deploy a new build to roll forward.`,
+  };
+}
 
 /**
- * A unit's contract, loaded from its own `dist/contract.js`.
- *
- * Every unit ships one. There is deliberately no central registry: a shared map of name → contract
- * would be a file every unit's artifact digest depends on, so adding one workflow would change the
- * artifact of every other one and force a round of version bumps. Per-unit contracts are what make
- * units independently deployable.
+ * Only a container this deploy started, and only for a failure that happened before core-api
+ * registered the endpoint, may be removed: afterwards Restate may already route invocations to it.
  */
-async function contractFromDist(unit: Unit): Promise<ContractEntry> {
-  const file = join(unit.dir, 'dist/contract.js');
-  if (!existsSync(file))
-    throw new Error(
-      `${unit.metadata.name} ships no contract at ${file}. Export \`contract\` from src/contract.ts, then build.`,
-    );
-  const { contract } = (await import(pathToFileURL(file).href)) as {
-    contract?: ContractEntry;
-  };
-  if (!contract) throw new Error(`${file} does not export \`contract\``);
-  if (contract.restateName !== unit.metadata.restateName)
-    throw new Error(
-      `contract restateName ${contract.restateName} ≠ metadata restateName ${unit.metadata.restateName}`,
-    );
-  // The runs API reads invocations by handler name, so a workflow's entry point must be `run`.
-  if (unit.metadata.kind === 'workflow' && contract.handler !== 'run')
-    throw new Error(
-      `a workflow's contract handler must be "run" (${unit.metadata.name} declares "${contract.handler}"); ` +
-        'the runs API selects invocations by that name.',
-    );
-  return contract;
+function tearDownOrWarn(
+  o: DeployOptions,
+  target: { container: string; image: string; builtHere: boolean; startedHere: boolean },
+  preRegistration: boolean,
+): void {
+  if (!target.startedHere) return;
+  if (preRegistration) {
+    o.docker.removeContainer(target.container);
+    if (target.builtHere) o.docker.removeImage(target.image);
+    return;
+  }
+  // Anything else may have registered the endpoint before failing — a 503 from the catalogue sync
+  // certainly did, and an unreachable core-api cannot be distinguished from one. The container
+  // keeps retrying on restart; the operator is told rather than left to find it.
+  o.log(
+    `▸ ${target.container} is still running and may be registered; re-run the deploy to retry, ` +
+      `or \`docker rm -f ${target.container}\` once you have checked \`pipeline deployments\``,
+  );
+}
+
+/** Whether nothing can have been registered. The code list is part of the wire contract. */
+const beforeRegistration = (outcome: RegistrationOutcome): boolean =>
+  outcome.outcome === 'invalid' ||
+  (outcome.outcome === 'refused' &&
+    PRE_REGISTRATION_CODES.includes(outcome.code as PipelineErrorCode));
+
+/** The last registration outcome in a container's logs, if it has logged one yet. */
+export function latestOutcome(logs: string): RegistrationOutcome | undefined {
+  let latest: RegistrationOutcome | undefined;
+  for (const line of logs.split('\n')) {
+    if (!line.includes(REGISTRATION_EVENT)) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if ((parsed as { event?: unknown }).event !== REGISTRATION_EVENT) continue;
+    const outcome = registrationOutcome.safeParse(parsed);
+    if (outcome.success) latest = outcome.data;
+  }
+  return latest;
 }

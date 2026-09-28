@@ -17,7 +17,7 @@ const USAGE = `pipeline <command>
 
   new <workflow|service> <name> [--kafka <topic>]
                                   scaffold a deployable unit, ready to build and deploy
-  deploy <name...> [--dev]        build, start and register immutable deployment(s)
+  deploy <name...> [--dev]        build and start immutable deployment(s); each registers itself
   deployments [name]              list deployments with in-flight counts
   retire <deploymentId>           retire a drained deployment and stop its container
   workflows                       list the catalogue
@@ -27,7 +27,8 @@ const USAGE = `pipeline <command>
   run <workflow> <runId>          show one run
   cancel <workflow> <runId>       cancel a run
 
-env: CORE_API_URL (http://127.0.0.1:3000), DOCKER_NETWORK (ai-pipeline)`;
+env: CORE_API_URL (http://127.0.0.1:3000), UNIT_CORE_API_URL (http://core-api:3000),
+     DOCKER_NETWORK (ai-pipeline)`;
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -53,6 +54,8 @@ const print = (value: unknown) => {
 
 /** The environment a unit's container runs with. Secrets travel in the environment, not in argv. */
 const unitEnv = () => ({
+  // Where the unit registers itself on boot: core-api as seen from inside the Docker network.
+  CORE_API_URL: setting(dotEnv, 'UNIT_CORE_API_URL', 'http://core-api:3000'),
   LITELLM_URL: setting(dotEnv, 'UNIT_LITELLM_URL', 'http://litellm:4000'),
   LITELLM_API_KEY: setting(dotEnv, 'LITELLM_MASTER_KEY'),
   OTEL_EXPORTER_OTLP_ENDPOINT: setting(dotEnv, 'UNIT_OTEL_ENDPOINT', 'http://otel:4318'),

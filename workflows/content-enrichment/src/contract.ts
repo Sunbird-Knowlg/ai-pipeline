@@ -2,7 +2,7 @@ import type { ContractEntry } from '@ai-pipeline/contracts/entry';
 import { ContentConfig, ContentInput, ContentOutput } from './schemas.js';
 
 /**
- * The catalogue view of this unit's contract, loaded by `pipeline deploy` from `dist/contract.js`.
+ * The catalogue view of this unit's contract, registered by `serve()` on boot.
  *
  * It lives in the unit because nothing else calls this workflow. A contract only moves into a
  * package of its own when a *second* unit needs it — as `@ai-pipeline/contract-summary` does,

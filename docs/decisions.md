@@ -21,9 +21,19 @@ These are settled. Reopen one only with new evidence. [plan.md](plan.md) holds t
   - In-flight invocations stay pinned to their deployment.
   - A deployment is retired only once drained.
   - `--dev` re-uses `<name>-dev` with `force: true`. That is for local work only; it can break in-flight journals.
-- **Control plane, not runtime.**
-  - Runtimes only serve handlers.
-  - `pipeline deploy` builds and starts the container, then calls `POST /v1/deployments`. Core-api then registers the deployment with Restate, updates the catalogue and reconciles Kafka subscriptions.
+- **Units register themselves; the control plane does the registering.** (Changed 2026-09-28; it used to be the CLI that posted.)
+  - `serve()` checks its request first (env, `restateName`, a workflow's `run` handler), serves the handlers, then posts `POST /v1/deployments` to `CORE_API_URL`. Core-api registers the deployment with Restate, updates the catalogue and reconciles Kafka subscriptions, exactly as before.
+  - Why: a container started by anything other than the CLI — a Kubernetes Deployment, a plain `docker run` — used to reach neither Restate nor the catalogue.
+  - The process knows its address (`ADVERTISED_ENDPOINT`) and mode (`DEPLOYMENT_MODE`) from its environment. `ARTIFACT_DIGEST` is a build arg baked into the image, because the digest covers source the image does not carry. An image built without it refuses to register.
+  - 502/503 and an unreachable core-api are retried with capped backoff (20 attempts). Any other refusal, or running out of attempts, logs the outcome and exits non-zero: an unregistered build never serves quietly, and a restart picks up a dependency deployed later.
+  - The outcome is one structured log line, `event: ai-pipeline.registration` (`@ai-pipeline/api-contract/registration`). `pipeline deploy` reads it from `docker logs` and applies the same teardown rule as before: only a container it started, and only for a failure before registration (`PRE_REGISTRATION_CODES`, or the runtime's own `invalid`).
+  - A reused container is not re-registered; its earlier outcome is read back, and its `active` is re-read from the catalogue, because routing may have moved since it booted.
+- **An already-registered build is not registered again.** Units post on every boot — a restart, or several replicas behind one endpoint — so core-api skips registration when the same build is already live, answering `200` with `alreadyRegistered: true` instead of `201`.
+  - "Same build" means everything registration writes: endpoint (compared as a URL; Restate adds a trailing slash), version, mode, artifact digest, contract hash and metadata. A changed `metadata.json` under a stale digest therefore registers normally.
+  - "Live" is checked on both sides. A catalogue row whose Restate deployment is gone (Restate's state wiped, or deleted out of band) registers again; a retired row never matches.
+  - The skip still mirrors Restate's routing into the catalogue and reconciles triggers. Both are idempotent, and they heal an earlier attempt that registered and then failed with `CATALOGUE_SYNC_FAILED`.
+  - The check runs after the identity and version rules, so a conflicting build is still refused rather than reported as the registered one. It runs under the same `register:<name>` lock, so concurrent replicas register once.
+  - Not covered: a deployment that was retired, whose process is started again at the same endpoint, registers anew and takes routing back. Locally, retiring removes the container, so this needs someone to start it deliberately.
 - **Triggers.**
   - REST goes only through core-api (`@restatedev/restate-sdk-clients`, `workflowSubmit`). The Restate ingress (8080) is not published.
   - Kafka uses Restate-native subscriptions into a thin `<Workflow>Trigger` service. That service adapts the record, derives an opaque run ID and calls `ctx.genericSend` on the workflow.
@@ -345,9 +355,11 @@ direction.
 ## Production on Kubernetes
 
 Local development runs on Docker Compose and `pnpm pipeline deploy`, which builds an image, starts a
-container and registers it. **In production the CLI is not in the path**: a Deployment serves each
-unit and the [Restate Operator][k8s] takes over registration and drain — which is why it is listed as
-deferred below rather than as missing.
+container, and the unit registers itself. **In production the CLI is not in the path**: a Deployment
+serves each unit, which registers itself with core-api the same way (set `CORE_API_URL`,
+`ADVERTISED_ENDPOINT` and build with `ARTIFACT_DIGEST`); the [Restate Operator][k8s] would take
+over drain. If the operator also registers endpoints with Restate directly, turn one of the two off:
+the catalogue only learns of a build through core-api. The operator is listed as deferred below.
 
 The operator's `RestateDeployment` CRD is the same model this repo already enforces by hand: it keeps
 the old ReplicaSet and its Service alive so in-flight invocations drain against the code they started

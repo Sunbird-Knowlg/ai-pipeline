@@ -28,6 +28,10 @@ FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /out/ .
+# The unit registers itself on boot and reports which artifact it is. The digest covers the source,
+# which this image does not carry, so it is baked in here (`pipeline deploy` passes it).
+ARG ARTIFACT_DIGEST=
+ENV ARTIFACT_DIGEST=${ARTIFACT_DIGEST}
 USER node
 EXPOSE 9080
 CMD ["node", "dist/main.js"]

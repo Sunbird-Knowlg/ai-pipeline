@@ -6,7 +6,7 @@ import {
 } from '@ai-pipeline/contract-quiz-generate';
 
 /**
- * The catalogue view of this unit's contract, loaded by `pipeline deploy` from `dist/contract.js`.
+ * The catalogue view of this unit's contract, registered by `serve()` on boot.
  *
  * The schemas themselves live in `@ai-pipeline/contract-quiz-generate` rather than here, because
  * `content-authoring` calls this service and needs them too.

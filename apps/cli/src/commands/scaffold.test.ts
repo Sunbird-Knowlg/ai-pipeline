@@ -103,7 +103,7 @@ describe('scaffold: a workflow', () => {
 
   it('serves only the workflow when it has no Kafka trigger', () => {
     const { read } = make('workflow', 'order-fulfilment');
-    expect(read('src/main.ts')).toContain('serve(metadata.name, [orderFulfilment])');
+    expect(read('src/main.ts')).toContain('serve({ metadata, contract }, [orderFulfilment])');
   });
 });
 

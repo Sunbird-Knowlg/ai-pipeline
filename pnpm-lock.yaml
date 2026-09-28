@@ -421,6 +421,9 @@ importers:
 
   packages/runtime:
     dependencies:
+      '@ai-pipeline/api-contract':
+        specifier: workspace:*
+        version: link:../api-contract
       '@ai-pipeline/contracts':
         specifier: workspace:*
         version: link:../contracts

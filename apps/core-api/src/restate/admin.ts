@@ -12,6 +12,12 @@ export interface RegisteredDeployment {
   services: { name: string }[];
 }
 
+/** One deployment as Restate knows it. `uri` is Restate's spelling (it adds a trailing slash). */
+export interface KnownDeployment {
+  id: string;
+  uri: string;
+}
+
 /**
  * Everything the control plane asks of the Restate admin API.
  *
@@ -27,6 +33,8 @@ export interface RestateAdminPort {
   dryRunDeployment(uri: string, force: boolean): Promise<RegisteredDeployment>;
   registerDeployment(uri: string, force: boolean): Promise<RegisteredDeployment>;
   deleteDeployment(id: string): Promise<void>;
+  /** A registered deployment, or undefined once Restate no longer has it (retired, or wiped). */
+  deployment(id: string): Promise<KnownDeployment | undefined>;
   serviceExists(name: string): Promise<boolean>;
   /** The deployment Restate currently routes new invocations of a service to. */
   service(name: string): Promise<{ deployment_id: string; revision: number } | undefined>;
@@ -138,6 +146,16 @@ export class RestateAdmin implements RestateAdminPort {
       undefined,
       [404],
     );
+  }
+
+  async deployment(id: string): Promise<KnownDeployment | undefined> {
+    const { status, body } = await this.call<KnownDeployment>(
+      'GET',
+      `/deployments/${encodeURIComponent(id)}`,
+      undefined,
+      [404],
+    );
+    return status === 404 ? undefined : { id: body.id, uri: body.uri };
   }
 
   async serviceExists(name: string): Promise<boolean> {

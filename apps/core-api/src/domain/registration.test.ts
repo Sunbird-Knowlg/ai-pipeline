@@ -392,6 +392,148 @@ describe('registerDeployment', () => {
     });
   });
 
+  describe('an already-registered build', () => {
+    /**
+     * Units register themselves on every boot, so the same request arrives again whenever a
+     * container restarts or another replica starts behind the same endpoint. Registering once and
+     * reporting it afterwards is the point; re-registering anything that changed is the constraint.
+     */
+    async function registeredOnce(first: Partial<DeploymentRequest> = {}) {
+      const cp = fakeControlPlane();
+      serving(cp.admin);
+      const result = await registerDeployment(cp, request(first));
+      // What real Restate does on registration: route the service to the new deployment.
+      cp.admin.routing.set('ContentEnrichment', result.deploymentId);
+      return { cp, first: result };
+    }
+
+    it('is registered the first time, and reported as new', async () => {
+      const { cp, first } = await registeredOnce();
+      expect(first.alreadyRegistered).toBe(false);
+      expect(cp.admin.registered).toBe(1);
+    });
+
+    it('is not registered again when the same build boots again', async () => {
+      const { cp, first } = await registeredOnce();
+      const again = await registerDeployment(cp, request());
+
+      expect(again).toMatchObject({
+        deploymentId: first.deploymentId,
+        active: true,
+        alreadyRegistered: true,
+      });
+      expect(again.note).toBeUndefined();
+      expect(cp.admin.registered).toBe(1);
+      expect(cp.store.seed.deployments).toHaveLength(1);
+      // Triggers are still reported (and reconciled): an earlier attempt may have stopped short.
+      expect(again.triggers).toEqual([expect.objectContaining({ id: 'api', type: 'rest' })]);
+    });
+
+    it('matches the endpoint however it is spelled', async () => {
+      const { cp } = await registeredOnce();
+      const again = await registerDeployment(cp, request({ endpoint: `${ENDPOINT}/` }));
+      expect(again.alreadyRegistered).toBe(true);
+      expect(cp.admin.registered).toBe(1);
+    });
+
+    it('reports where routing stands when a newer build has taken over', async () => {
+      const { cp, first } = await registeredOnce();
+      cp.store.seed.deployments.push(deploymentOf({ deploymentId: 'dp_9', status: 'draining' }));
+      cp.admin.routing.set('ContentEnrichment', 'dp_9');
+
+      const again = await registerDeployment(cp, request());
+      expect(again).toMatchObject({
+        deploymentId: first.deploymentId,
+        active: false,
+        alreadyRegistered: true,
+      });
+      expect(again.note).toMatch(/routes new invocations to dp_9/);
+      // The catalogue mirrors Restate's routing rather than the order things booted in.
+      expect(cp.store.seed.deployments.find((d) => d.deploymentId === 'dp_9')?.status).toBe(
+        'active',
+      );
+      expect(cp.admin.registered).toBe(1);
+    });
+
+    it('is registered again when Restate no longer has it', async () => {
+      // Restate's state was wiped (or the deployment deleted out of band) while the catalogue kept
+      // its row. Skipping would leave nothing routing to this endpoint.
+      const { cp, first } = await registeredOnce();
+      cp.admin.known.clear();
+
+      const again = await registerDeployment(cp, request());
+      expect(again.alreadyRegistered).toBe(false);
+      expect(again.deploymentId).not.toBe(first.deploymentId);
+      expect(cp.admin.registered).toBe(2);
+    });
+
+    it('is registered again after it was retired', async () => {
+      const { cp } = await registeredOnce();
+      const [row] = cp.store.seed.deployments;
+      // Only a drained deployment can be retired, so nothing routes to it any more.
+      row!.status = 'retired';
+      await cp.admin.deleteDeployment(row!.deploymentId);
+      cp.admin.routing.delete('ContentEnrichment');
+
+      const again = await registerDeployment(cp, request());
+      expect(again.alreadyRegistered).toBe(false);
+      expect(cp.admin.registered).toBe(2);
+    });
+
+    it('is registered again when anything registration writes has changed', async () => {
+      const changes: { what: string; change: Partial<DeploymentRequest> }[] = [
+        { what: 'another endpoint', change: { endpoint: 'http://content-enrichment-other:9080' } },
+        {
+          what: 'metadata under a stale artifact digest',
+          change: { metadata: metadataOf({ description: 'changed', triggers: [] }) },
+        },
+      ];
+      for (const { what, change } of changes) {
+        const { cp } = await registeredOnce();
+        if (change.endpoint) cp.admin.served.set(change.endpoint, ['ContentEnrichment']);
+        const again = await registerDeployment(cp, request(change));
+        expect({ what, alreadyRegistered: again.alreadyRegistered }).toEqual({
+          what,
+          alreadyRegistered: false,
+        });
+        expect(cp.admin.registered).toBe(2);
+      }
+    });
+
+    it('in dev mode, is registered again only when the artifact changed', async () => {
+      const dev = { mode: 'dev' as const };
+      const { cp } = await registeredOnce(dev);
+      expect((await registerDeployment(cp, request(dev))).alreadyRegistered).toBe(true);
+
+      const rebuilt = await registerDeployment(
+        cp,
+        request({ ...dev, artifactDigest: `sha256:${'d'.repeat(64)}` }),
+      );
+      expect(rebuilt.alreadyRegistered).toBe(false);
+      expect(cp.admin.registered).toBe(2);
+    });
+
+    it('is registered once when replicas boot at the same time', async () => {
+      const cp = fakeControlPlane();
+      serving(cp.admin);
+      const results = await Promise.all([
+        registerDeployment(cp, request()),
+        registerDeployment(cp, request()),
+        registerDeployment(cp, request()),
+      ]);
+      expect(cp.admin.registered).toBe(1);
+      expect(results.filter((r) => r.alreadyRegistered)).toHaveLength(2);
+      expect(new Set(results.map((r) => r.deploymentId)).size).toBe(1);
+    });
+
+    it('still refuses a conflicting build rather than reporting the registered one', async () => {
+      const { cp } = await registeredOnce();
+      expect(
+        await codeOf(registerDeployment(cp, request({ contractHash: `sha256:${'c'.repeat(64)}` }))),
+      ).toBe('VERSION_CONTRACT_CONFLICT');
+    });
+  });
+
   it('syncs triggers only from a build that becomes the routed one', async () => {
     const cp = fakeControlPlane({
       seed: {

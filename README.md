@@ -59,7 +59,7 @@ The design is in [docs/plan.md](docs/plan.md). Settled decisions and lessons lea
 | `tests/e2e`                        | end-to-end suites against the compose stack                                                    |
 
 Packages export one entry point per purpose rather than a barrel `index.ts`, so a consumer pulls in
-what it uses and no more — the deploy CLI reads contracts without loading the Restate SDK, and a
+what it uses and no more — core-api reads catalogue schemas without loading the Restate SDK, and a
 service that has no Kafka trigger never loads `kafkaTrigger()`. `turbo boundaries` enforces the
 direction of the graph: contracts depend on nothing above them, and nothing depends on an app.
 
@@ -120,7 +120,7 @@ the way it is.
 | Catalogue     | `GET /v1/workflows?kind=`                                                                                                  |
 | Catalogue     | `GET /v1/workflows/:name` (schemas, config, triggers with desired and observed state, dependencies, versions, deployments) |
 | Catalogue     | `PATCH /v1/workflows/:name/triggers/:id` `{ enabled }`                                                                     |
-| Control plane | `POST /v1/deployments` (used by the CLI)                                                                                   |
+| Control plane | `POST /v1/deployments` (posted by each unit on boot; `200 alreadyRegistered` when the same build is live)                  |
 | Control plane | `GET /v1/deployments?name=` (includes in-flight counts)                                                                    |
 | Control plane | `DELETE /v1/deployments/:id` (retire; refused until drained)                                                               |
 | Health        | `GET /health/live`, `GET /health/ready`                                                                                    |
@@ -138,7 +138,7 @@ the way it is.
 
 ```
 pnpm pipeline new <workflow|service> <name> [--kafka <topic>]   scaffold a deployable unit
-pnpm pipeline deploy <name...> [--dev]     build (skipped when unchanged), start, register
+pnpm pipeline deploy <name...> [--dev]     build (skipped when unchanged), start, await self-registration
 pnpm pipeline deployments [name]           deployments with in-flight counts
 pnpm pipeline retire <deploymentId>        retire a drained deployment and stop its container
 pnpm pipeline workflows | start <wf> --input '{…}' [--key k] | runs [wf] | run <wf> <id> | cancel <wf> <id>
@@ -170,7 +170,7 @@ What it generates, and why:
 | `metadata.json`                     | kind, name, `restateName`, version, config, triggers, dependencies                   |
 | `src/schemas.ts`                    | the zod input, output and config — no Restate SDK, so the catalogue side stays light |
 | `src/api.ts`                        | the `restate.iface` binding. A workflow's entry handler **must** be `run`            |
-| `src/contract.ts`                   | the `ContractEntry` the deploy CLI reads from `dist/contract.js`                     |
+| `src/contract.ts`                   | the `ContractEntry` the unit registers itself with on boot                           |
 | `src/unit.ts`                       | `metadata` and the config, validated against the contract at import                  |
 | `src/workflow.ts`                   | the handler                                                                          |
 | `src/trigger.ts`, `src/adapters.ts` | with `--kafka`: the trigger service and the record adapter                           |
