@@ -1,0 +1,71 @@
+{
+  "name": "@ai-pipeline/wf-transcript",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./adapters": {
+      "@ai-pipeline/source": "./src/adapters.ts",
+      "types": "./dist/adapters.d.ts",
+      "default": "./dist/adapters.js"
+    },
+    "./api": {
+      "@ai-pipeline/source": "./src/api.ts",
+      "types": "./dist/api.d.ts",
+      "default": "./dist/api.js"
+    },
+    "./contract": {
+      "@ai-pipeline/source": "./src/contract.ts",
+      "types": "./dist/contract.d.ts",
+      "default": "./dist/contract.js"
+    },
+    "./schemas": {
+      "@ai-pipeline/source": "./src/schemas.ts",
+      "types": "./dist/schemas.d.ts",
+      "default": "./dist/schemas.js"
+    },
+    "./trigger": {
+      "@ai-pipeline/source": "./src/trigger.ts",
+      "types": "./dist/trigger.d.ts",
+      "default": "./dist/trigger.js"
+    },
+    "./unit": {
+      "@ai-pipeline/source": "./src/unit.ts",
+      "types": "./dist/unit.d.ts",
+      "default": "./dist/unit.js"
+    },
+    "./workflow": {
+      "@ai-pipeline/source": "./src/workflow.ts",
+      "types": "./dist/workflow.d.ts",
+      "default": "./dist/workflow.js"
+    }
+  },
+  "files": [
+    "dist",
+    "metadata.json"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@ai-pipeline/ai": "workspace:*",
+    "@ai-pipeline/blob-storage": "workspace:*",
+    "@ai-pipeline/contracts": "workspace:*",
+    "@ai-pipeline/metadata": "workspace:*",
+    "@ai-pipeline/runtime": "workspace:*",
+    "@restatedev/restate-sdk": "catalog:",
+    "undici": "7.16.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-pipeline/eslint-config": "workspace:*",
+    "@ai-pipeline/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -75,7 +75,9 @@ services:
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
         --topic content.published --partitions 3 --replication-factor 1 &&
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
-        --topic diksha.content.published --partitions 3 --replication-factor 1
+        --topic diksha.content.published --partitions 3 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
+        --topic sunbirddev.enrichment.request --partitions 3 --replication-factor 1
     restart: 'no'
 
   restate:
@@ -122,6 +124,36 @@ services:
       interval: 5s
       timeout: 5s
       retries: 40
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0
+    restart: unless-stopped
+    command: ['azurite-blob', '--blobHost', '0.0.0.0', '--blobPort', '10000', '--skipApiVersionCheck']
+    volumes:
+      - azurite-data:/data
+    ports:
+      - 127.0.0.1:10000:10000
+    healthcheck:
+      test: ['CMD-SHELL', 'nc -z 127.0.0.1 10000']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  whisper:
+    build:
+      context: ./services/whisper
+    image: ai-pipeline/whisper:dev
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-small}
+    ports:
+      - 127.0.0.1:8090:8000
+    healthcheck:
+      test: ['CMD', 'curl', '-sf', 'http://localhost:8000/health']
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 60s
 
   otel:
     image: otel/opentelemetry-collector-contrib:0.161.0
@@ -175,3 +207,4 @@ volumes:
   postgres-data:
   kafka-data:
   restate-data:
+  azurite-data:

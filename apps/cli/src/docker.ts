@@ -110,6 +110,10 @@ export function runContainer(opts: RunContainer): void {
     opts.network,
     '--restart',
     'unless-stopped',
+    // Lets a unit reach a host-side process (e.g. `kubectl port-forward`) the same way compose's
+    // own `litellm` service does, without hardcoding a platform-specific gateway IP.
+    '--add-host',
+    'host.docker.internal:host-gateway',
   ];
   // Values travel in docker's environment, not its argv (keeps secrets out of `ps` and errors).
   for (const k of Object.keys(opts.env)) args.push('-e', k);

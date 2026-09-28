@@ -10,7 +10,7 @@ model_list:
 litellm_settings:
   telemetry: false
   drop_params: false
-  request_timeout: 180
+  request_timeout: 600
   num_retries: 0 # Restate owns retries (ctx.run retry profiles)
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

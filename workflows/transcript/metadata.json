@@ -1,0 +1,27 @@
+{
+  "apiVersion": "ai-pipeline/v1alpha1",
+  "kind": "workflow",
+  "name": "transcript",
+  "restateName": "Transcript",
+  "version": "0.1.3",
+  "description": "Generates a source-language transcript from a video/audio Content's artifact via Whisper, then translates it into the configured target languages",
+  "config": {
+    "targetLanguages": ["ar", "pt", "fr"],
+    "translationModel": "chat-default",
+    "translationBatchSize": 80,
+    "translationBatchOverlap": 2
+  },
+  "triggers": [
+    {
+      "id": "api",
+      "type": "rest"
+    },
+    {
+      "id": "sunbirddev-enrichment-request",
+      "type": "kafka",
+      "cluster": "local",
+      "topic": "sunbirddev.enrichment.request",
+      "adapter": "enrichmentRequestEvent"
+    }
+  ]
+}
