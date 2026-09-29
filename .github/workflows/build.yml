@@ -66,9 +66,15 @@ jobs:
           # ARTIFACT_DIGEST is baked into the image (Dockerfile's own ARG/ENV) rather than passed
           # at deploy time — a unit's self-registration (@ai-pipeline/runtime's serve()) reads it
           # straight from its own environment, no Helm/Kubernetes value needed for this.
+          #
+          # It must be the content digest (`pipeline units` → artifactDigest, the one `pipeline
+          # deploy` uses), not the image tag: core-api refuses a version whose artifact changed
+          # (VERSION_ARTIFACT_CONFLICT). A per-tag value would make every unchanged unit a "new
+          # artifact" on each release, and its pods would exit on boot. Empty for core-api, which
+          # does not register itself.
           docker build \
             --build-arg PACKAGE="${{ matrix.package }}" \
-            --build-arg ARTIFACT_DIGEST="${IMAGE_TAG}" \
+            --build-arg ARTIFACT_DIGEST="${{ matrix.artifactDigest }}" \
             -t "$IMAGE" .
           docker push "$IMAGE"
 
