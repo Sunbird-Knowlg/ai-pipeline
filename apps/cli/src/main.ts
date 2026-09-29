@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { sep } from 'node:path';
 import { parseArgs } from 'node:util';
+import { sourceDigest } from './artifact.js';
 import { cancelRun, getRun, listRuns, listUnits, startRun } from './commands/runs.js';
 import { deploy } from './commands/deploy.js';
 import { listDeployments, retireDeployment } from './commands/deployments.js';
@@ -132,6 +133,9 @@ async function main(): Promise<void> {
             name: u.metadata.name,
             image: u.packageName.replace(/^@ai-pipeline\//, ''),
             package: u.packageName,
+            // What CI bakes in as ARTIFACT_DIGEST — the same content digest `deploy` uses, so an
+            // unchanged unit rebuilt under a new tag is still the artifact its version names.
+            artifactDigest: sourceDigest(repo, u.packageName),
           })),
       );
     }

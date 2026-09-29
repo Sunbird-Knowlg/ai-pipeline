@@ -355,15 +355,44 @@ direction.
 ## Production on Kubernetes
 
 Local development runs on Docker Compose and `pnpm pipeline deploy`, which builds an image, starts a
-container, and the unit registers itself. **In production the CLI is not in the path**: a Deployment
-serves each unit, which registers itself with core-api the same way (set `CORE_API_URL`,
-`ADVERTISED_ENDPOINT` and build with `ARTIFACT_DIGEST`); the [Restate Operator][k8s] would take
-over drain. If the operator also registers endpoints with Restate directly, turn one of the two off:
-the catalogue only learns of a build through core-api. The operator is listed as deferred below.
+container, and the unit registers itself. **In production the CLI is not in the path**: each unit is
+a `RestateDeployment` of the [Restate Operator][k8s] (the Helm chart is
+`helmcharts/knowledgebb/charts/ai-pipeline` in the installer repo), and it registers itself with
+core-api the same way (`CORE_API_URL`, `ADVERTISED_ENDPOINT`, and `ARTIFACT_DIGEST` baked in).
 
 The operator's `RestateDeployment` CRD is the same model this repo already enforces by hand: it keeps
 the old ReplicaSet and its Service alive so in-flight invocations drain against the code they started
 on. So the move is a substitution, not a redesign.
+
+It also registers every version of the pod template with Restate itself, at
+`http://<name>-<pod-template-hash>.<namespace>.svc.<cluster-domain>:9080/`. That URL changes with
+every template change (image, env, resources) — the operator's versioning, not a fault. Both
+registrars stay because only core-api tells the catalogue and the triggers about a build, and that is
+safe only because they name the same endpoint:
+
+- `ADVERTISED_ENDPOINT` is the operator's URL, built when the pod starts from its own
+  `pod-template-hash` label (downward API). It cannot be written into the template: the hash covers
+  the template, so a literal hash would move it on every deploy.
+- Restate answers a registration of an endpoint it already has (`force: false`) with the existing
+  deployment id, whichever side registers first. Checked against Restate 1.7.10 in both orders.
+- `minReadySeconds` keeps the operator from registering a build core-api refused: the unit exits
+  within seconds of a refusal, before its pods count as available. A core-api outage longer than
+  that is not covered — a unit retries for about 90 seconds before it exits.
+- `ARTIFACT_DIGEST` is the content digest (`pnpm pipeline units` prints it for CI), never an image
+  tag. A new tag over unchanged source is still the artifact its version names; a per-tag value
+  would make core-api refuse it (`VERSION_ARTIFACT_CONFLICT`).
+
+A drained version stays registered in Restate, scaled to zero, for rollback; core-api lists it as
+`draining` until it is retired there.
+
+Two registrars come with one trade-off. core-api promotes a version as soon as its first pod
+registers, before the operator's own gate (every replica ready for `minReadySeconds`). A build that
+registers and then crashes inside that window still receives new invocations, and if its pods never
+become available, the operator's not-ready cleanup scales the previous version — no longer the
+latest — to zero after its drain delay. Configuration errors fail before `serve()` listens, so they
+are not affected. Having core-api wait for the operator's registration instead of making its own
+would close the window, but it needs a new code in `@ai-pipeline/api-contract/errors`, which every
+unit's artifact covers — a version bump for every unit.
 
 What moves, and what does not:
 
@@ -373,9 +402,9 @@ What moves, and what does not:
   The two container-lifecycle sharp edges the review found are local-dev only for this reason — a
   deploy replacing a container in place (`ensureContainer`) and retirement removing one from a list
   that can be stale. Both are `docker rm -f` in the CLI. A Deployment does not have them.
-- **Must survive the move:** one immutable endpoint per artifact, registered only once it is
-  serving, and retired only once drained. That is what keeps in-flight invocations pinned to code
-  that still exists.
+- **Must survive the move:** one immutable endpoint per artifact (per template version, under the
+  operator), registered only once it is serving, and retired only once drained. That is what keeps
+  in-flight invocations pinned to code that still exists.
 - **Must be added before shared exposure:** an authenticated boundary. There is none (see below);
   the guards in `plugins/security.ts` are a Host allow-list and a cross-site check, which stop a
   browser, not a client. Restate's admin and ingress ports stay inside the cluster.
@@ -397,7 +426,3 @@ Execution:
 
 - Cron (a self-rescheduling virtual object; Restate has no native cron).
 - Human-in-the-loop review gates (awakeables or workflow promises).
-
-Operations:
-
-- The Kubernetes Restate Operator, which would take over deploy and drain.
