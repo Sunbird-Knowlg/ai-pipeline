@@ -376,13 +376,23 @@ safe only because they name the same endpoint:
 - Restate answers a registration of an endpoint it already has (`force: false`) with the existing
   deployment id, whichever side registers first. Checked against Restate 1.7.10 in both orders.
 - `minReadySeconds` keeps the operator from registering a build core-api refused: the unit exits
-  within seconds of a refusal, before its pods count as available.
+  within seconds of a refusal, before its pods count as available. A core-api outage longer than
+  that is not covered — a unit retries for about 90 seconds before it exits.
 - `ARTIFACT_DIGEST` is the content digest (`pnpm pipeline units` prints it for CI), never an image
   tag. A new tag over unchanged source is still the artifact its version names; a per-tag value
   would make core-api refuse it (`VERSION_ARTIFACT_CONFLICT`).
 
 A drained version stays registered in Restate, scaled to zero, for rollback; core-api lists it as
 `draining` until it is retired there.
+
+Two registrars come with one trade-off. core-api promotes a version as soon as its first pod
+registers, before the operator's own gate (every replica ready for `minReadySeconds`). A build that
+registers and then crashes inside that window still receives new invocations, and if its pods never
+become available, the operator's not-ready cleanup scales the previous version — no longer the
+latest — to zero after its drain delay. Configuration errors fail before `serve()` listens, so they
+are not affected. Having core-api wait for the operator's registration instead of making its own
+would close the window, but it needs a new code in `@ai-pipeline/api-contract/errors`, which every
+unit's artifact covers — a version bump for every unit.
 
 What moves, and what does not:
 
