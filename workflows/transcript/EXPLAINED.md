@@ -15,7 +15,7 @@ not a code defect (see "Known limitation" below).
 Two triggers are registered (`workflows/transcript/metadata.json`):
 
 - `api` — a plain REST trigger, useful for manual runs (`pnpm pipeline run transcript <input>`).
-- `sunbirddev-content-published` — a Kafka trigger on topic `sunbirddev.content.published`.
+- `content-published` — a Kafka trigger on topic `dev.content.published`.
 
 The Kafka topic carries a generic **content-published event**, emitted by knowlg-publish exactly
 once on every Content/Collection/Question/QuestionSet publish — always, whether or not any
@@ -165,7 +165,7 @@ pnpm pipeline run transcript <invocation-id>  # poll a specific run
 ```
 
 To trigger via Kafka instead of the REST API, produce a raw content-published event (matching
-the JSON shape in section 1) onto `sunbirddev.content.published`.
+the JSON shape in section 1) onto `dev.content.published`.
 
 Verify results against the real cluster:
 

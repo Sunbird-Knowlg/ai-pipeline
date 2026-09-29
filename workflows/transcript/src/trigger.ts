@@ -5,7 +5,7 @@ import { metadata } from './unit.js';
 
 /**
  * `TranscriptTrigger`: the sink of this workflow's Kafka subscriptions, one handler per Kafka
- * trigger in `metadata.json` (`sunbirddev-content-published` → `contentPublishedEvent`).
+ * trigger in `metadata.json` (`content-published` → `contentPublishedEvent`).
  * The control plane creates the subscriptions on deploy; this only adapts records and submits runs.
  */
 export const transcriptTrigger = kafkaTrigger({
