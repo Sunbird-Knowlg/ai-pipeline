@@ -3,7 +3,7 @@
   "kind": "workflow",
   "name": "transcript",
   "restateName": "Transcript",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Generates a source-language transcript from a video/audio Content's artifact via Whisper, then translates it into the configured target languages",
   "config": {
     "targetLanguages": ["ar", "pt", "fr"],
@@ -17,11 +17,11 @@
       "type": "rest"
     },
     {
-      "id": "sunbirddev-enrichment-request",
+      "id": "sunbirddev-content-published",
       "type": "kafka",
       "cluster": "local",
-      "topic": "sunbirddev.enrichment.request",
-      "adapter": "enrichmentRequestEvent"
+      "topic": "sunbirddev.content.published",
+      "adapter": "contentPublishedEvent"
     }
   ],
   "dependencies": []

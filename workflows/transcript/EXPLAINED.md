@@ -15,29 +15,45 @@ not a code defect (see "Known limitation" below).
 Two triggers are registered (`workflows/transcript/metadata.json`):
 
 - `api` — a plain REST trigger, useful for manual runs (`pnpm pipeline run transcript <input>`).
-- `sunbirddev-enrichment-request` — a Kafka trigger on topic `sunbirddev.enrichment.request`.
+- `sunbirddev-content-published` — a Kafka trigger on topic `sunbirddev.content.published`.
 
-The Kafka topic carries a generic **enrichment-request event**, emitted by knowlg-publish once
-per requested `enrichmentType`. It's deliberately objectType-agnostic — no `artifactUrl`, no
-Content-specific fields — so the same topic can carry requests for any future enrichment type,
-not just transcripts:
+The Kafka topic carries a generic **content-published event**, emitted by knowlg-publish exactly
+once on every Content/Collection/Question/QuestionSet publish — always, whether or not any
+enrichment was requested, wrapped in the platform's standard `BE_JOB_REQUEST` envelope:
 
 ```json
 {
-  "identifier": "do_214666147480223744136",
-  "objectType": "Content",
-  "mimeType": "video/mp4",
-  "channel": "0146092176054435840",
-  "enrichmentType": "Transcript"
+  "eid": "BE_JOB_REQUEST",
+  "ets": 1757930000000,
+  "mid": "LP.1757930000000.a1b2c3",
+  "actor": { "id": "knowlg-publish", "type": "System" },
+  "edata": {
+    "action": "content-published",
+    "identifier": "do_214666147480223744136",
+    "objectType": "Content",
+    "mimeType": "video/mp4",
+    "channel": "0146092176054435840",
+    "status": "Live",
+    "artifactHash": "abc123",
+    "prevArtifactHash": "abc122",
+    "enrichmentTypes": ["Transcript"]
+  }
 }
 ```
 
-`src/adapters.ts`'s `enrichmentRequestEvent` adapter is a pure function: `(event) => Input | null`.
+knowlg-publish applies no eligibility gate at all — `edata.enrichmentTypes` is just the node's own
+array, verbatim, `[]` when nothing was requested. `src/adapters.ts`'s `contentPublishedEvent`
+adapter is the only place that decides whether a given event is worth reacting to (does the array
+contain `"Transcript"`, is it a Content, is the mimeType actually a video) — this producer never
+decides that on any consumer's behalf.
+
+`contentPublishedEvent` is a pure function: `(event) => Input | null`.
 
 - Returns `null` (silently skips the record, no run started) for any event whose
-  `enrichmentType` isn't `"Transcript"` — this is how the same topic can carry unrelated
-  enrichment requests without this workflow reacting to them.
-- Throws (fails the record terminally) if the event doesn't even match the expected shape —
+  `edata.enrichmentTypes` doesn't contain `"Transcript"`, whose `edata.objectType` isn't
+  `"Content"`, or whose `edata.mimeType` isn't video — this is how the same topic can carry
+  unrelated publish events without this workflow reacting to them.
+- Throws (fails the record terminally) if the event doesn't even match the expected envelope —
   a malformed event never blocks the rest of the partition.
 - Maps a matching event down to the workflow's actual input, `TranscriptInput`:
   `{identifier, objectType, mimeType, channel}`.
@@ -148,8 +164,8 @@ pnpm pipeline runs transcript                 # list recent runs / statuses
 pnpm pipeline run transcript <invocation-id>  # poll a specific run
 ```
 
-To trigger via Kafka instead of the REST API, produce a raw enrichment-request event (matching
-the JSON shape in section 1) onto `sunbirddev.enrichment.request`.
+To trigger via Kafka instead of the REST API, produce a raw content-published event (matching
+the JSON shape in section 1) onto `sunbirddev.content.published`.
 
 Verify results against the real cluster:
 
