@@ -79,3 +79,31 @@ jobs:
           docker push "$IMAGE"
 
           echo "pushed $IMAGE"
+
+  # services/whisper isn't a Restate unit (no metadata.json, no self-registration) — a plain
+  # FastAPI+faster-whisper container the transcript workflow calls over HTTP, same category as
+  # knowlg-service. `pipeline units` doesn't discover it, so it needs its own build step, with its
+  # own Dockerfile and build context rather than the units' shared one.
+  build-whisper:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        run: |
+          set -euo pipefail
+          IMAGE_TAG=$(echo "${{ github.ref_name }}_$(echo "$GITHUB_SHA" | cut -c1-7)" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/sunbird-knowlg/ai-pipeline/whisper:${IMAGE_TAG}"
+
+          docker build -t "$IMAGE" services/whisper
+          docker push "$IMAGE"
+
+          echo "pushed $IMAGE"
