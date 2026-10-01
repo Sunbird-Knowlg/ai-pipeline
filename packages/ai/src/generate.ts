@@ -25,11 +25,15 @@ export type Generate = (request: GenerateRequest) => Promise<GenerateResult>;
 
 const envSchema = z.object({
   LITELLM_URL: z.url(),
+  // Optional: unset when litellm has no auth configured (cluster-internal, no caller to
+  // authenticate). Set when the target litellm does enforce auth.
+  LITELLM_API_KEY: z.string().optional(),
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
 });
 
 export interface AiOptions {
   baseUrl: string;
+  apiKey?: string;
   timeoutMs?: number;
 }
 
@@ -37,10 +41,11 @@ export interface AiOptions {
  * LiteLLM-backed `Generate`. Retries are disabled here (`maxRetries: 0`) because the caller
  * runs this inside `ctx.run`, where Restate owns retries.
  */
-export function createGenerate({ baseUrl, timeoutMs = 180_000 }: AiOptions): Generate {
+export function createGenerate({ baseUrl, apiKey, timeoutMs = 180_000 }: AiOptions): Generate {
   const provider = createOpenAICompatible({
     name: 'litellm',
     baseURL: `${baseUrl.replace(/\/$/, '')}/v1`,
+    apiKey,
     includeUsage: true,
     fetch: tracedFetch,
   });
@@ -79,6 +84,7 @@ export function generateFromEnv(env: NodeJS.ProcessEnv = process.env): Generate 
   const parsed = envSchema.parse(env);
   return createGenerate({
     baseUrl: parsed.LITELLM_URL,
+    apiKey: parsed.LITELLM_API_KEY,
     timeoutMs: parsed.LLM_TIMEOUT_MS,
   });
 }

@@ -103,6 +103,9 @@ services:
     command: ['--config', '/app/config.yaml', '--host', '0.0.0.0', '--port', '4000']
     environment:
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      # Optional: unset means litellm enforces no auth at all (fine for local dev, same network
+      # boundary as the cluster). Set in .env if you want to test with auth enabled.
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
       LITELLM_LOCAL_MODEL_COST_MAP: 'true'
       LITELLM_TELEMETRY: 'false'
       DO_NOT_TRACK: '1'

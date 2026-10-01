@@ -56,11 +56,17 @@ const print = (value: unknown) => {
   console.log(JSON.stringify(value, null, 2));
 };
 
+// Omitted entirely (not defaulted to '') when unset, so the unit's own LITELLM_API_KEY stays
+// genuinely absent — an empty string would still count as "specified" and send an empty
+// Authorization header, unlike a truly missing env var.
+const litellmApiKey = process.env.LITELLM_MASTER_KEY ?? dotEnv.LITELLM_MASTER_KEY;
+
 /** The environment a unit's container runs with. Secrets travel in the environment, not in argv. */
 const unitEnv = () => ({
   // Where the unit registers itself on boot: core-api as seen from inside the Docker network.
   CORE_API_URL: setting(dotEnv, 'UNIT_CORE_API_URL', 'http://core-api:3000'),
   LITELLM_URL: setting(dotEnv, 'UNIT_LITELLM_URL', 'http://litellm:4000'),
+  ...(litellmApiKey ? { LITELLM_API_KEY: litellmApiKey } : {}),
   OTEL_EXPORTER_OTLP_ENDPOINT: setting(dotEnv, 'UNIT_OTEL_ENDPOINT', 'http://otel:4318'),
 });
 
