@@ -80,10 +80,8 @@ jobs:
 
           echo "pushed $IMAGE"
 
-  # services/whisper isn't a Restate unit (no metadata.json, no self-registration) — a plain
-  # FastAPI+faster-whisper container the transcript workflow calls over HTTP, same category as
-  # knowlg-service. `pipeline units` doesn't discover it, so it needs its own build step, with its
-  # own Dockerfile and build context rather than the units' shared one.
+  # services/whisper is a real, self-registering Restate unit (restate_sdk, not a Node package),
+  # so `pnpm pipeline units` can't discover it — its own build step, own Dockerfile/context.
   build-whisper:
     runs-on: ubuntu-latest
     steps:
@@ -103,7 +101,22 @@ jobs:
           IMAGE_TAG=$(echo "${{ github.ref_name }}_$(echo "$GITHUB_SHA" | cut -c1-7)" | tr '[:upper:]' '[:lower:]')
           IMAGE="ghcr.io/sunbird-knowlg/ai-pipeline/whisper:${IMAGE_TAG}"
 
-          docker build -t "$IMAGE" services/whisper
+          # Same role as sourceDigest() for TS units (apps/cli/src/artifact.ts): a content digest
+          # over everything that defines this artifact, so an unchanged rebuild under a new tag is
+          # still the artifact its version names, and core-api's VERSION_ARTIFACT_CONFLICT check
+          # means what it says.
+          ARTIFACT_DIGEST="sha256:$(cat \
+            services/whisper/Dockerfile \
+            services/whisper/requirements.txt \
+            services/whisper/metadata.json \
+            services/whisper/hypercorn-config.toml \
+            services/whisper/main.py \
+            services/whisper/register.py \
+            | sha256sum | cut -d' ' -f1)"
+
+          docker build \
+            --build-arg ARTIFACT_DIGEST="$ARTIFACT_DIGEST" \
+            -t "$IMAGE" services/whisper
           docker push "$IMAGE"
 
-          echo "pushed $IMAGE"
+          echo "pushed $IMAGE (artifact $ARTIFACT_DIGEST)"
