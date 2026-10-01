@@ -1,90 +1,100 @@
 import os
 import tempfile
+from typing import Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse, PlainTextResponse
+import restate
 from faster_whisper import WhisperModel
+from pydantic import BaseModel
+from restate import Context
+from restate.exceptions import TerminalError
+
+from register import register_on_boot
 
 MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "small")
 DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
 
-app = FastAPI()
 model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
 
 
-def _format_timestamp(seconds: float, comma: bool) -> str:
-    ms = int(round(seconds * 1000))
-    hours, ms = divmod(ms, 3_600_000)
-    minutes, ms = divmod(ms, 60_000)
-    secs, ms = divmod(ms, 1_000)
-    sep = "," if comma else "."
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}{sep}{ms:03d}"
+class TranscribeRequest(BaseModel):
+    artifactUrl: str
+    language: Optional[str] = None
 
 
-def _segments_to_srt(segments: list[dict]) -> str:
-    lines = []
-    for i, seg in enumerate(segments, start=1):
-        start = _format_timestamp(seg["start"], comma=True)
-        end = _format_timestamp(seg["end"], comma=True)
-        lines.append(f"{i}\n{start} --> {end}\n{seg['text'].strip()}\n")
-    return "\n".join(lines)
+class WhisperSegment(BaseModel):
+    id: int
+    start: float
+    end: float
+    text: str
 
 
-def _segments_to_vtt(segments: list[dict]) -> str:
-    lines = ["WEBVTT", ""]
-    for seg in segments:
-        start = _format_timestamp(seg["start"], comma=False)
-        end = _format_timestamp(seg["end"], comma=False)
-        lines.append(f"{start} --> {end}")
-        lines.append(seg["text"].strip())
-        lines.append("")
-    return "\n".join(lines)
+class TranscribeResponse(BaseModel):
+    language: str
+    languageProbability: float
+    duration: float
+    segments: list[WhisperSegment]
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
-@app.post("/transcribe")
-async def transcribe(
-    url: str,
-    fmt: str = Query("json", pattern="^(json|srt|vtt)$"),
-    language: str | None = None,
-):
-    async with httpx.AsyncClient(timeout=None) as client:
-        response = await client.get(url)
+def _download(artifact_url: str) -> str:
+    with httpx.Client(timeout=None) as client:
+        response = client.get(artifact_url)
         if response.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"failed to fetch {url}")
-        suffix = os.path.splitext(url.split("?")[0])[1] or ".media"
+            raise TerminalError(f"failed to fetch {artifact_url}: {response.status_code}")
+        suffix = os.path.splitext(artifact_url.split("?")[0])[1] or ".media"
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp.write(response.content)
-            tmp_path = tmp.name
+            return tmp.name
 
+
+def _transcribe(tmp_path: str, language: Optional[str]) -> TranscribeResponse:
     try:
-        segments_iter, info = model.transcribe(
-            tmp_path,
-            language=language,
-            vad_filter=True,
-        )
+        segments_iter, info = model.transcribe(tmp_path, language=language, vad_filter=True)
         segments = [
-            {"id": i, "start": seg.start, "end": seg.end, "text": seg.text}
+            WhisperSegment(id=i, start=seg.start, end=seg.end, text=seg.text)
             for i, seg in enumerate(segments_iter)
         ]
     finally:
         os.remove(tmp_path)
-
-    if fmt == "srt":
-        return PlainTextResponse(_segments_to_srt(segments), media_type="text/plain")
-    if fmt == "vtt":
-        return PlainTextResponse(_segments_to_vtt(segments), media_type="text/vtt")
-    return JSONResponse(
-        {
-            "language": info.language,
-            "languageProbability": info.language_probability,
-            "duration": info.duration,
-            "segments": segments,
-        }
+    return TranscribeResponse(
+        language=info.language,
+        languageProbability=info.language_probability,
+        duration=info.duration,
+        segments=segments,
     )
+
+
+whisper_service = restate.Service("WhisperService")
+
+
+@whisper_service.handler()
+async def transcribe(ctx: Context, req: TranscribeRequest) -> TranscribeResponse:
+    tmp_path = await ctx.run_typed("download", _download, artifact_url=req.artifactUrl)
+    return await ctx.run_typed("transcribe", _transcribe, tmp_path=tmp_path, language=req.language)
+
+
+app = restate.app([whisper_service])
+
+# Self-registers with core-api once hypercorn is actually serving — see register.py. Hypercorn has
+# no post-start hook, so this runs as an ASGI lifespan "startup" event instead, same ordering
+# guarantee @ai-pipeline/runtime's serve() relies on (core-api's own discovery calls back into
+# this process, so the endpoint must already be listening).
+_original_app = app
+
+
+async def app(scope, receive, send):  # noqa: F811 - wraps the restate ASGI app with a lifespan hook
+    if scope["type"] == "lifespan":
+        while True:
+            message = await receive()
+            if message["type"] == "lifespan.startup":
+                try:
+                    await register_on_boot()
+                    await send({"type": "lifespan.startup.complete"})
+                except Exception as error:  # noqa: BLE001 - reported to the ASGI server, not swallowed
+                    await send({"type": "lifespan.startup.failed", "message": str(error)})
+            elif message["type"] == "lifespan.shutdown":
+                await send({"type": "lifespan.shutdown.complete"})
+                return
+    else:
+        await _original_app(scope, receive, send)

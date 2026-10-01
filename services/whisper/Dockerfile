@@ -6,7 +6,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY main.py .
+COPY main.py register.py metadata.json hypercorn-config.toml .
 
-EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# The unit registers itself on boot and reports which artifact it is. The digest covers the
+# source, which this image does not carry, so it is baked in here (CI passes it).
+ARG ARTIFACT_DIGEST=
+ENV ARTIFACT_DIGEST=${ARTIFACT_DIGEST}
+
+EXPOSE 9080
+CMD ["python", "-m", "hypercorn", "--config", "hypercorn-config.toml", "main:app"]
