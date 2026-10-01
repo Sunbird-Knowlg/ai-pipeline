@@ -49,11 +49,6 @@
       "types": "./dist/unit.d.ts",
       "default": "./dist/unit.js"
     },
-    "./whisper": {
-      "@ai-pipeline/source": "./src/whisper.ts",
-      "types": "./dist/whisper.d.ts",
-      "default": "./dist/whisper.js"
-    },
     "./workflow": {
       "@ai-pipeline/source": "./src/workflow.ts",
       "types": "./dist/workflow.d.ts",
@@ -73,11 +68,11 @@
   "dependencies": {
     "@ai-pipeline/ai": "workspace:*",
     "@ai-pipeline/blob-storage": "workspace:*",
+    "@ai-pipeline/contract-whisper": "workspace:*",
     "@ai-pipeline/contracts": "workspace:*",
     "@ai-pipeline/metadata": "workspace:*",
     "@ai-pipeline/runtime": "workspace:*",
     "@restatedev/restate-sdk": "catalog:",
-    "undici": "7.16.0",
     "zod": "catalog:"
   },
   "devDependencies": {

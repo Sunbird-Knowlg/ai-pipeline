@@ -53,10 +53,3 @@ export const TranscriptSegment = z.strictObject({
 });
 export type TranscriptSegment = z.infer<typeof TranscriptSegment>;
 
-export const WhisperResult = z.strictObject({
-  language: z.string(),
-  languageProbability: z.number(),
-  duration: z.number(),
-  segments: z.array(TranscriptSegment),
-});
-export type WhisperResult = z.infer<typeof WhisperResult>;

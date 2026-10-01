@@ -15,7 +15,6 @@ function requireEnv(name: string): string {
 await serve({ metadata, contract }, [
   createTranscript({
     knowlgBaseUrl: requireEnv('KNOWLG_BASE_URL'),
-    whisperBaseUrl: requireEnv('WHISPER_BASE_URL'),
     uploadBlob: blobUploaderFromEnv(),
     downloadBlob: blobDownloaderFromEnv(),
     generate: generateFromEnv(),

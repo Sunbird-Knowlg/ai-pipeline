@@ -1,5 +1,6 @@
 import type { Generate } from '@ai-pipeline/ai/generate';
 import type { BlobDownloader, BlobUploader } from '@ai-pipeline/blob-storage/upload';
+import { whisperApi } from '@ai-pipeline/contract-whisper/api';
 import { workflowOptions } from '@ai-pipeline/runtime/options';
 import { retry } from '@ai-pipeline/runtime/retry';
 import * as restate from '@restatedev/restate-sdk';
@@ -15,18 +16,9 @@ import {
 import { TranscriptSegment } from './schemas.js';
 import { translateSegments } from './translate.js';
 import { config, metadata } from './unit.js';
-import { transcribe } from './whisper.js';
-
-/** Retrying a slow-but-working transcription is wasteful; a real failure gets two tries, not five. */
-const WHISPER_RETRY = {
-  maxRetryAttempts: 2,
-  initialRetryInterval: { seconds: 5 },
-  maxRetryInterval: { seconds: 30 },
-};
 
 export interface TranscriptDeps {
   knowlgBaseUrl: string;
-  whisperBaseUrl: string;
   uploadBlob: BlobUploader;
   downloadBlob: BlobDownloader;
   generate: Generate;
@@ -203,11 +195,9 @@ export function createTranscript(deps: TranscriptDeps) {
             retry.http,
           );
 
-          const whisperResult = await ctx.run(
-            'whisper.transcribe',
-            () => transcribe(deps.whisperBaseUrl, content.artifactUrl),
-            WHISPER_RETRY,
-          );
+          const whisperResult = await ctx
+            .client(whisperApi)
+            .transcribe({ artifactUrl: content.artifactUrl });
 
           const sourceUrls = await ctx.run(
             'blob.upload-source',
