@@ -61,7 +61,6 @@ const unitEnv = () => ({
   // Where the unit registers itself on boot: core-api as seen from inside the Docker network.
   CORE_API_URL: setting(dotEnv, 'UNIT_CORE_API_URL', 'http://core-api:3000'),
   LITELLM_URL: setting(dotEnv, 'UNIT_LITELLM_URL', 'http://litellm:4000'),
-  LITELLM_API_KEY: setting(dotEnv, 'LITELLM_MASTER_KEY'),
   OTEL_EXPORTER_OTLP_ENDPOINT: setting(dotEnv, 'UNIT_OTEL_ENDPOINT', 'http://otel:4318'),
 });
 

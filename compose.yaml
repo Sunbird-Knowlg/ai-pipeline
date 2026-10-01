@@ -103,7 +103,6 @@ services:
     command: ['--config', '/app/config.yaml', '--host', '0.0.0.0', '--port', '4000']
     environment:
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set in .env}
       LITELLM_LOCAL_MODEL_COST_MAP: 'true'
       LITELLM_TELEMETRY: 'false'
       DO_NOT_TRACK: '1'

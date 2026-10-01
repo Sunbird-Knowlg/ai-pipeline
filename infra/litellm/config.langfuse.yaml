@@ -14,5 +14,4 @@ litellm_settings:
   num_retries: 0
   callbacks: ['langfuse_otel']
 general_settings:
-  master_key: os.environ/LITELLM_MASTER_KEY
   disable_spend_logs: true
