@@ -1,3 +1,4 @@
+import type { Logger } from '@ai-pipeline/observability/logger';
 import { ContentPublishedEvent, type ContentInput } from './schemas.js';
 import { z } from 'zod';
 
@@ -5,7 +6,7 @@ const ObjectType = z.looseObject({ objectType: z.string().optional() });
 
 /** Trigger adapters: pure maps from a trigger's event to `ContentInput`; `null` skips the event. */
 export const adapters = {
-  contentPublished(event: unknown): ContentInput | null {
+  contentPublished(event: unknown, _log: Logger): ContentInput | null {
     // Other object types are not ours: skip them before requiring the Content shape.
     const kind = ObjectType.safeParse(event);
     if (kind.success && kind.data.objectType && kind.data.objectType !== 'Content') return null;

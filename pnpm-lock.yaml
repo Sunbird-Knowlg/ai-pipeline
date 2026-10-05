@@ -752,6 +752,9 @@ importers:
       '@ai-pipeline/metadata':
         specifier: workspace:*
         version: link:../../packages/metadata
+      '@ai-pipeline/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@ai-pipeline/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
@@ -810,6 +813,9 @@ importers:
       '@ai-pipeline/metadata':
         specifier: workspace:*
         version: link:../../packages/metadata
+      '@ai-pipeline/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@ai-pipeline/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime

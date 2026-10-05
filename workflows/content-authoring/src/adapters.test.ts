@@ -1,6 +1,10 @@
+import { silentLogger } from '@ai-pipeline/observability/logger';
 import { describe, expect, it } from 'vitest';
 import { adapters } from './adapters.js';
 import { ContentAuthoringInput } from './schemas.js';
+
+const log = silentLogger();
+const dikshaContentPublished = (event: unknown) => adapters.dikshaContentPublished(event, log);
 
 const event = {
   eid: 'BE_OBJECT_LIFECYCLE',
@@ -19,7 +23,7 @@ const event = {
 
 describe('dikshaContentPublished adapter', () => {
   it('maps a published Content event to ContentAuthoringInput', () => {
-    expect(adapters.dikshaContentPublished(event)).toEqual({
+    expect(dikshaContentPublished(event)).toEqual({
       contentId: 'do_31309317310697472011526',
       name: 'Photosynthesis',
       description: 'How green plants make food',
@@ -33,28 +37,22 @@ describe('dikshaContentPublished adapter', () => {
   it('produces something the workflow input schema accepts', () => {
     // The trigger validates the mapped value before submitting a run; if this ever disagrees, the
     // record fails terminally at run time instead of here.
-    expect(ContentAuthoringInput.safeParse(adapters.dikshaContentPublished(event)).success).toBe(
-      true,
-    );
+    expect(ContentAuthoringInput.safeParse(dikshaContentPublished(event)).success).toBe(true);
   });
 
   it('skips objects that are not Content', () => {
-    expect(adapters.dikshaContentPublished({ ...event, objectType: 'Collection' })).toBeNull();
-    expect(
-      adapters.dikshaContentPublished({ objectType: 'QuestionSet', identifier: 'do_2' }),
-    ).toBeNull();
+    expect(dikshaContentPublished({ ...event, objectType: 'Collection' })).toBeNull();
+    expect(dikshaContentPublished({ objectType: 'QuestionSet', identifier: 'do_2' })).toBeNull();
   });
 
   it('skips lifecycle states other than Live: a draft is not ready to be authored against', () => {
     for (const state of ['Draft', 'Review', 'Retired', 'Flagged'])
-      expect(
-        adapters.dikshaContentPublished({ ...event, edata: { ...event.edata, state } }),
-      ).toBeNull();
+      expect(dikshaContentPublished({ ...event, edata: { ...event.edata, state } })).toBeNull();
   });
 
   it('accepts an event with no state or objectType, since the topic may carry bare records', () => {
     const bare = { identifier: 'do_3', edata: { name: 'N', body: 'b' } };
-    expect(adapters.dikshaContentPublished(bare)).toEqual({
+    expect(dikshaContentPublished(bare)).toEqual({
       contentId: 'do_3',
       name: 'N',
       text: 'b',
@@ -64,7 +62,7 @@ describe('dikshaContentPublished adapter', () => {
 
   it('falls back through body, transcript and description for the text', () => {
     const text = (edata: Record<string, unknown>) =>
-      adapters.dikshaContentPublished({ identifier: 'do_4', edata: { name: 'N', ...edata } })?.text;
+      dikshaContentPublished({ identifier: 'do_4', edata: { name: 'N', ...edata } })?.text;
     expect(text({ body: 'b', transcript: 't', description: 'd' })).toBe('b');
     expect(text({ transcript: 't', description: 'd' })).toBe('t');
     expect(text({ description: 'd' })).toBe('d');
@@ -74,14 +72,14 @@ describe('dikshaContentPublished adapter', () => {
     // The schema types these `.nullish()`, so `body: ''` is a valid parse. `??` would have picked
     // it over the transcript and then failed the record for having no text.
     const text = (edata: Record<string, unknown>) =>
-      adapters.dikshaContentPublished({ identifier: 'do_4', edata: { name: 'N', ...edata } })?.text;
+      dikshaContentPublished({ identifier: 'do_4', edata: { name: 'N', ...edata } })?.text;
     for (const blank of ['', '   ', '\n\t', null]) {
       expect(text({ body: blank, transcript: 't', description: 'd' })).toBe('t');
       expect(text({ body: blank, transcript: blank, description: 'd' })).toBe('d');
     }
     // A blank description is not carried through as one either.
     expect(
-      adapters.dikshaContentPublished({
+      dikshaContentPublished({
         identifier: 'do_4',
         edata: { name: 'N', body: 'b', description: '  ' },
       }),
@@ -90,12 +88,12 @@ describe('dikshaContentPublished adapter', () => {
 
   it('fails a Live Content with no text at all, rather than dropping it quietly', () => {
     // It is this workflow's business and it arrived broken: a producer bug worth seeing.
-    expect(() =>
-      adapters.dikshaContentPublished({ ...event, edata: { state: 'Live', name: 'N' } }),
-    ).toThrow(/no body, transcript or description/);
+    expect(() => dikshaContentPublished({ ...event, edata: { state: 'Live', name: 'N' } })).toThrow(
+      /no body, transcript or description/,
+    );
     // Present but blank is the same producer bug, and must fail the same way.
     expect(() =>
-      adapters.dikshaContentPublished({
+      dikshaContentPublished({
         ...event,
         edata: { state: 'Live', name: 'N', body: '', transcript: '  ', description: null },
       }),
@@ -103,12 +101,12 @@ describe('dikshaContentPublished adapter', () => {
   });
 
   it('rejects a Content event that is missing the fields it promises', () => {
-    expect(() => adapters.dikshaContentPublished({ identifier: 'do_5', edata: {} })).toThrow();
-    expect(() => adapters.dikshaContentPublished({ edata: { name: 'N', body: 'b' } })).toThrow();
+    expect(() => dikshaContentPublished({ identifier: 'do_5', edata: {} })).toThrow();
+    expect(() => dikshaContentPublished({ edata: { name: 'N', body: 'b' } })).toThrow();
   });
 
   it('normalises the metadata DIKSHA sends as arrays, and ignores what it cannot read', () => {
-    const mapped = adapters.dikshaContentPublished({
+    const mapped = dikshaContentPublished({
       ...event,
       edata: { ...event.edata, subject: 'Maths', gradeLevel: 7, language: [] },
     });
@@ -119,14 +117,14 @@ describe('dikshaContentPublished adapter', () => {
 
   it('maps language names to codes, and passes an unknown one through', () => {
     const lang = (language: unknown) =>
-      adapters.dikshaContentPublished({ ...event, edata: { ...event.edata, language } })?.language;
+      dikshaContentPublished({ ...event, edata: { ...event.edata, language } })?.language;
     expect(lang(['Hindi'])).toBe('hi');
     expect(lang('TELUGU')).toBe('te');
     expect(lang(['Bodo'])).toBe('Bodo');
   });
 
   it('tolerates fields the platform adds later', () => {
-    const mapped = adapters.dikshaContentPublished({
+    const mapped = dikshaContentPublished({
       ...event,
       channel: 'in.ekstep',
       edata: { ...event.edata, pkgVersion: 3 },

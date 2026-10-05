@@ -58,3 +58,8 @@ export function createLogger(service: string, destination?: DestinationStream): 
     destination,
   );
 }
+
+/** A real logger that never writes anything — for a test that needs one to satisfy a signature. */
+export function silentLogger(): Logger {
+  return createLogger('test').child({}, { level: 'silent' });
+}

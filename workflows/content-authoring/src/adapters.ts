@@ -1,3 +1,4 @@
+import type { Logger } from '@ai-pipeline/observability/logger';
 import { z } from 'zod';
 import { type ContentAuthoringInput, DikshaContentEvent } from './schemas.js';
 
@@ -55,7 +56,7 @@ const filled = (value: string | null | undefined): value is string =>
  * arrived broken. A `Live` Content with no text is a producer bug, and hiding it helps nobody.
  */
 export const adapters = {
-  dikshaContentPublished(event: unknown): ContentAuthoringInput | null {
+  dikshaContentPublished(event: unknown, _log: Logger): ContentAuthoringInput | null {
     // The topic carries the whole object lifecycle for every object type.
     const envelope = Envelope.safeParse(event);
     if (envelope.success) {

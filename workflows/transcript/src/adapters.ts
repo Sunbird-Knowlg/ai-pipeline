@@ -1,3 +1,4 @@
+import type { Logger } from '@ai-pipeline/observability/logger';
 import { z } from 'zod';
 import type { TranscriptInput } from './schemas.js';
 
@@ -32,12 +33,40 @@ const TRANSCRIPT_MIME_TYPES = ['video/mp4', 'video/webm'];
  * terminally, so a malformed one never blocks the partition.
  */
 export const adapters = {
-  contentPublishedEvent(event: unknown): TranscriptInput | null {
+  contentPublishedEvent(event: unknown, log: Logger): TranscriptInput | null {
     const parsed = ContentPublishedEvent.parse(event);
     const { edata } = parsed;
-    if (!edata.enrichmentTypes.includes('Transcript')) return null;
-    if (edata.objectType !== 'Content') return null;
-    if (!TRANSCRIPT_MIME_TYPES.includes(edata.mimeType)) return null;
+    if (!edata.enrichmentTypes.includes('Transcript')) {
+      log.info(
+        { event: 'adapter.skip', reason: 'enrichmentTypes', identifier: edata.identifier },
+        'skipped: Transcript not requested',
+      );
+      return null;
+    }
+    if (edata.objectType !== 'Content') {
+      log.info(
+        {
+          event: 'adapter.skip',
+          reason: 'objectType',
+          identifier: edata.identifier,
+          objectType: edata.objectType,
+        },
+        'skipped: not a Content',
+      );
+      return null;
+    }
+    if (!TRANSCRIPT_MIME_TYPES.includes(edata.mimeType)) {
+      log.info(
+        {
+          event: 'adapter.skip',
+          reason: 'mimeType',
+          identifier: edata.identifier,
+          mimeType: edata.mimeType,
+        },
+        'skipped: not a supported video mimeType',
+      );
+      return null;
+    }
     return {
       identifier: edata.identifier,
       objectType: edata.objectType,

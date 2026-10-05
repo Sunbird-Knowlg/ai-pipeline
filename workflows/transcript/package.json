@@ -71,6 +71,7 @@
     "@ai-pipeline/contract-whisper": "workspace:*",
     "@ai-pipeline/contracts": "workspace:*",
     "@ai-pipeline/metadata": "workspace:*",
+    "@ai-pipeline/observability": "workspace:*",
     "@ai-pipeline/runtime": "workspace:*",
     "@restatedev/restate-sdk": "catalog:",
     "zod": "catalog:"

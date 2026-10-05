@@ -2,6 +2,8 @@ import type { TriggerContext } from '@ai-pipeline/contracts/trigger';
 import { type KafkaTrigger, type Metadata } from '@ai-pipeline/metadata/metadata';
 import { kafkaHandlerName, triggerServiceName } from '@ai-pipeline/metadata/naming';
 import { kafkaRunId } from '@ai-pipeline/metadata/run-ids';
+import { createLogger } from '@ai-pipeline/observability/logger';
+import type { Logger } from '@ai-pipeline/observability/logger';
 import * as restate from '@restatedev/restate-sdk';
 import type { z } from 'zod';
 import { serviceOptions } from './options.js';
@@ -13,8 +15,12 @@ import { serviceOptions } from './options.js';
  * The return type is plain `unknown` because `unknown | null` collapses to `unknown` — the skip
  * contract lives in this comment and in the `=== null` check below, not in the type. Either way the
  * mapped value is validated against the workflow's input schema before a run starts.
+ *
+ * `log` is the unit's own logger (one instance, built once in `kafkaTrigger()` below and shared
+ * across every record) — so an adapter can report *why* it skipped a record without constructing
+ * its own logger or threading env vars through, same as every other dependency in this codebase.
  */
-export type TriggerAdapter = (event: unknown) => unknown;
+export type TriggerAdapter = (event: unknown, log: Logger) => unknown;
 
 export interface KafkaTriggerOptions<I extends z.ZodType> {
   metadata: Metadata;
@@ -38,6 +44,7 @@ export function kafkaTrigger<I extends z.ZodType>({
 }: KafkaTriggerOptions<I>) {
   const triggers = metadata.triggers.filter((t): t is KafkaTrigger => t.type === 'kafka');
   if (triggers.length === 0) throw new Error(`${metadata.name} declares no kafka triggers`);
+  const log = createLogger(metadata.name);
   const handlers: Record<string, ReturnType<typeof handlerFor>> = {};
   for (const trigger of triggers) {
     const adapter = trigger.adapter ? adapters[trigger.adapter] : undefined;
@@ -45,7 +52,7 @@ export function kafkaTrigger<I extends z.ZodType>({
       throw new Error(`${metadata.name}: adapter "${trigger.adapter}" is not exported`);
     const handler = kafkaHandlerName(trigger.id);
     if (handlers[handler]) throw new Error(`${metadata.name}: duplicate kafka handler ${handler}`);
-    handlers[handler] = handlerFor(metadata, trigger, input, adapter);
+    handlers[handler] = handlerFor(metadata, trigger, input, log, adapter);
   }
   return restate.service({
     name: triggerServiceName(metadata.restateName),
@@ -59,6 +66,7 @@ function handlerFor(
   metadata: Metadata,
   trigger: KafkaTrigger,
   input: z.ZodType,
+  log: Logger,
   adapter?: TriggerAdapter,
 ) {
   return restate.createServiceHandler(
@@ -80,7 +88,7 @@ function handlerFor(
       }
       let mapped: unknown;
       try {
-        mapped = adapter ? adapter(event) : event;
+        mapped = adapter ? adapter(event, log) : event;
       } catch (error) {
         throw new restate.TerminalError(
           `adapter rejected the Kafka record: ${(error as Error).message}`,
