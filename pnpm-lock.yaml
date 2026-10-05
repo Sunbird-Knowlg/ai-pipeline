@@ -407,6 +407,34 @@ importers:
         specifier: 8.70.1
         version: 8.70.1(eslint@10.11.0)(typescript@5.9.3)
 
+  packages/knowlg-client:
+    dependencies:
+      '@ai-pipeline/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@restatedev/restate-sdk':
+        specifier: 'catalog:'
+        version: 1.17.2
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.5
+    devDependencies:
+      '@ai-pipeline/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@ai-pipeline/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.5
+      eslint:
+        specifier: 'catalog:'
+        version: 10.11.0
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
   packages/metadata:
     dependencies:
       zod:
@@ -810,6 +838,9 @@ importers:
       '@ai-pipeline/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@ai-pipeline/knowlg-client':
+        specifier: workspace:*
+        version: link:../../packages/knowlg-client
       '@ai-pipeline/metadata':
         specifier: workspace:*
         version: link:../../packages/metadata

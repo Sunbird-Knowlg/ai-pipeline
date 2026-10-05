@@ -53,3 +53,16 @@ export const TranscriptSegment = z.strictObject({
 });
 export type TranscriptSegment = z.infer<typeof TranscriptSegment>;
 
+/**
+ * The three fields this workflow actually reads off knowlg's generic EnrichmentObject response
+ * (create/approve) — `@ai-pipeline/knowlg-client` returns the raw response, this workflow parses
+ * only what it needs. `languageCode` is only present when `create()`'s `uniqueOn` matching
+ * returned an *existing* sibling rather than a brand-new node — see `createEnrichmentObject`'s
+ * own doc comment in the client.
+ */
+export const EnrichmentObjectResult = z.strictObject({
+  identifier: z.string(),
+  status: z.string(),
+  languageCode: z.string().optional(),
+});
+export type EnrichmentObjectResult = z.infer<typeof EnrichmentObjectResult>;

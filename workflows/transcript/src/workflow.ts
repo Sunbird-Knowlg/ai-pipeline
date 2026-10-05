@@ -1,24 +1,19 @@
 import type { Generate } from '@ai-pipeline/ai/generate';
 import type { BlobDownloader, BlobUploader } from '@ai-pipeline/blob-storage/upload';
 import { whisperApi } from '@ai-pipeline/contract-whisper/api';
+import type { KnowlgClient } from '@ai-pipeline/knowlg-client/client';
 import { workflowOptions } from '@ai-pipeline/runtime/options';
 import { retry } from '@ai-pipeline/runtime/retry';
 import * as restate from '@restatedev/restate-sdk';
 import { z } from 'zod';
 import { transcriptApi } from './api.js';
 import { segmentsToJson, segmentsToVtt } from './captions.js';
-import {
-  approveEnrichmentObject,
-  createEnrichmentObject,
-  readContent,
-  updateEnrichmentObject,
-} from './knowlg.js';
-import { TranscriptSegment } from './schemas.js';
+import { EnrichmentObjectResult, TranscriptSegment } from './schemas.js';
 import { translateSegments } from './translate.js';
 import { config, metadata } from './unit.js';
 
 export interface TranscriptDeps {
-  knowlgBaseUrl: string;
+  knowlg: KnowlgClient;
   uploadBlob: BlobUploader;
   downloadBlob: BlobDownloader;
   generate: Generate;
@@ -85,16 +80,18 @@ async function buildTranslation(
   sourceSegments: TranscriptSegment[],
   targetLanguage: string,
 ): Promise<TranscriptResult> {
-  const created = await ctx.run(
-    `knowlg.create-${targetLanguage}`,
-    () =>
-      createEnrichmentObject(deps.knowlgBaseUrl, {
-        enrichmentObjectType: 'Transcript',
-        parentId,
-        channel,
-        languageCode: targetLanguage,
-      }),
-    retry.http,
+  const created = EnrichmentObjectResult.parse(
+    await ctx.run(
+      `knowlg.create-${targetLanguage}`,
+      () =>
+        deps.knowlg.createEnrichmentObject({
+          enrichmentObjectType: 'Transcript',
+          parentId,
+          channel,
+          languageCode: targetLanguage,
+        }),
+      retry.http,
+    ),
   );
 
   if (created.status === 'Live')
@@ -119,7 +116,7 @@ async function buildTranslation(
   await ctx.run(
     `knowlg.update-${targetLanguage}`,
     () =>
-      updateEnrichmentObject(deps.knowlgBaseUrl, created.identifier, {
+      deps.knowlg.updateEnrichmentObject(created.identifier, {
         artifactUrl: urls.transcriptUrl,
         captionsUrl: urls.captionsUrl,
         autoApproved: true,
@@ -128,10 +125,12 @@ async function buildTranslation(
     retry.http,
   );
 
-  const approved = await ctx.run(
-    `knowlg.approve-${targetLanguage}`,
-    () => approveEnrichmentObject(deps.knowlgBaseUrl, created.identifier, 'Live'),
-    retry.http,
+  const approved = EnrichmentObjectResult.parse(
+    await ctx.run(
+      `knowlg.approve-${targetLanguage}`,
+      () => deps.knowlg.approveEnrichmentObject(created.identifier, { status: 'Live' }),
+      retry.http,
+    ),
   );
 
   return { identifier: created.identifier, languageCode: targetLanguage, status: approved.status };
@@ -164,16 +163,18 @@ export function createTranscript(deps: TranscriptDeps) {
 
         const parentId = input.identifier;
 
-        const source = await ctx.run(
-          'knowlg.create-source',
-          () =>
-            createEnrichmentObject(deps.knowlgBaseUrl, {
-              enrichmentObjectType: 'Transcript',
-              parentId,
-              channel: input.channel,
-              sourceLanguage: true,
-            }),
-          retry.http,
+        const source = EnrichmentObjectResult.parse(
+          await ctx.run(
+            'knowlg.create-source',
+            () =>
+              deps.knowlg.createEnrichmentObject({
+                enrichmentObjectType: 'Transcript',
+                parentId,
+                channel: input.channel,
+                sourceLanguage: true,
+              }),
+            retry.http,
+          ),
         );
 
         let sourceLanguageCode: string;
@@ -191,25 +192,29 @@ export function createTranscript(deps: TranscriptDeps) {
         } else {
           const content = await ctx.run(
             'knowlg.read-content',
-            () => readContent(deps.knowlgBaseUrl, parentId),
+            () => deps.knowlg.readContent(parentId, ['artifactUrl']),
             retry.http,
           );
+          const artifactUrl = z.string().parse(content.artifactUrl);
 
-          const whisperResult = await ctx
-            .client(whisperApi)
-            .transcribe({ artifactUrl: content.artifactUrl });
+          const whisperResult = await ctx.client(whisperApi).transcribe({ artifactUrl });
 
           const sourceUrls = await ctx.run(
             'blob.upload-source',
             () =>
-              uploadArtifacts(deps.uploadBlob, parentId, whisperResult.language, whisperResult.segments),
+              uploadArtifacts(
+                deps.uploadBlob,
+                parentId,
+                whisperResult.language,
+                whisperResult.segments,
+              ),
             retry.http,
           );
 
           await ctx.run(
             'knowlg.update-source',
             () =>
-              updateEnrichmentObject(deps.knowlgBaseUrl, source.identifier, {
+              deps.knowlg.updateEnrichmentObject(source.identifier, {
                 languageCode: whisperResult.language,
                 artifactUrl: sourceUrls.transcriptUrl,
                 captionsUrl: sourceUrls.captionsUrl,
@@ -219,10 +224,12 @@ export function createTranscript(deps: TranscriptDeps) {
             retry.http,
           );
 
-          const approvedSource = await ctx.run(
-            'knowlg.approve-source',
-            () => approveEnrichmentObject(deps.knowlgBaseUrl, source.identifier, 'Live'),
-            retry.http,
+          const approvedSource = EnrichmentObjectResult.parse(
+            await ctx.run(
+              'knowlg.approve-source',
+              () => deps.knowlg.approveEnrichmentObject(source.identifier, { status: 'Live' }),
+              retry.http,
+            ),
           );
 
           sourceLanguageCode = whisperResult.language;
@@ -230,7 +237,9 @@ export function createTranscript(deps: TranscriptDeps) {
           sourceStatus = approvedSource.status;
         }
 
-        const targetLanguages = config.targetLanguages.filter((lang) => lang !== sourceLanguageCode);
+        const targetLanguages = config.targetLanguages.filter(
+          (lang) => lang !== sourceLanguageCode,
+        );
         const translations: TranscriptResult[] = [];
         for (const lang of targetLanguages) {
           translations.push(
@@ -240,7 +249,11 @@ export function createTranscript(deps: TranscriptDeps) {
 
         return {
           parentId,
-          source: { identifier: source.identifier, languageCode: sourceLanguageCode, status: sourceStatus },
+          source: {
+            identifier: source.identifier,
+            languageCode: sourceLanguageCode,
+            status: sourceStatus,
+          },
           translations,
         };
       },

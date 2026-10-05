@@ -24,11 +24,6 @@
       "types": "./dist/contract.d.ts",
       "default": "./dist/contract.js"
     },
-    "./knowlg": {
-      "@ai-pipeline/source": "./src/knowlg.ts",
-      "types": "./dist/knowlg.d.ts",
-      "default": "./dist/knowlg.js"
-    },
     "./schemas": {
       "@ai-pipeline/source": "./src/schemas.ts",
       "types": "./dist/schemas.d.ts",
@@ -70,6 +65,7 @@
     "@ai-pipeline/blob-storage": "workspace:*",
     "@ai-pipeline/contract-whisper": "workspace:*",
     "@ai-pipeline/contracts": "workspace:*",
+    "@ai-pipeline/knowlg-client": "workspace:*",
     "@ai-pipeline/metadata": "workspace:*",
     "@ai-pipeline/observability": "workspace:*",
     "@ai-pipeline/runtime": "workspace:*",

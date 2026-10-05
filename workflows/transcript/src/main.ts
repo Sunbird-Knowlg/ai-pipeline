@@ -1,5 +1,7 @@
 import { generateFromEnv } from '@ai-pipeline/ai/generate';
 import { blobDownloaderFromEnv, blobUploaderFromEnv } from '@ai-pipeline/blob-storage/upload';
+import { createKnowlgClient } from '@ai-pipeline/knowlg-client/client';
+import { createLogger } from '@ai-pipeline/observability/logger';
 import { serve } from '@ai-pipeline/runtime/serve';
 import { contract } from './contract.js';
 import { transcriptTrigger } from './trigger.js';
@@ -14,7 +16,10 @@ function requireEnv(name: string): string {
 
 await serve({ metadata, contract }, [
   createTranscript({
-    knowlgBaseUrl: requireEnv('KNOWLG_BASE_URL'),
+    knowlg: createKnowlgClient({
+      baseUrl: requireEnv('KNOWLG_BASE_URL'),
+      log: createLogger(metadata.name),
+    }),
     uploadBlob: blobUploaderFromEnv(),
     downloadBlob: blobDownloaderFromEnv(),
     generate: generateFromEnv(),
