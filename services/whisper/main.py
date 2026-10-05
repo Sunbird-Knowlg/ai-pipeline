@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 from typing import Optional
@@ -10,6 +11,12 @@ from restate import Context
 from restate.exceptions import TerminalError
 
 from register import register_on_boot
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "small")
 DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
@@ -38,17 +45,23 @@ class TranscribeResponse(BaseModel):
 
 
 def _download(artifact_url: str) -> str:
+    logger.debug("downloading artifact: %s", artifact_url)
     with httpx.Client(timeout=None) as client:
         response = client.get(artifact_url)
         if response.status_code != 200:
+            logger.error("failed to fetch artifact %s: %s", artifact_url, response.status_code)
             raise TerminalError(f"failed to fetch {artifact_url}: {response.status_code}")
         suffix = os.path.splitext(artifact_url.split("?")[0])[1] or ".media"
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp.write(response.content)
+            logger.debug("downloaded artifact to %s (%d bytes)", tmp.name, len(response.content))
             return tmp.name
 
 
 def _transcribe(tmp_path: str, language: Optional[str]) -> TranscribeResponse:
+    logger.debug(
+        "starting transcription: %s (language hint: %s)", tmp_path, language or "auto-detect"
+    )
     try:
         segments_iter, info = model.transcribe(tmp_path, language=language, vad_filter=True)
         segments = [
@@ -57,6 +70,12 @@ def _transcribe(tmp_path: str, language: Optional[str]) -> TranscribeResponse:
         ]
     finally:
         os.remove(tmp_path)
+    logger.info(
+        "transcription complete: language=%s duration=%.1fs segments=%d",
+        info.language,
+        info.duration,
+        len(segments),
+    )
     return TranscribeResponse(
         language=info.language,
         languageProbability=info.language_probability,
@@ -70,6 +89,7 @@ whisper_service = restate.Service("WhisperService")
 
 @whisper_service.handler()
 async def transcribe(ctx: Context, req: TranscribeRequest) -> TranscribeResponse:
+    logger.info("transcribe request received: artifactUrl=%s", req.artifactUrl)
     tmp_path = await ctx.run_typed("download", _download, artifact_url=req.artifactUrl)
     return await ctx.run_typed("transcribe", _transcribe, tmp_path=tmp_path, language=req.language)
 

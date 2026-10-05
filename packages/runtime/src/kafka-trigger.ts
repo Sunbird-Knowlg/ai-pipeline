@@ -135,7 +135,12 @@ function handlerFor(
         parameter: { input: parsed.data, trigger: trigger_ },
         inputSerde: restate.serde.json,
       });
-      return { runId, invocationId: await handle.invocationId };
+      const invocationId = await handle.invocationId;
+      log.info(
+        { event: 'kafka.trigger.dispatched', triggerId: trigger.id, runId, invocationId },
+        'record accepted, run dispatched',
+      );
+      return { runId, invocationId };
     },
   );
 }

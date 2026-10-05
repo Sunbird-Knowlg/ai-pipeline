@@ -14,15 +14,15 @@ function requireEnv(name: string): string {
   return value;
 }
 
+const log = createLogger(metadata.name);
+
 await serve({ metadata, contract }, [
   createTranscript({
-    knowlg: createKnowlgClient({
-      baseUrl: requireEnv('KNOWLG_BASE_URL'),
-      log: createLogger(metadata.name),
-    }),
+    knowlg: createKnowlgClient({ baseUrl: requireEnv('KNOWLG_BASE_URL'), log }),
     uploadBlob: blobUploaderFromEnv(),
     downloadBlob: blobDownloaderFromEnv(),
     generate: generateFromEnv(),
+    log,
   }),
   transcriptTrigger,
 ]);

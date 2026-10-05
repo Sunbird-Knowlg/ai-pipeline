@@ -10,11 +10,14 @@ version — it does not need to match what a hypothetical TS implementation woul
 """
 
 import json
+import logging
 import os
 import pathlib
 from hashlib import sha256
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 _METADATA_PATH = pathlib.Path(__file__).parent / "metadata.json"
 
@@ -94,14 +97,18 @@ async def register_on_boot() -> None:
 
     url = f"{core_api_url.rstrip('/')}/v1/deployments"
     max_attempts = 20
+    logger.debug("registering with core-api: url=%s body=%s", url, body)
     async with httpx.AsyncClient(timeout=30) as client:
         for attempt in range(1, max_attempts + 1):
             try:
                 response = await client.post(url, json=body)
                 if response.status_code < 300:
-                    print(f"whisper registered: {response.json()}")
+                    logger.info("whisper registered: %s", response.json())
                     return
                 if response.status_code not in _RETRYABLE_STATUS:
+                    logger.error(
+                        "registration refused (%s): %s", response.status_code, response.text
+                    )
                     raise RuntimeError(
                         f"registration refused ({response.status_code}): {response.text}"
                     )
@@ -110,7 +117,11 @@ async def register_on_boot() -> None:
                 last_error = str(error)
 
             if attempt >= max_attempts:
+                logger.error("gave up registering after %d attempts: %s", attempt, last_error)
                 raise RuntimeError(f"gave up registering after {attempt} attempts: {last_error}")
+            logger.warning(
+                "registration attempt %d/%d failed: %s", attempt, max_attempts, last_error
+            )
             await _sleep(min(1.0 * (2 ** (attempt - 1)), 5.0))
 
 
