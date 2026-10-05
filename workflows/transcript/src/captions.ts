@@ -1,7 +1,5 @@
 import type { TranscriptSegment } from './schemas.js';
 
-/** Deterministic, no I/O — safe to call directly in a handler body, never inside `ctx.run`. */
-
 function timestamp(seconds: number): string {
   const ms = Math.round(seconds * 1000);
   const hours = Math.floor(ms / 3_600_000);
@@ -12,13 +10,23 @@ function timestamp(seconds: number): string {
   return `${pad(hours)}:${pad(minutes)}:${pad(secs)}.${pad(millis, 3)}`;
 }
 
+/**
+ * Renders segments as a WebVTT cue file (`WEBVTT` header + one cue per segment).
+ * Deterministic, no I/O — safe to call directly in a handler body, never inside `ctx.run`.
+ */
 export function segmentsToVtt(segments: TranscriptSegment[]): string {
   const cues = segments.map(
-    (segment) => `${timestamp(segment.start)} --> ${timestamp(segment.end)}\n${segment.text.trim()}`,
+    (segment) =>
+      `${timestamp(segment.start)} --> ${timestamp(segment.end)}\n${segment.text.trim()}`,
   );
   return ['WEBVTT', '', ...cues].join('\n\n');
 }
 
+/**
+ * Renders segments as the exact JSON shape `workflow.ts`'s `downloadSegments` re-parses later,
+ * to resume an already-`Live` node without re-transcribing.
+ * Deterministic, no I/O — safe to call directly in a handler body, never inside `ctx.run`.
+ */
 export function segmentsToJson(segments: TranscriptSegment[]): string {
   return JSON.stringify({ segments }, null, 2);
 }
