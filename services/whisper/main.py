@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import tempfile
@@ -96,11 +97,29 @@ async def transcribe(ctx: Context, req: TranscribeRequest) -> TranscribeResponse
 
 app = restate.app([whisper_service])
 
-# Self-registers with core-api once hypercorn is actually serving — see register.py. Hypercorn has
-# no post-start hook, so this runs as an ASGI lifespan "startup" event instead, same ordering
-# guarantee @ai-pipeline/runtime's serve() relies on (core-api's own discovery calls back into
-# this process, so the endpoint must already be listening).
+# Self-registers with core-api once hypercorn is actually serving — see register.py.
+#
+# register_on_boot() must NOT be awaited inline here. Hypercorn will not accept any connection on
+# its port -- including core-api's own callback to verify this process is real -- until it
+# receives lifespan.startup.complete. Awaiting registration before sending that message deadlocks
+# every time: registration can't succeed until the port is open, and the port can't open until
+# registration (as awaited here) returns. Confirmed on the real cluster: hypercorn's own
+# wait_for_startup() timed out first every time, hypercorn exited, Kubernetes restarted the
+# container, and the cycle repeated forever. So: send .complete immediately, and run registration
+# as a background task that starts the instant the port is actually open.
 _original_app = app
+
+
+async def _register_or_die() -> None:
+    """If registration ultimately fails for a real reason, exit hard so Kubernetes restarts the
+    container -- same guarantee the previous inline/awaited version had. A plain exception here
+    would otherwise just be logged by asyncio as "never retrieved" and this process would keep
+    running, unregistered, forever."""
+    try:
+        await register_on_boot()
+    except Exception:
+        logger.exception("registration failed, exiting so the container restarts")
+        os._exit(1)
 
 
 async def app(scope, receive, send):  # noqa: F811 - wraps the restate ASGI app with a lifespan hook
@@ -108,11 +127,8 @@ async def app(scope, receive, send):  # noqa: F811 - wraps the restate ASGI app 
         while True:
             message = await receive()
             if message["type"] == "lifespan.startup":
-                try:
-                    await register_on_boot()
-                    await send({"type": "lifespan.startup.complete"})
-                except Exception as error:  # noqa: BLE001 - reported to the ASGI server, not swallowed
-                    await send({"type": "lifespan.startup.failed", "message": str(error)})
+                asyncio.create_task(_register_or_die())
+                await send({"type": "lifespan.startup.complete"})
             elif message["type"] == "lifespan.shutdown":
                 await send({"type": "lifespan.shutdown.complete"})
                 return
