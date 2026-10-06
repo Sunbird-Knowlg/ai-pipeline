@@ -3,7 +3,7 @@
   "kind": "workflow",
   "name": "transcript",
   "restateName": "Transcript",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Generates a source-language transcript from a video/audio Content's artifact via Whisper, then translates it into the configured target languages",
   "config": {
     "targetLanguages": ["ar", "pt", "fr"],
