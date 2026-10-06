@@ -60,7 +60,7 @@ export type TranscriptSegment = z.infer<typeof TranscriptSegment>;
  * returned an *existing* sibling rather than a brand-new node — see `createEnrichmentObject`'s
  * own doc comment in the client.
  */
-export const EnrichmentObjectResult = z.strictObject({
+export const EnrichmentObjectResult = z.object({
   identifier: z.string(),
   status: z.string(),
   languageCode: z.string().optional(),
