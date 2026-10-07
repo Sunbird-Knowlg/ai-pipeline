@@ -32,7 +32,9 @@ async function call(url: string, init: RequestInit): Promise<Record<string, unkn
   });
   if (!response.ok && response.status < 500) {
     const body = await response.text();
-    throw new restate.TerminalError(`knowlg ${url} rejected the request (${response.status}): ${body}`);
+    throw new restate.TerminalError(
+      `knowlg ${url} rejected the request (${response.status}): ${body}`,
+    );
   }
   if (!response.ok) throw new Error(`knowlg ${url} failed with ${response.status}`);
 

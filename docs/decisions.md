@@ -209,7 +209,9 @@ SeaweedFS is for, dead code, over-engineering.
   - the digest hashes the lockfile's external resolution graph (`packages:`, `snapshots:`) rather than
     the whole file. `turbo prune --docker` writes a pruned lockfile per image, so another package's
     `importers:` entry never reaches this unit's build — and `importers:` restates declared
-    specifiers that every package.json in the closure already contributes.
+    specifiers that every package.json in the closure already contributes. (Superseded on
+    2026-10-01: the digest now hashes only the closure's slice of the lockfile; see "Closure-scoped
+    artifact digest" below.)
   - Verified end to end: scaffolding a workflow with its own Kafka trigger, installing, and removing
     it again leaves both existing units' digests byte-identical.
 - **Adding a unit is one command.** `pnpm pipeline new <kind> <name> [--kafka <topic>]` writes the
@@ -350,7 +352,8 @@ authenticated boundary: still v2, below. Failing closed on missing idempotency e
 gate, and per-model token budgets: above. Pruning the lockfile to a unit's own closure for the
 artifact digest: `artifact.ts` keeps `packages:`/`snapshots:` whole on purpose, so it over-invalidates
 (extra version bumps) rather than under-invalidates (shipping stale bytes), and that is the safe
-direction.
+direction. (Done on 2026-10-01, failing closed so it cannot under-invalidate: see "Closure-scoped
+artifact digest" below.)
 
 ## Production on Kubernetes
 
@@ -411,11 +414,121 @@ What moves, and what does not:
 
 [k8s]: https://docs.restate.dev/services/deploy/kubernetes
 
+## Closure-scoped artifact digest (2026-10-01)
+
+This reverses the 2026-09-23 decision to hash the lockfile's `packages:` and `snapshots:` whole.
+
+**The problem.** That rule kept invariant 17 only for workspace changes. The first unit to add an
+external npm dependency (RAG, for `@mastra/*`) would have changed the digest of every existing unit:
+the new resolutions land in the shared lockfile, even though `turbo prune --docker` never puts them
+into those units' images.
+
+**The fix.** The digest now hashes only what the image build reads for this unit:
+
+- **Lockfile** (`apps/cli/src/lockfile.ts`): the `importers` of the unit's closure plus `.`, and every
+  snapshot and package entry they reach through `dependencies`, `devDependencies` and
+  `optionalDependencies`. `refToRelative` and `removeSuffix` are ports of pnpm's own key rules
+  (aliases; nested peer and `patch_hash` suffixes).
+- **`pnpm-workspace.yaml`**: everything except the catalogs. A catalog's resolved version shows up in
+  the closure's importers anyway.
+- **Root `package.json`**: everything except non-lifecycle scripts. Its devDependencies stay, because
+  the repo-local turbo they pin runs the image build.
+- **`turbo.json`**: a denylist, not an allowlist. Dropped: `$schema`, `globalPassThroughEnv`,
+  `boundaries`, and tasks outside the `build` dependency closure. Unknown keys stay hashed.
+- **Gaps closed at the same time**:
+  - each closure package's own `turbo.json`, minus `tags`;
+  - package-root README, LICENSE and CHANGELOG files, which `pnpm deploy` packs;
+  - root `.npmrc`, `.pnpmfile.cjs` and `patches/**`;
+  - workspace `optionalDependencies`.
+
+**Failing closed.** A lockfile the walk does not fully understand throws rather than hashing less.
+That covers a version other than `9.0`, an unknown top-level section, a missing importer, a dangling
+reference and a snapshot without a package entry. Hashing less is how an image changes under an
+unchanged digest (invariant 5).
+
+**Verified.** All units were bumped once for the new algorithm: summary 0.2.6, content-metadata
+0.1.6, quiz-generate 0.1.6, content-authoring 0.1.6, content-enrichment 0.2.6, transcript 0.1.7 and
+versioned-sleeper 1.1.2. After that, a scratch package with a new external dependency left every
+unit's digest byte-identical.
+
+**Folded into the same bump:**
+
+- `ai`, `@ai-sdk/openai-compatible`, `pg` and `@types/pg` moved to the catalog;
+- `packages/ai` gained `./embed` and `./language-model`;
+- three transcript files that had drifted from Prettier were formatted.
+
+All of these changed artifacts that were being bumped anyway, so none of them forces a second round.
+
+## RAG with Mastra on PgVector (2026-10-01)
+
+The deferred v2 item, built: `workflows/rag-ingest`, `services/rag-query` and `packages/rag`, behind
+core-api's `/v1/rag` routes. [docs/rag.md](rag.md) has the details; these are the choices that shape
+it.
+
+- **PgVector, in a database of its own.** The catalogue's Postgres image became
+  `pgvector/pgvector:0.8.6-pg17-bookworm` (the same 17.11), and `30-rag.sql` provisions the `rag`
+  database. It holds a registry (`rag_collections`), a ledger (`rag_documents`) and, in schema
+  `vectors`, one Mastra PgVector table per collection incarnation. None of this is execution state:
+  Restate is still the run store.
+- **Vector tables are the one runtime DDL.** A collection is data, created and dropped at run time,
+  and its table has the dimension of its embedding model. The registry, the ledger, the extension
+  and the schema are provisioned like the catalogue; Mastra's `createIndex` creates the per-collection
+  tables.
+- **No Chunk/Embedding/VectorStore services.** The deferred plan sketched them. Their calls would
+  carry vectors through the Restate journal (~10 KB per 1024-dimension chunk, twice per hop).
+  Instead each document is one `ctx.run`: chunk, extract, embed, write. Only a small result is
+  journaled. Chunking is deterministic, so a retry recomputes rather than reads back.
+- **One transaction per document write.** Vectors and ledger change together, on one connection,
+  under an advisory lock and `FOR SHARE` on the collection row. That gives the following properties:
+  - newest-wins ordering on `(version ?? receivedAt, runId)`;
+  - unchanged content settled without re-embedding, but with its order moved forward;
+  - tombstones for deletes, so a late older write cannot resurrect a document.
+
+  The rows are written with SQL against PgVector's table layout, because `PgVector.upsert` cannot
+  join the transaction. `store.pg.test.ts` pins the layout against real pgvector. The advisory lock
+  protects the store's consistency, as a database lock should. It does not serialise invocations, so
+  it is not Restate's job reimplemented — and a Virtual Object could not be bundled into a unit
+  anyway (one endpoint serves one unit).
+
+- **A table per incarnation** (`c_<16 hex of the run's ctx.rand uuid>`). PgVector caches index
+  metadata per process by table name. If a dropped and re-created collection reused its table, a
+  process holding the old metadata would query a stale shape. Unique names also keep every Mastra
+  index name under Postgres' 63-character limit.
+- **Queries go through Restate, and the wire is opaque in core-api.** `RagQuery` is a public service
+  that core-api calls by catalogue name through the ingress, so it is versioned and deployed like any
+  unit, and core-api holds no model credentials. core-api imports no RAG contract (invariant 16):
+  the routes pass JSON through, as a run's `output` already does, and map failures to existing error
+  codes. A new code in `api-contract` would have changed every unit's artifact.
+- **`RagQuery` serves six handlers but catalogues one** (`search`): `ContractEntry` records a single
+  handler. The others (`answer`, `listCollections`, `getCollection`, `listDocuments`, `getDocument`)
+  are reached only through core-api's routes and documented in docs/rag.md. Being a synchronous
+  backend, it retries less (3 attempts, then killed) and keeps journals for one hour, not seven days.
+- **Mastra where it applies:**
+  - used: `MDocument` and every chunking strategy; the metadata extractors; `PgVector` for index
+    creation, queries and drops; `rerankWithScorer`, with a scorer of our own over `Generate`.
+    Mastra's `MastraAgentRelevanceScorer` takes no deadline or abort signal, and throws on any
+    reply but a bare number, which fails the whole rerank for one chatty candidate;
+  - not used: `createVectorQueryTool`, which swallows store errors and replaces filters instead of
+    ANDing them, and GraphRAG, whose graph is built in memory from one query's results.
+- **Filters are whitelisted, not passed through.** Mastra compiles some filter shapes to SQL that
+  silently loses or misreads a condition (dot paths beside nested fields, `$exists` on a path, an
+  empty filter in `$and`, numbers in `$all`). Chunk metadata is flat, so `RagQuery` accepts single
+  keys and the sound operators only, bounded in size; `filter.pg.test.ts` runs every accepted shape
+  against real pgvector.
+- **IVFFlat is not offered.** Mastra builds it when the collection is created, on an empty table,
+  so it is untrained. HNSW (m 16, ef_construction 64, rather than Mastra's 8/32) or `flat` instead.
+- **Embedding aliases are immutable** (`embed-qwen3-0p6b`). A collection is bound to its embedding
+  model for life; remapping a "default" alias would silently mix vector spaces. A size change is
+  caught and fails the document.
+- **"Mastra is deferred to v2 agent/RAG work" is lifted** for RAG; generation elsewhere stays on
+  `Generate`.
+
 ## Deferred (v2+)
 
-RAG:
+RAG (built on 2026-10-01; see "RAG with Mastra on PgVector" above). Still open:
 
-- `RagIngestionWorkflow`, plus Chunk, Embedding and VectorStore services on pgvector, with Mastra where it applies.
+- Further sources (URLs, blob storage, knowlg reads, file parsing), answer streaming, hybrid search,
+  reindexing a collection under a new embedding model, and auth/tenant scoping for `/v1/rag`.
 
 Access and interfaces:
 

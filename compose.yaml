@@ -8,7 +8,8 @@ networks:
 
 services:
   postgres:
-    image: postgres:17.11-bookworm
+    # Postgres 17.11 (the version this used before) with pgvector 0.8.6, for the RAG store.
+    image: pgvector/pgvector:0.8.6-pg17-bookworm
     restart: unless-stopped
     environment:
       POSTGRES_DB: pipeline
@@ -16,8 +17,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      # Provisioning: the databases and the catalogue schema. The official image runs these once,
-      # against an empty data directory — the API never creates tables.
+      # Provisioning: the databases, the catalogue schema and the RAG store (registry, ledger and the
+      # `vector` extension). The official image runs these once, against an empty data directory —
+      # the API never creates tables.
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
     ports:
       - 127.0.0.1:5432:5432
@@ -75,7 +77,11 @@ services:
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
         --topic content.published --partitions 3 --replication-factor 1 &&
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
-        --topic diksha.content.published --partitions 3 --replication-factor 1
+        --topic diksha.content.published --partitions 3 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
+        --topic rag.documents --partitions 3 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
+        --topic rag.ingest --partitions 3 --replication-factor 1
     restart: 'no'
 
   restate:
@@ -148,6 +154,10 @@ services:
       RESTATE_ADMIN_URL: http://restate:9070
       KAFKA_CLUSTER_NAME: local
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # How long the /v1/rag routes wait on rag-query before a 504: reads and searches, then answers
+      # (and searches that rerank). At most 290000: Node's fetch stops waiting at 300 s.
+      RAG_QUERY_TIMEOUT_MS: ${RAG_QUERY_TIMEOUT_MS:-30000}
+      RAG_ANSWER_TIMEOUT_MS: ${RAG_ANSWER_TIMEOUT_MS:-240000}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel:4318
       OTEL_SERVICE_NAME: core-api
     ports:

@@ -17,4 +17,6 @@ export default async function setup() {
   cli('deploy', 'quiz-generate');
   cli('deploy', 'content-enrichment');
   cli('deploy', 'content-authoring');
+  cli('deploy', 'rag-query');
+  cli('deploy', 'rag-ingest');
 }

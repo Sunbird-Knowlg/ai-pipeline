@@ -62,14 +62,18 @@ export default defineConfig({
         test: {
           name: 'unit',
           include: ['{packages,services,workflows,apps}/*/src/**/*.test.ts'],
-          exclude: ['**/*.replay.test.ts', '**/node_modules/**'],
+          // Both need Docker: always-replay Restate tests, and store tests against real Postgres.
+          exclude: ['**/*.replay.test.ts', '**/*.pg.test.ts', '**/node_modules/**'],
         },
       },
       {
         resolve,
         test: {
           name: 'replay',
-          include: ['{packages,services,workflows,apps}/*/src/**/*.replay.test.ts'],
+          include: [
+            '{packages,services,workflows,apps}/*/src/**/*.replay.test.ts',
+            '{packages,services,workflows,apps}/*/src/**/*.pg.test.ts',
+          ],
           testTimeout: 120_000,
           hookTimeout: 180_000,
           fileParallelism: false,

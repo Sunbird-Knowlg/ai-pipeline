@@ -108,6 +108,39 @@ describe('error envelope', () => {
     expect(badBody.json().error.code).toBe('INVALID_REQUEST');
   });
 
+  it('serves the RAG routes under /v1, refusing while rag-query is not catalogued', async () => {
+    const res = await app().inject({
+      url: '/v1/rag/collections',
+      headers: { host: 'localhost' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('NOT_DEPLOYED');
+  });
+
+  // Fastify refuses these before any route, hook or error handler runs.
+  it('wraps a path parameter over the router’s 512-character limit (414)', async () => {
+    const res = await app().inject({
+      url: `/v1/rag/collections/docs/documents/${'a'.repeat(513)}`,
+      headers: { host: 'localhost' },
+    });
+    expect(res.statusCode).toBe(414);
+    expect(res.json()).toEqual({
+      error: { code: 'INVALID_REQUEST', message: expect.stringContaining('max param length') },
+    });
+  });
+
+  it('wraps a URL that is not valid percent-encoding (400)', async () => {
+    const res = await app().inject({
+      method: 'DELETE',
+      url: '/v1/rag/collections/docs/documents/50%off',
+      headers: { host: 'localhost' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({
+      error: { code: 'INVALID_REQUEST', message: expect.stringContaining('not a valid url') },
+    });
+  });
+
   it('reports malformed JSON as a client error, not a crash', async () => {
     const res = await app().inject({
       method: 'POST',

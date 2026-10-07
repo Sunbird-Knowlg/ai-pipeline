@@ -1,11 +1,13 @@
 import type { Logger } from '@ai-pipeline/observability/logger';
 import Fastify from 'fastify';
+import { RAG_TIMEOUTS } from './config.js';
 import type { ControlPlane } from './domain/deps.js';
 import { controlPlanePlugin } from './plugins/control-plane.js';
-import { errorsPlugin } from './plugins/errors.js';
+import { errorsPlugin, frameworkErrors } from './plugins/errors.js';
 import { securityPlugin } from './plugins/security.js';
 import { deploymentRoutes } from './routes/deployments.js';
 import { healthRoutes } from './routes/health.js';
+import { ragRoutes } from './routes/rag.js';
 import { runRoutes } from './routes/runs.js';
 import { workflowRoutes } from './routes/workflows.js';
 import type { RestateAdminPort } from './restate/admin.js';
@@ -20,10 +22,12 @@ export interface AppDeps {
   kafka: { cluster: string; bootstrapServers: string };
   log: Logger;
   allowedHosts: string[];
+  /** How long the RAG routes wait for `RagQuery`. Defaults to the configuration's defaults. */
+  ragTimeouts?: { queryMs: number; answerMs: number };
 }
 
 /**
- * Wires the HTTP surface: an instance, three plugins, four route groups. Nothing else belongs here
+ * Wires the HTTP surface: an instance, three plugins, five route groups. Nothing else belongs here
  * — the rules live in `domain/`, the SQL in `store/`, the Restate calls in `restate/`, and the
  * row-to-wire mapping in `views.ts`.
  */
@@ -33,6 +37,8 @@ export function buildApp(deps: AppDeps) {
     bodyLimit: 1024 * 1024,
     requestTimeout: 30_000,
     routerOptions: { maxParamLength: 512 },
+    // A URL the router cannot read is refused before any hook runs; this keeps it in the envelope.
+    frameworkErrors,
   });
 
   const controlPlane: ControlPlane = {
@@ -51,6 +57,7 @@ export function buildApp(deps: AppDeps) {
   void app.register(deploymentRoutes, { prefix: '/v1' });
   void app.register(workflowRoutes, { prefix: '/v1' });
   void app.register(runRoutes, { prefix: '/v1' });
+  void app.register(ragRoutes, { prefix: '/v1', ...(deps.ragTimeouts ?? RAG_TIMEOUTS) });
 
   return app;
 }

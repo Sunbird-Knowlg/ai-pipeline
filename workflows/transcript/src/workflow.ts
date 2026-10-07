@@ -212,7 +212,12 @@ export function createTranscript(deps: TranscriptDeps) {
           const sourceUrls = await ctx.run(
             'blob.upload-source',
             () =>
-              uploadArtifacts(deps.uploadBlob, parentId, whisperResult.language, whisperResult.segments),
+              uploadArtifacts(
+                deps.uploadBlob,
+                parentId,
+                whisperResult.language,
+                whisperResult.segments,
+              ),
             retry.http,
           );
 
@@ -240,7 +245,9 @@ export function createTranscript(deps: TranscriptDeps) {
           sourceStatus = approvedSource.status;
         }
 
-        const targetLanguages = config.targetLanguages.filter((lang) => lang !== sourceLanguageCode);
+        const targetLanguages = config.targetLanguages.filter(
+          (lang) => lang !== sourceLanguageCode,
+        );
         const translations: TranscriptResult[] = [];
         for (const lang of targetLanguages) {
           translations.push(
@@ -250,7 +257,11 @@ export function createTranscript(deps: TranscriptDeps) {
 
         return {
           parentId,
-          source: { identifier: source.identifier, languageCode: sourceLanguageCode, status: sourceStatus },
+          source: {
+            identifier: source.identifier,
+            languageCode: sourceLanguageCode,
+            status: sourceStatus,
+          },
           translations,
         };
       },

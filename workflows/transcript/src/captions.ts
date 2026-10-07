@@ -14,7 +14,8 @@ function timestamp(seconds: number): string {
 
 export function segmentsToVtt(segments: TranscriptSegment[]): string {
   const cues = segments.map(
-    (segment) => `${timestamp(segment.start)} --> ${timestamp(segment.end)}\n${segment.text.trim()}`,
+    (segment) =>
+      `${timestamp(segment.start)} --> ${timestamp(segment.end)}\n${segment.text.trim()}`,
   );
   return ['WEBVTT', '', ...cues].join('\n\n');
 }

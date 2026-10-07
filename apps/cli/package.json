@@ -15,6 +15,8 @@
     "@ai-pipeline/api-contract": "workspace:*",
     "@ai-pipeline/contracts": "workspace:*",
     "@ai-pipeline/metadata": "workspace:*",
+    "jsonc-parser": "3.3.1",
+    "yaml": "2.9.1",
     "zod": "catalog:"
   },
   "devDependencies": {

@@ -97,7 +97,7 @@ export async function startRun(
 }
 
 /** Digest of the canonical input, so key order in the JSON does not make two requests differ. */
-const requestDigest = (input: unknown): string =>
+export const requestDigest = (input: unknown): string =>
   createHash('sha256').update(canonicalJson(input)).digest('hex').slice(0, 32);
 
 /**

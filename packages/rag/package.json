@@ -1,0 +1,55 @@
+{
+  "name": "@ai-pipeline/rag",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./ids": {
+      "@ai-pipeline/source": "./src/ids.ts",
+      "types": "./dist/ids.d.ts",
+      "default": "./dist/ids.js"
+    },
+    "./memory": {
+      "@ai-pipeline/source": "./src/memory.ts",
+      "types": "./dist/memory.d.ts",
+      "default": "./dist/memory.js"
+    },
+    "./schemas": {
+      "@ai-pipeline/source": "./src/schemas.ts",
+      "types": "./dist/schemas.d.ts",
+      "default": "./dist/schemas.js"
+    },
+    "./store": {
+      "@ai-pipeline/source": "./src/store.ts",
+      "types": "./dist/store.d.ts",
+      "default": "./dist/store.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@ai-pipeline/contracts": "workspace:*",
+    "@mastra/core": "catalog:",
+    "@mastra/pg": "1.28.0",
+    "@restatedev/restate-sdk": "catalog:",
+    "pg": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-pipeline/eslint-config": "workspace:*",
+    "@ai-pipeline/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "eslint": "catalog:",
+    "re2js": "catalog:",
+    "testcontainers": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

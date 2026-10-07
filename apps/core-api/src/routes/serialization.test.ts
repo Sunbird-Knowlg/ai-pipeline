@@ -1,3 +1,4 @@
+import { opaqueJson } from '@ai-pipeline/api-contract/params';
 import { runView } from '@ai-pipeline/api-contract/runs';
 import { responseSchema } from '@ai-pipeline/api-contract/serialization';
 import { workflowDetail } from '@ai-pipeline/api-contract/workflows';
@@ -59,6 +60,30 @@ describe('run view', () => {
     expect(Object.keys(body).sort()).toEqual(
       ['createdAt', 'invocationId', 'restateStatus', 'runId', 'status', 'workflow'].sort(),
     );
+  });
+});
+
+describe('RAG responses', () => {
+  // The RAG routes answer with `RagQuery`'s own JSON, which core-api deliberately does not describe
+  // (it never imports a unit's contract). An opaque schema must therefore drop nothing.
+  it('pass the service’s JSON through untouched, whatever its shape', async () => {
+    const answer = {
+      status: 'answered',
+      answer: 'Restate journals every step [S1], so a crash replays it [S2].',
+      citations: [
+        { id: 'S1', documentId: 'guides/intro.md', chunkIndex: 0, score: 0.8125 },
+        { id: 'S2', documentId: 'guides/replay.md', chunkIndex: 3, score: 0.5 },
+      ],
+      hits: [{ metadata: { tags: ['a', 'b'], lang: 'en', version: null, nested: { deep: [1] } } }],
+      nextCursor: null,
+      unicode: 'naïve — ✓',
+    };
+    expect(await serve(responseSchema(opaqueJson), answer)).toEqual(answer);
+  });
+
+  it('pass a top-level array through too', async () => {
+    const collections = [{ name: 'docs', documents: 2 }, { name: 'notes' }];
+    expect(await serve(responseSchema(opaqueJson), collections)).toEqual(collections);
   });
 });
 

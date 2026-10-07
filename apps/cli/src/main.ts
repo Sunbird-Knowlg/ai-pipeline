@@ -9,7 +9,8 @@ import { scaffold } from './commands/scaffold.js';
 import { coreApi } from './core-api.js';
 import { dockerCli } from './docker.js';
 import { readDotEnv, root, setting } from './env.js';
-import { discoverUnits } from './units.js';
+import { scopedUnitEnv } from './unit-env.js';
+import { discoverUnits, findUnit } from './units.js';
 
 /**
  * `pnpm pipeline …`. This file does argument handling and printing only; each command is a function
@@ -32,7 +33,7 @@ const USAGE = `pipeline <command>
   cancel <workflow> <runId>       cancel a run
 
 env: CORE_API_URL (http://127.0.0.1:3000), UNIT_CORE_API_URL (http://core-api:3000),
-     DOCKER_NETWORK (ai-pipeline)`;
+     DOCKER_NETWORK (ai-pipeline), UNIT_RAG_DATABASE_URL (the compose rag database)`;
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -99,7 +100,14 @@ async function main(): Promise<void> {
             name,
             dev: values.dev ?? false,
             network,
-            env,
+            env: {
+              ...env,
+              ...scopedUnitEnv(
+                repo,
+                findUnit(repo, name).packageName,
+                (key) => process.env[key] ?? dotEnv[key],
+              ),
+            },
             api,
             docker: dockerCli,
             log: (line) => {

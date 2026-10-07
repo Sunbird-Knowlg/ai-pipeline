@@ -2,7 +2,7 @@ import { createLogger, type Logger } from '@ai-pipeline/observability/logger';
 import { parseMetadata, type Metadata } from '@ai-pipeline/metadata/metadata';
 import type { ControlPlane } from '../domain/deps.js';
 import type { RestateAdminPort, Subscription } from '../restate/admin.js';
-import type { IngressPort, Submission } from '../restate/ingress.js';
+import type { IngressPort, ServiceCallOptions, Submission } from '../restate/ingress.js';
 import type { Definition } from '../store/definitions.js';
 import type { Deployment } from '../store/deployments.js';
 import type { TriggerRecord } from '../store/triggers.js';
@@ -122,20 +122,38 @@ export function fakeAdmin(overrides: Partial<FakeAdmin> = {}): FakeAdmin {
   return admin;
 }
 
+export interface ServiceCall {
+  service: string;
+  handler: string;
+  request: unknown;
+  options: ServiceCallOptions;
+}
+
 export interface FakeIngress extends IngressPort {
   submissions: { restateName: string; runId: string; request: unknown }[];
   output: unknown;
+  /** Every `callService`, in order. */
+  serviceCalls: ServiceCall[];
+  /** What `callService` answers. An `Error` here (a `ServiceCallError`, say) is thrown instead. */
+  serviceReply: unknown;
 }
 
 export function fakeIngress(overrides: Partial<FakeIngress> = {}): FakeIngress {
   const ingress: FakeIngress = {
     submissions: [],
     output: undefined,
+    serviceCalls: [],
+    serviceReply: {},
     submitWorkflow: async (restateName, runId, request): Promise<Submission> => {
       ingress.submissions.push({ restateName, runId, request });
       return { invocationId: `inv_${String(ingress.submissions.length)}`, status: 'Accepted' };
     },
     workflowOutput: async () => ingress.output,
+    callService: async (service, handler, request, options) => {
+      ingress.serviceCalls.push({ service, handler, request, options });
+      if (ingress.serviceReply instanceof Error) throw ingress.serviceReply;
+      return ingress.serviceReply;
+    },
     ...overrides,
   };
   return ingress;

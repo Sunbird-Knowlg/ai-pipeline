@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./embed": {
+      "@ai-pipeline/source": "./src/embed.ts",
+      "types": "./dist/embed.d.ts",
+      "default": "./dist/embed.js"
+    },
     "./errors": {
       "@ai-pipeline/source": "./src/errors.ts",
       "types": "./dist/errors.d.ts",
@@ -13,6 +18,11 @@
       "@ai-pipeline/source": "./src/generate.ts",
       "types": "./dist/generate.d.ts",
       "default": "./dist/generate.js"
+    },
+    "./language-model": {
+      "@ai-pipeline/source": "./src/language-model.ts",
+      "types": "./dist/language-model.d.ts",
+      "default": "./dist/language-model.js"
     }
   },
   "files": [
@@ -24,9 +34,9 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "3.0.53",
+    "@ai-sdk/openai-compatible": "catalog:",
     "@opentelemetry/api": "catalog:",
-    "ai": "7.0.109",
+    "ai": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
@@ -34,6 +44,7 @@
     "@ai-pipeline/typescript-config": "workspace:*",
     "@types/node": "catalog:",
     "eslint": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

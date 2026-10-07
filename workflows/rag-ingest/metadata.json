@@ -1,0 +1,59 @@
+{
+  "apiVersion": "ai-pipeline/v1alpha1",
+  "kind": "workflow",
+  "name": "rag-ingest",
+  "restateName": "RagIngest",
+  "version": "0.1.0",
+  "description": "Generic RAG ingestion with Mastra: chunks, optionally enriches, embeds and stores documents in a PgVector collection; also deletes documents and drops collections",
+  "config": {
+    "defaults": {
+      "collection": {
+        "description": "",
+        "embedding": {
+          "model": "embed-qwen3-0p6b",
+          "queryTemplate": "Instruct: Given a search query, retrieve relevant passages that answer the query\nQuery: {query}",
+          "documentTemplate": "{title}\n\n{text}"
+        },
+        "index": {
+          "metric": "cosine",
+          "type": "hnsw",
+          "hnsw": { "m": 16, "efConstruction": 64 },
+          "vectorType": "vector",
+          "metadataIndexes": []
+        }
+      },
+      "chunking": { "strategy": "recursive", "maxSize": 1500, "overlap": 150 },
+      "extractModel": "chat-default",
+      "embeddingBatchSize": 32
+    },
+    "limits": {
+      "documentConcurrency": 4,
+      "maxChunksPerDocument": 2000,
+      "maxExtractChunks": 64
+    },
+    "eventMappings": {
+      "documentEvent": {
+        "collection": "documents",
+        "when": [{ "path": "type", "equals": "document" }],
+        "deleteWhen": [{ "path": "deleted", "equals": true }],
+        "documentId": "id",
+        "text": ["title", "body"],
+        "title": "title",
+        "version": "version",
+        "format": "markdown",
+        "metadata": { "lang": "lang", "source": "source", "tags": "tags" }
+      }
+    }
+  },
+  "triggers": [
+    { "id": "api", "type": "rest" },
+    { "id": "ingest", "type": "kafka", "cluster": "local", "topic": "rag.ingest" },
+    {
+      "id": "documents",
+      "type": "kafka",
+      "cluster": "local",
+      "topic": "rag.documents",
+      "adapter": "documentEvent"
+    }
+  ]
+}

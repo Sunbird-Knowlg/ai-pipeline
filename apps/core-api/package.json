@@ -22,15 +22,15 @@
     "ajv-formats": "3.0.1",
     "fastify": "5.12.5",
     "fastify-plugin": "6.0.0",
-    "pg": "8.23.0",
-    "re2js": "2.8.6",
+    "pg": "catalog:",
+    "re2js": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@ai-pipeline/eslint-config": "workspace:*",
     "@ai-pipeline/typescript-config": "workspace:*",
     "@types/node": "catalog:",
-    "@types/pg": "8.23.1",
+    "@types/pg": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

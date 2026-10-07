@@ -1,0 +1,20 @@
+{
+  "apiVersion": "ai-pipeline/v1alpha1",
+  "kind": "service",
+  "name": "rag-query",
+  "restateName": "RagQuery",
+  "version": "0.1.0",
+  "description": "Searches RAG collections (PgVector) and answers questions from them with cited sources; also lists collections and documents",
+  "visibility": "public",
+  "config": {
+    "answerModel": "chat-default",
+    "rerankModel": "chat-default",
+    "defaults": { "topK": 5 },
+    "limits": {
+      "maxTopK": 50,
+      "maxCandidates": 20,
+      "maxContextChars": 12000,
+      "maxOutputTokens": 2048
+    }
+  }
+}

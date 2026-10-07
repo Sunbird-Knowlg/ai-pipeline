@@ -10,6 +10,7 @@ const manifestSchema = z.looseObject({
   name: z.string().min(1),
   dependencies: z.record(z.string(), z.string()).default({}),
   devDependencies: z.record(z.string(), z.string()).default({}),
+  optionalDependencies: z.record(z.string(), z.string()).default({}),
 });
 
 export type Manifest = z.infer<typeof manifestSchema>;

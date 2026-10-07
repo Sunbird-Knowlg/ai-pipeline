@@ -8,7 +8,7 @@ A Restate-native AI pipeline platform.
 - Each **workflow or service** is an independently deployable container.
 - LLM calls go through **LiteLLM**, which routes to host Ollama.
 
-Two examples ship with it:
+Two examples ship with it, plus a RAG pair:
 
 - **`content-authoring` is the reference.** A DIKSHA content item arrives by REST or by Kafka
   `diksha.content.published`, and the run returns an authoring pack: a summary, extracted metadata
@@ -18,6 +18,11 @@ Two examples ship with it:
   workflow**: it walks through every decision the handler makes and why.
 - **`content-enrichment` is the minimal one.** REST or Kafka `content.published`, one durable call
   to the private `summary` service, `{ summary, metadata }` back. Read it for the skeleton.
+- **`rag-ingest` and `rag-query` are retrieval-augmented generation with Mastra.** `rag-ingest`
+  indexes documents into PgVector collections — chunk, optionally extract, embed, write — from REST
+  or from Kafka, with the event shape and target collection set in configuration. `rag-query` serves
+  core-api's `/v1/rag` routes: search, answer with citations, collections and documents. Read
+  [docs/rag.md](docs/rag.md).
 
 ```
 REST  ──► core-api ──(restate-sdk-clients)──┐
@@ -43,7 +48,8 @@ The design is in [docs/plan.md](docs/plan.md). Settled decisions and lessons lea
 | `packages/api-contract`            | the HTTP surface: request/response schemas, the error envelope and its code union              |
 | `packages/metadata`                | the `metadata.json` schema (`./metadata`), Restate naming (`./naming`), `./run-ids`            |
 | `packages/runtime`                 | small helpers: `./retry`, `./options`, `./kafka-trigger`, `./config`, `./serve`                |
-| `packages/ai`                      | `Generate` over LiteLLM (AI SDK); providers stay behind it                                     |
+| `packages/ai`                      | `Generate`, `Embed` and language models over LiteLLM (AI SDK); providers stay behind it        |
+| `packages/rag`                     | the RAG store (PgVector + registry + ledger), its zod schemas, deterministic ids               |
 | `packages/observability`           | pino logger and optional OTel SDK                                                              |
 | `packages/typescript-config`       | the shared `tsc` presets every package extends                                                 |
 | `packages/eslint-config`           | the shared lint rules, including the handler determinism checks                                |
@@ -51,8 +57,10 @@ The design is in [docs/plan.md](docs/plan.md). Settled decisions and lessons lea
 | `services/summary`                 | `SummaryService`, private; one durable LLM step                                                |
 | `services/content-metadata`        | `ContentMetadataService`, private; keywords, concepts and a difficulty                         |
 | `services/quiz-generate`           | `QuizGenerateService`, private; multiple-choice questions                                      |
+| `services/rag-query`               | `RagQuery`, public: search, answer, collections, documents — behind core-api's `/v1/rag`       |
 | `workflows/content-authoring`      | the reference workflow ([walkthrough](docs/example-workflow.md)); two triggers, three services |
 | `workflows/content-enrichment`     | `ContentEnrichment` workflow, its Kafka trigger service and adapter                            |
+| `workflows/rag-ingest`             | `RagIngest`: generic Mastra ingestion into PgVector; REST and config-driven Kafka triggers     |
 | `apps/core-api`                    | Fastify: HTTP (`routes/`, `plugins/`) over rules (`domain/`) over stores (`store/`)            |
 | `apps/cli`                         | `pnpm pipeline …`: `commands/` over a typed API client and a Docker port                       |
 | `tests/fixtures/versioned-sleeper` | test-only workflow used for the versioning e2e                                                 |
@@ -65,7 +73,7 @@ direction of the graph: contracts depend on nothing above them, and nothing depe
 
 ## Set up
 
-You need Docker, Node 22.13 or newer, pnpm 11 (`corepack enable`), and a host Ollama serving `qwen3.5:4b` (`ollama pull qwen3.5:4b`).
+You need Docker, Node 22.13 or newer, pnpm 11 (`corepack enable`), and a host Ollama serving `qwen3.5:4b` (`ollama pull qwen3.5:4b`), plus `qwen3-embedding:0.6b` for RAG (`ollama pull qwen3-embedding:0.6b`).
 
 ```sh
 cp .env.example .env
@@ -73,6 +81,7 @@ pnpm install && pnpm build
 docker compose up -d --build            # postgres, kafka, restate, litellm, otel, core-api
 pnpm pipeline deploy summary content-metadata quiz-generate   # dependencies first
 pnpm pipeline deploy content-enrichment content-authoring
+pnpm pipeline deploy rag-query rag-ingest                     # RAG (docs/rag.md)
 ```
 
 All ports bind to `127.0.0.1` only:
@@ -109,21 +118,25 @@ the way it is.
 
 ### Core API
 
-| Area          | Route                                                                                                                      |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Workflows     | `POST /v1/workflows/:name/runs` `{ input }` with optional `Idempotency-Key` → 202 `{ runId, invocationId, status }`        |
-| Runs          | `GET /v1/runs?workflow=&status=&limit=&cursor=`                                                                            |
-| Runs          | `GET /v1/runs/:workflow/:runId` (returns `output` once completed)                                                          |
-| Runs          | `POST /v1/runs/:workflow/:runId/cancel` (graceful — the handler unwinds)                                                   |
-| Runs          | `POST /v1/runs/:workflow/:runId/kill` (immediate — no unwinding, children abandoned)                                       |
-| Runs          | `POST /v1/runs/:workflow/:runId/resume` (a paused run; see the retry policy below)                                         |
-| Catalogue     | `GET /v1/workflows?kind=`                                                                                                  |
-| Catalogue     | `GET /v1/workflows/:name` (schemas, config, triggers with desired and observed state, dependencies, versions, deployments) |
-| Catalogue     | `PATCH /v1/workflows/:name/triggers/:id` `{ enabled }`                                                                     |
-| Control plane | `POST /v1/deployments` (posted by each unit on boot; `200 alreadyRegistered` when the same build is live)                  |
-| Control plane | `GET /v1/deployments?name=` (includes in-flight counts)                                                                    |
-| Control plane | `DELETE /v1/deployments/:id` (retire; refused until drained)                                                               |
-| Health        | `GET /health/live`, `GET /health/ready`                                                                                    |
+| Area          | Route                                                                                                                        |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Workflows     | `POST /v1/workflows/:name/runs` `{ input }` with optional `Idempotency-Key` → 202 `{ runId, invocationId, status }`          |
+| Runs          | `GET /v1/runs?workflow=&status=&limit=&cursor=`                                                                              |
+| Runs          | `GET /v1/runs/:workflow/:runId` (returns `output` once completed)                                                            |
+| Runs          | `POST /v1/runs/:workflow/:runId/cancel` (graceful — the handler unwinds)                                                     |
+| Runs          | `POST /v1/runs/:workflow/:runId/kill` (immediate — no unwinding, children abandoned)                                         |
+| Runs          | `POST /v1/runs/:workflow/:runId/resume` (a paused run; see the retry policy below)                                           |
+| Catalogue     | `GET /v1/workflows?kind=`                                                                                                    |
+| Catalogue     | `GET /v1/workflows/:name` (schemas, config, triggers with desired and observed state, dependencies, versions, deployments)   |
+| Catalogue     | `PATCH /v1/workflows/:name/triggers/:id` `{ enabled }`                                                                       |
+| Control plane | `POST /v1/deployments` (posted by each unit on boot; `200 alreadyRegistered` when the same build is live)                    |
+| Control plane | `GET /v1/deployments?name=` (includes in-flight counts)                                                                      |
+| Control plane | `DELETE /v1/deployments/:id` (retire; refused until drained)                                                                 |
+| RAG           | `GET /v1/rag/collections`, `GET /v1/rag/collections/:collection` (settings, document and chunk counts)                       |
+| RAG           | `GET /v1/rag/collections/:collection/documents?limit=&cursor=`, `GET …/documents/:documentId?chunks=true`                    |
+| RAG           | `POST /v1/rag/collections/:collection/search`, `POST …/answer` (synchronous, through the `rag-query` service)                |
+| RAG           | `POST …/documents` `{ documents }`, `DELETE …/documents/:documentId?version=`, `DELETE …/:collection` → 202 `rag-ingest` run |
+| Health        | `GET /health/live`, `GET /health/ready`                                                                                      |
 
 - Run statuses are `running`, `completed`, `failed`, `cancelled` and `paused`.
 - **`paused` is reachable by design.** The LLM retry profile is uncapped and pauses an invocation when
@@ -254,7 +267,7 @@ The overlay needs about 4 GB of extra memory. The `traceId` in a `RunView` is th
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
 | `pnpm check`       | one `turbo run`: build, typecheck (tests included), lint, unit tests, formatting — then `turbo boundaries`              |
 | `pnpm test`        | unit tests only                                                                                                         |
-| `pnpm test:replay` | always-replay Restate tests (Testcontainers; needs Docker)                                                              |
+| `pnpm test:replay` | always-replay Restate tests and the RAG store against real pgvector (Testcontainers; needs Docker)                      |
 | `pnpm test:e2e`    | against the running stack, host Ollama included: catalogue, REST, Kafka, triggers, immutable versioning, crash recovery |
 
 `pnpm check` is the gate. It fails on a formatting drift as readily as on a type error, because a
@@ -296,3 +309,4 @@ or a request outlives its route, so it cannot quietly go stale.
 - `docker compose down -v` wipes both Postgres (the catalogue) and Restate (runs, deployments, subscriptions). Remove the runtime containers too: `docker ps -aq --filter label=ai-pipeline.name | xargs docker rm -f`.
 - Kafka topics are created by the `kafka-init` job; auto-creation is off. Add new topics there.
 - If a subscribed topic disappears (e.g. Kafka recreated without its volume), Restate's consumer stops. Toggle the trigger to recreate the subscription (`PATCH /v1/workflows/<wf>/triggers/<id>` with `{"enabled":false}` then `{"enabled":true}`). It resumes from its committed offsets.
+- The RAG store lives in its own `rag` database (`infra/postgres/init/30-rag.sql`), on the pgvector build of the same Postgres 17.11. On a volume created before it, apply it once: `docker compose exec -T postgres psql -U pipeline -d pipeline < infra/postgres/init/30-rag.sql` (or start fresh with `down -v`).

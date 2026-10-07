@@ -45,6 +45,7 @@ const app = buildApp({
   kafka: { cluster: config.KAFKA_CLUSTER_NAME, bootstrapServers: config.KAFKA_BOOTSTRAP_SERVERS },
   log,
   allowedHosts: config.ALLOWED_HOSTS,
+  ragTimeouts: { queryMs: config.RAG_QUERY_TIMEOUT_MS, answerMs: config.RAG_ANSWER_TIMEOUT_MS },
 });
 await app.listen({ host: config.HOST, port: config.PORT });
 

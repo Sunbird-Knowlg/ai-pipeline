@@ -7,6 +7,14 @@ model_list:
       keep_alive: 10m
       num_ctx: 8192
       think: false # otherwise qwen3.5 spends the output budget reasoning
+  # Embeddings for RAG. A collection is bound to this name for life — vectors from two models are
+  # not comparable — so the alias names the model and is never remapped: add a new alias instead.
+  - model_name: embed-qwen3-0p6b
+    litellm_params:
+      model: ollama/qwen3-embedding:0.6b # 1024 dimensions
+      api_base: os.environ/OLLAMA_URL
+      keep_alive: 10m
+      drop_params: true # the AI SDK sends encoding_format, which Ollama rejects
 litellm_settings:
   telemetry: false
   drop_params: false

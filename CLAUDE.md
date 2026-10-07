@@ -45,6 +45,9 @@ Use the Restate context directly (`ctx.run`, `ctx.client`, `ctx.sendClient`, `Re
 - A workflow's entry handler **must** be named `run` — the runs API selects invocations by that name.
   The runtime enforces it before registering.
 - Types and schemas are zod; never hand-write JSON Schema.
+  - core-api compiles every catalogued schema with Ajv on RE2 (linear-time regex). A `.regex()` in a
+    contract may not use `\u` escapes (write `\x00`), lookaround or backreferences, or the unit is
+    refused at deploy with `INVALID_SCHEMA`. The RAG units' `schemas.test.ts` check this with `re2js`.
 - `metadata.json` is operational metadata only: kind, restateName, version, config, triggers and dependencies.
 - **Any change to a unit or its workspace dependencies is a new artifact.** Bump the unit's `version` to deploy it immutably, or iterate with `pnpm pipeline deploy <unit> --dev`.
   - Otherwise the control plane answers `VERSION_ARTIFACT_CONFLICT`.
