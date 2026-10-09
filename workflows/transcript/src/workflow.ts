@@ -82,6 +82,7 @@ async function buildTranslation(
   sourceSegments: TranscriptSegment[],
   targetLanguage: string,
 ): Promise<TranscriptResult> {
+  const startedAt = await ctx.date.now();
   const createBody = {
     enrichmentObjectType: 'Transcript',
     parentId,
@@ -98,6 +99,15 @@ async function buildTranslation(
       () => deps.knowlg.createEnrichmentObject(createBody),
       retry.http,
     ),
+  );
+  deps.log.debug(
+    {
+      event: 'knowlg.response',
+      operation: `knowlg.create-${targetLanguage}`,
+      identifier: created.identifier,
+      status: created.status,
+    },
+    'knowlg responded',
   );
 
   if (created.status === 'Live') {
@@ -124,10 +134,23 @@ async function buildTranslation(
     config.translationBatchOverlap,
   );
 
+  deps.log.debug(
+    { event: 'blob.upload.start', operation: `blob.upload-${targetLanguage}`, parentId, targetLanguage },
+    'uploading translated transcript and captions',
+  );
   const urls = await ctx.run(
     `blob.upload-${targetLanguage}`,
     () => uploadArtifacts(deps.uploadBlob, parentId, targetLanguage, translated),
     retry.http,
+  );
+  deps.log.debug(
+    {
+      event: 'blob.upload.complete',
+      operation: `blob.upload-${targetLanguage}`,
+      transcriptUrl: urls.transcriptUrl,
+      captionsUrl: urls.captionsUrl,
+    },
+    'upload complete',
   );
 
   const updateBody = {
@@ -145,6 +168,10 @@ async function buildTranslation(
     () => deps.knowlg.updateEnrichmentObject(created.identifier, updateBody),
     retry.http,
   );
+  deps.log.debug(
+    { event: 'knowlg.response', operation: `knowlg.update-${targetLanguage}`, identifier: created.identifier },
+    'knowlg responded',
+  );
 
   const approveBody = { status: 'Live' };
   deps.log.debug(
@@ -157,6 +184,17 @@ async function buildTranslation(
       () => deps.knowlg.approveEnrichmentObject(created.identifier, approveBody),
       retry.http,
     ),
+  );
+  deps.log.info(
+    {
+      event: 'transcript.language.complete',
+      parentId,
+      targetLanguage,
+      identifier: approved.identifier,
+      status: approved.status,
+      elapsedMs: (await ctx.date.now()) - startedAt,
+    },
+    'language complete',
   );
 
   return { identifier: created.identifier, languageCode: targetLanguage, status: approved.status };
@@ -187,6 +225,7 @@ export function createTranscript(deps: TranscriptDeps) {
         ctx.set('trigger', trigger);
         ctx.set('version', metadata.version);
 
+        const runStartedAt = await ctx.date.now();
         const parentId = input.identifier;
         deps.log.info(
           { event: 'transcript.start', parentId, channel: input.channel },
@@ -210,6 +249,15 @@ export function createTranscript(deps: TranscriptDeps) {
             retry.http,
           ),
         );
+        deps.log.debug(
+          {
+            event: 'knowlg.response',
+            operation: 'knowlg.create-source',
+            identifier: source.identifier,
+            status: source.status,
+          },
+          'knowlg responded',
+        );
 
         let sourceLanguageCode: string;
         let sourceSegments: TranscriptSegment[];
@@ -222,10 +270,18 @@ export function createTranscript(deps: TranscriptDeps) {
             { event: 'transcript.resume', parentId, languageCode: sourceLanguageCode },
             'source already Live, resuming from stored segments',
           );
+          deps.log.debug(
+            { event: 'blob.download.start', operation: 'blob.download-source', parentId, languageCode: sourceLanguageCode },
+            'downloading stored source segments',
+          );
           sourceSegments = await ctx.run(
             'blob.download-source',
             () => downloadSegments(deps.downloadBlob, parentId, sourceLanguageCode),
             retry.http,
+          );
+          deps.log.debug(
+            { event: 'blob.download.complete', operation: 'blob.download-source', segments: sourceSegments.length },
+            'download complete',
           );
         } else {
           deps.log.info(
@@ -247,11 +303,16 @@ export function createTranscript(deps: TranscriptDeps) {
             retry.http,
           );
           const artifactUrl = z.string().parse(content.artifactUrl);
+          deps.log.debug(
+            { event: 'knowlg.response', operation: 'knowlg.read-content', artifactUrl },
+            'knowlg responded',
+          );
 
           deps.log.debug(
             { event: 'whisper.request', operation: 'whisper.transcribe', body: { artifactUrl } },
             'calling whisper',
           );
+          const whisperStartedAt = await ctx.date.now();
           const whisperResult = await ctx.client(whisperApi).transcribe({ artifactUrl });
           deps.log.info(
             {
@@ -261,10 +322,21 @@ export function createTranscript(deps: TranscriptDeps) {
               languageProbability: whisperResult.languageProbability,
               duration: whisperResult.duration,
               segments: whisperResult.segments.length,
+              elapsedMs: (await ctx.date.now()) - whisperStartedAt,
             },
             'transcription complete',
           );
 
+          deps.log.debug(
+            {
+              event: 'blob.upload.start',
+              operation: 'blob.upload-source',
+              parentId,
+              languageCode: whisperResult.language,
+              segments: whisperResult.segments.length,
+            },
+            'uploading source transcript and captions',
+          );
           const sourceUrls = await ctx.run(
             'blob.upload-source',
             () =>
@@ -275,6 +347,15 @@ export function createTranscript(deps: TranscriptDeps) {
                 whisperResult.segments,
               ),
             retry.http,
+          );
+          deps.log.debug(
+            {
+              event: 'blob.upload.complete',
+              operation: 'blob.upload-source',
+              transcriptUrl: sourceUrls.transcriptUrl,
+              captionsUrl: sourceUrls.captionsUrl,
+            },
+            'upload complete',
           );
 
           const sourceUpdateBody = {
@@ -293,6 +374,10 @@ export function createTranscript(deps: TranscriptDeps) {
             () => deps.knowlg.updateEnrichmentObject(source.identifier, sourceUpdateBody),
             retry.http,
           );
+          deps.log.debug(
+            { event: 'knowlg.response', operation: 'knowlg.update-source', identifier: source.identifier },
+            'knowlg responded',
+          );
 
           const sourceApproveBody = { status: 'Live' };
           deps.log.debug(
@@ -310,6 +395,16 @@ export function createTranscript(deps: TranscriptDeps) {
               retry.http,
             ),
           );
+          deps.log.info(
+            {
+              event: 'transcript.source.complete',
+              parentId,
+              identifier: approvedSource.identifier,
+              status: approvedSource.status,
+              languageCode: whisperResult.language,
+            },
+            'source language complete',
+          );
 
           sourceLanguageCode = whisperResult.language;
           sourceSegments = whisperResult.segments;
@@ -319,15 +414,34 @@ export function createTranscript(deps: TranscriptDeps) {
         const targetLanguages = config.targetLanguages.filter(
           (lang) => lang !== sourceLanguageCode,
         );
+        deps.log.info(
+          { event: 'transcript.languages', parentId, targetLanguages },
+          'target languages planned',
+        );
         const translations: TranscriptResult[] = [];
-        for (const lang of targetLanguages) {
+        for (const [index, lang] of targetLanguages.entries()) {
+          deps.log.info(
+            {
+              event: 'transcript.language.start',
+              parentId,
+              targetLanguage: lang,
+              index,
+              total: targetLanguages.length,
+            },
+            'starting language',
+          );
           translations.push(
             await buildTranslation(ctx, deps, parentId, input.channel, sourceSegments, lang),
           );
         }
 
         deps.log.info(
-          { event: 'transcript.complete', parentId, translations: translations.length },
+          {
+            event: 'transcript.complete',
+            parentId,
+            translations: translations.length,
+            elapsedMs: (await ctx.date.now()) - runStartedAt,
+          },
           'transcript run complete',
         );
         return {

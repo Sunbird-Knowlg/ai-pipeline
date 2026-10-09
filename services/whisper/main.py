@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import tempfile
+import time
 from typing import Optional
 
 import httpx
@@ -24,6 +25,9 @@ DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
 
 model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
+logger.info(
+    "whisper model loaded: size=%s device=%s compute_type=%s", MODEL_SIZE, DEVICE, COMPUTE_TYPE
+)
 
 
 class TranscribeRequest(BaseModel):
@@ -47,6 +51,7 @@ class TranscribeResponse(BaseModel):
 
 def _download(artifact_url: str) -> str:
     logger.debug("downloading artifact: %s", artifact_url)
+    started = time.monotonic()
     with httpx.Client(timeout=None) as client:
         response = client.get(artifact_url)
         if response.status_code != 200:
@@ -55,7 +60,12 @@ def _download(artifact_url: str) -> str:
         suffix = os.path.splitext(artifact_url.split("?")[0])[1] or ".media"
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp.write(response.content)
-            logger.debug("downloaded artifact to %s (%d bytes)", tmp.name, len(response.content))
+            logger.debug(
+                "downloaded artifact to %s (%d bytes, %.2fs)",
+                tmp.name,
+                len(response.content),
+                time.monotonic() - started,
+            )
             return tmp.name
 
 
@@ -63,19 +73,22 @@ def _transcribe(tmp_path: str, language: Optional[str]) -> TranscribeResponse:
     logger.debug(
         "starting transcription: %s (language hint: %s)", tmp_path, language or "auto-detect"
     )
+    started = time.monotonic()
     try:
         segments_iter, info = model.transcribe(tmp_path, language=language, vad_filter=True)
-        segments = [
-            WhisperSegment(id=i, start=seg.start, end=seg.end, text=seg.text)
-            for i, seg in enumerate(segments_iter)
-        ]
+        segments = []
+        for i, seg in enumerate(segments_iter):
+            segments.append(WhisperSegment(id=i, start=seg.start, end=seg.end, text=seg.text))
+            if i % 10 == 0:
+                logger.debug("transcribing: segment %d at %.1fs", i, seg.start)
     finally:
         os.remove(tmp_path)
     logger.info(
-        "transcription complete: language=%s duration=%.1fs segments=%d",
+        "transcription complete: language=%s duration=%.1fs segments=%d elapsed=%.1fs",
         info.language,
         info.duration,
         len(segments),
+        time.monotonic() - started,
     )
     return TranscribeResponse(
         language=info.language,
@@ -92,6 +105,7 @@ whisper_service = restate.Service("WhisperService")
 async def transcribe(ctx: Context, req: TranscribeRequest) -> TranscribeResponse:
     logger.info("transcribe request received: artifactUrl=%s", req.artifactUrl)
     tmp_path = await ctx.run_typed("download", _download, artifact_url=req.artifactUrl)
+    logger.debug("download step complete, starting transcribe step: tmp_path=%s", tmp_path)
     return await ctx.run_typed("transcribe", _transcribe, tmp_path=tmp_path, language=req.language)
 
 

@@ -62,12 +62,31 @@ export async function translateSegments(
     new Intl.DisplayNames(['en'], { type: 'language' }).of(targetLanguage) ?? targetLanguage;
   const batches = makeBatches(segments, batchSize, overlap);
   const translatedById = new Map<number, string>();
+  const startedAt = await ctx.date.now();
   log.info(
-    { event: 'translate.start', targetLanguage, batches: batches.length },
+    {
+      event: 'translate.start',
+      targetLanguage,
+      batches: batches.length,
+      segments: segments.length,
+      batchSize,
+      overlap,
+    },
     'starting translation',
   );
 
   for (const [index, { batch, newFrom }] of batches.entries()) {
+    const batchStartedAt = await ctx.date.now();
+    log.debug(
+      {
+        event: 'translate.batch_start',
+        targetLanguage,
+        batch: index,
+        of: batches.length,
+        segmentIds: batch.map((s) => s.id),
+      },
+      'translating batch',
+    );
     const result = await ctx.run(
       `llm.translate-${targetLanguage}-batch-${index}`,
       async () => {
@@ -113,12 +132,21 @@ export async function translateSegments(
       translatedById.set(seg.id, text);
     }
     log.debug(
-      { event: 'translate.batch_complete', targetLanguage, batch: index, segments: batch.length },
+      {
+        event: 'translate.batch_complete',
+        targetLanguage,
+        batch: index,
+        segments: batch.length,
+        elapsedMs: (await ctx.date.now()) - batchStartedAt,
+      },
       'translation batch complete',
     );
   }
 
-  log.info({ event: 'translate.complete', targetLanguage }, 'translation complete');
+  log.info(
+    { event: 'translate.complete', targetLanguage, elapsedMs: (await ctx.date.now()) - startedAt },
+    'translation complete',
+  );
   return segments.map((seg) => ({ ...seg, text: translatedById.get(seg.id) ?? seg.text }));
 }
 

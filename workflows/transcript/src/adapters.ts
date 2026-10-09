@@ -67,6 +67,10 @@ export const adapters = {
       );
       return null;
     }
+    log.info(
+      { event: 'adapter.accept', identifier: edata.identifier, mimeType: edata.mimeType },
+      'accepted: dispatching Transcript run',
+    );
     return {
       identifier: edata.identifier,
       objectType: edata.objectType,
