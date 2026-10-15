@@ -55,7 +55,12 @@ _OUTPUT_SCHEMA = {
     "additionalProperties": False,
 }
 
-_CONFIG_SCHEMA = {"type": "object", "properties": {}, "additionalProperties": False}
+_CONFIG_SCHEMA = {
+    "type": "object",
+    "properties": {"abortTimeoutMinutes": {"type": "integer", "minimum": 1}},
+    "required": ["abortTimeoutMinutes"],
+    "additionalProperties": False,
+}
 
 
 def _canonical_json(value) -> str:

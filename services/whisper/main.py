@@ -1,8 +1,11 @@
 import asyncio
+import json
 import logging
 import os
+import pathlib
 import tempfile
 import time
+from datetime import timedelta
 from typing import Optional
 
 import httpx
@@ -28,6 +31,9 @@ model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
 logger.info(
     "whisper model loaded: size=%s device=%s compute_type=%s", MODEL_SIZE, DEVICE, COMPUTE_TYPE
 )
+
+_METADATA = json.loads((pathlib.Path(__file__).parent / "metadata.json").read_text())
+_ABORT_TIMEOUT_MINUTES = _METADATA["config"]["abortTimeoutMinutes"]
 
 
 class TranscribeRequest(BaseModel):
@@ -98,15 +104,29 @@ def _transcribe(tmp_path: str, language: Optional[str]) -> TranscribeResponse:
     )
 
 
-whisper_service = restate.Service("WhisperService")
+def _download_and_transcribe(artifact_url: str, language: Optional[str]) -> TranscribeResponse:
+    """Download and transcribe as one journaled step, not two. If this step is retried (e.g. Restate
+    aborted and re-invoked the handler after `abort_timeout`, while the original, now-orphaned
+    attempt was still running), a retry gets its own fresh tempfile from its own fresh download
+    rather than reusing a path journaled by an earlier `download` step -- which the earlier
+    attempt's `finally: os.remove(tmp_path)` could have already deleted out from under it. That
+    race was the actual cause of the "No such file or directory" loop seen in production."""
+    tmp_path = _download(artifact_url)
+    return _transcribe(tmp_path, language)
+
+
+whisper_service = restate.Service(
+    "WhisperService",
+    abort_timeout=timedelta(minutes=_ABORT_TIMEOUT_MINUTES),
+)
 
 
 @whisper_service.handler()
 async def transcribe(ctx: Context, req: TranscribeRequest) -> TranscribeResponse:
     logger.info("transcribe request received: artifactUrl=%s", req.artifactUrl)
-    tmp_path = await ctx.run_typed("download", _download, artifact_url=req.artifactUrl)
-    logger.debug("download step complete, starting transcribe step: tmp_path=%s", tmp_path)
-    return await ctx.run_typed("transcribe", _transcribe, tmp_path=tmp_path, language=req.language)
+    return await ctx.run_typed(
+        "transcribe", _download_and_transcribe, artifact_url=req.artifactUrl, language=req.language
+    )
 
 
 app = restate.app([whisper_service])
