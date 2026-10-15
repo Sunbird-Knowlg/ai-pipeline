@@ -24,6 +24,11 @@
       "types": "./dist/contract.d.ts",
       "default": "./dist/contract.js"
     },
+    "./language": {
+      "@ai-pipeline/source": "./src/language.ts",
+      "types": "./dist/language.d.ts",
+      "default": "./dist/language.js"
+    },
     "./schemas": {
       "@ai-pipeline/source": "./src/schemas.ts",
       "types": "./dist/schemas.d.ts",

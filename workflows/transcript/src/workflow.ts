@@ -9,6 +9,7 @@ import * as restate from '@restatedev/restate-sdk';
 import { z } from 'zod';
 import { transcriptApi } from './api.js';
 import { segmentsToJson, segmentsToVtt } from './captions.js';
+import { languageName } from './language.js';
 import { EnrichmentObjectResult, TranscriptSegment } from './schemas.js';
 import { translateSegments } from './translate.js';
 import { config, metadata } from './unit.js';
@@ -154,6 +155,7 @@ async function buildTranslation(
   );
 
   const updateBody = {
+    language: languageName(targetLanguage),
     artifactUrl: urls.transcriptUrl,
     captionsUrl: urls.captionsUrl,
     autoApproved: true,
@@ -360,6 +362,7 @@ export function createTranscript(deps: TranscriptDeps) {
 
           const sourceUpdateBody = {
             languageCode: whisperResult.language,
+            language: languageName(whisperResult.language),
             artifactUrl: sourceUrls.transcriptUrl,
             captionsUrl: sourceUrls.captionsUrl,
             autoApproved: true,
