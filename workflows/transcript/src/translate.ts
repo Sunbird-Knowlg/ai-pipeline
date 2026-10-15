@@ -95,6 +95,13 @@ export async function translateSegments(
             model,
             prompt: translationPrompt(languageName, batch),
             temperature: 0,
+            // Sized per segment, not flat: a longer batch needs a bigger budget, and some
+            // target languages (e.g. pt, fr) render noticeably longer per segment than the
+            // English source -- an unbounded/under-provisioned call risks the model's output
+            // getting cut off mid-array, silently dropping trailing segments (see
+            // translate.missing_segment). ~60 tokens/segment covers translated text plus the
+            // `{"id":N,"text":"..."}` JSON wrapper with headroom; floor avoids starving tiny batches.
+            maxOutputTokens: Math.max(batch.length * 60, 1024),
           });
         } catch (error) {
           if (isRetryableModelError(error)) {
