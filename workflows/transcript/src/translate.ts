@@ -97,11 +97,18 @@ export async function translateSegments(
             temperature: 0,
             // Sized per segment, not flat: a longer batch needs a bigger budget, and some
             // target languages (e.g. pt, fr) render noticeably longer per segment than the
-            // English source -- an unbounded/under-provisioned call risks the model's output
-            // getting cut off mid-array, silently dropping trailing segments (see
-            // translate.missing_segment). ~60 tokens/segment covers translated text plus the
-            // `{"id":N,"text":"..."}` JSON wrapper with headroom; floor avoids starving tiny batches.
-            maxOutputTokens: Math.max(batch.length * 60, 1024),
+            // English source -- an under-provisioned call risks the model's output getting cut
+            // off mid-array, silently dropping trailing segments (see translate.missing_segment).
+            // ~60 tokens/segment covers translated text plus the `{"id":N,"text":"..."}` wrapper.
+            //
+            // The model behind "chat-default" is a reasoning model (gpt-5-mini): its internal
+            // reasoning tokens count against this SAME budget, spent before any visible text.
+            // Reasoning effort is set to "minimal" LiteLLM-side to keep that overhead small, but
+            // this fixed buffer is extra headroom on top of the per-segment answer budget in case
+            // some reasoning still occurs -- without it, reasoning alone can exhaust a
+            // tightly-sized budget before the model emits a single character of the array (see
+            // translate.no_json).
+            maxOutputTokens: Math.max(batch.length * 60, 1024) + 2000,
           });
         } catch (error) {
           if (isRetryableModelError(error)) {
