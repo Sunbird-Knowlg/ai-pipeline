@@ -3,7 +3,7 @@
   "kind": "workflow",
   "name": "content-enrichment",
   "restateName": "ContentEnrichment",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Summarises published content and attaches metadata",
   "config": {
     "summaryMaxWords": 120
@@ -16,7 +16,7 @@
     {
       "id": "content-published",
       "type": "kafka",
-      "cluster": "local",
+      "cluster": "sunbird",
       "topic": "content.published",
       "adapter": "contentPublished"
     }
