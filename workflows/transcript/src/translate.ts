@@ -56,12 +56,7 @@ function baseBudgetFor(chunkSize: number): number {
     BASE_TOKEN_BUDGET_HEADROOM;
 }
 
-/**
- * Parses a model response into `{id, text}` pairs. Returns `null` (not a throw) on anything
- * short of a clean parse -- malformed/missing JSON is just one more "this attempt didn't work",
- * handled identically to truncation by `translateChunk`'s retry/split loop, not a distinct
- * failure path.
- */
+/** Returns `null` instead of throwing, so a bad parse is just another retryable attempt. */
 function tryParseTranslatedBatch(text: string): z.infer<typeof TranslatedBatch> | null {
   const jsonStart = text.indexOf('[');
   const jsonEnd = text.lastIndexOf(']');
@@ -75,17 +70,10 @@ function tryParseTranslatedBatch(text: string): z.infer<typeof TranslatedBatch> 
 }
 
 /**
- * Translates one chunk of segments, resiliently.
- *
- * `gpt-5-mini` (behind "chat-default") is a reasoning model: its internal reasoning tokens are
- * spent out of the same `maxOutputTokens` budget as the visible answer, in an amount that varies
- * call to call and cannot be predicted from the request. No token budget can be computed as
- * "correct" in advance -- so instead of guessing once and failing, this keeps retrying the same
- * chunk with a doubled budget, and if that still isn't enough, splits the chunk in half and
- * recurses on each half independently. A chunk of one segment has a tiny, near-fixed expected
- * output size, so recursion converges on attempts that are structurally very unlikely to need
- * more than a modest budget -- the recursion depth is bounded by log2(chunk length), so this
- * always terminates.
+ * Translates one chunk, retrying with a doubled budget on an incomplete response, then splitting
+ * the chunk in half and recursing if that's still not enough. Reasoning-model token usage varies
+ * per call and can't be predicted, so a single-segment chunk is the fallback that's reliably small
+ * enough to succeed; recursion depth is bounded by log2(chunk length).
  */
 async function translateChunk(
   ctx: restate.Context,
@@ -242,8 +230,7 @@ export async function translateSegments(
     const byId = new Map(parsed.map((item) => [item.id, item.text]));
     for (const seg of batch.slice(newFrom)) {
       const text = byId.get(seg.id);
-      // Unreachable in practice -- translateChunk only ever returns once every id in `batch` is
-      // present -- kept as a hard safety net rather than trusting that invariant silently.
+      // Safety net; translateChunk should never return with an id missing.
       if (text === undefined) {
         log.error(
           { event: 'translate.missing_segment', targetLanguage, batch: index, segmentId: seg.id },

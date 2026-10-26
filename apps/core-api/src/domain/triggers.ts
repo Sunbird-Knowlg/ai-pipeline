@@ -67,12 +67,7 @@ export async function reconcileWithin(
 
   const errors = new Map<string, string>();
   for (const subscription of diff.remove) await cp.admin.deleteSubscription(subscription.id);
-  // Idempotent; covers a Restate whose metadata was reset while core-api kept running. Ensures
-  // every cluster a subscription being created actually names (parsed from its own `source`), not
-  // just this process's own configured cp.kafka.cluster -- those can diverge (e.g. mid-rollout,
-  // an older replica still configured with a since-renamed cluster name processing a unit whose
-  // metadata already points at the new one), and only the former is what createSubscription below
-  // actually needs to exist.
+  // Ensures the cluster each new subscription actually names, not just this process's own config.
   if (cp.kafka) {
     const clusters = new Set(diff.create.map((d) => new URL(d.source).host));
     for (const cluster of clusters) {
