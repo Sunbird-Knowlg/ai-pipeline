@@ -20,16 +20,16 @@ function segments(ids: number[]): TranscriptSegment[] {
   return ids.map((id) => ({ id, start: id, end: id + 1, text: `source ${id}` }));
 }
 
-function response(text: string, finishReason = 'stop'): GenerateResult {
-  return { text, model: 'chat-default', usage: { outputTokens: 10 }, finishReason };
+function response(object: unknown, finishReason = 'stop'): GenerateResult {
+  return { text: '', model: 'chat-default', usage: { outputTokens: 10 }, finishReason, object };
 }
 
-const toJson = (ids: number[]) =>
-  JSON.stringify(ids.map((id) => ({ id, text: `translated ${id}` })));
+const toMap = (ids: number[]) =>
+  Object.fromEntries(ids.map((id) => [String(id), `translated ${id}`]));
 
 describe('translateSegments', () => {
   it('translates every segment in one pass when the model responds completely', async () => {
-    const generate = vi.fn<Generate>(async () => response(toJson([0, 1, 2])));
+    const generate = vi.fn<Generate>(async () => response(toMap([0, 1, 2])));
     const result = await translateSegments(
       fakeContext(),
       generate,
@@ -44,11 +44,11 @@ describe('translateSegments', () => {
     expect(generate).toHaveBeenCalledTimes(1);
   });
 
-  it('retries with a larger budget when the response is truncated, without splitting', async () => {
+  it('retries with a larger budget when the response is incomplete', async () => {
     const generate = vi
       .fn<Generate>()
-      .mockResolvedValueOnce(response('[{"id":0,"text":"oops"', 'length')) // cut off mid-item
-      .mockResolvedValueOnce(response(toJson([0, 1])));
+      .mockResolvedValueOnce(response(toMap([0]))) // missing id 1
+      .mockResolvedValueOnce(response(toMap([0, 1])));
 
     const result = await translateSegments(
       fakeContext(),
@@ -71,8 +71,8 @@ describe('translateSegments', () => {
     const generate = vi.fn<Generate>(async ({ prompt }) => {
       // Only ever respond completely once the request is for a single segment.
       const requested: { id: number }[] = JSON.parse(prompt.split('\n').at(-1)!);
-      if (requested.length === 1) return response(toJson(requested.map((s) => s.id)));
-      return response(toJson([requested[0]!.id])); // always "forgets" the second id
+      if (requested.length === 1) return response(toMap(requested.map((s) => s.id)));
+      return response(toMap([requested[0]!.id])); // always "forgets" the second id
     });
 
     const result = await translateSegments(
@@ -91,7 +91,7 @@ describe('translateSegments', () => {
   });
 
   it('fails the run if a single segment never completes', async () => {
-    const generate = vi.fn<Generate>(async () => response('not json at all'));
+    const generate = vi.fn<Generate>(async () => response({}));
     await expect(
       translateSegments(fakeContext(), generate, silentLog, segments([9]), 'ar', 'chat-default', 80, 0),
     ).rejects.toThrow(restate.TerminalError);

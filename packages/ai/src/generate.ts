@@ -1,6 +1,6 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { context, propagation } from '@opentelemetry/api';
-import { generateText } from 'ai';
+import { Output, generateText, jsonSchema } from 'ai';
 import { z } from 'zod';
 
 export interface GenerateRequest {
@@ -12,6 +12,13 @@ export interface GenerateRequest {
   temperature?: number;
   /** Aborts the call early, e.g. when the Restate attempt ends (`attemptCompletedSignal`). */
   signal?: AbortSignal;
+  /**
+   * A JSON Schema the response must satisfy exactly (`strict` structured output). Required
+   * fields are enforced by constrained decoding, not just by instruction -- the model cannot
+   * finish a response that omits one.
+   */
+  schema?: Record<string, unknown>;
+  schemaName?: string;
 }
 
 export interface GenerateResult {
@@ -20,6 +27,8 @@ export interface GenerateResult {
   usage: { inputTokens?: number; outputTokens?: number };
   /** `'length'` means the response was cut off at `maxOutputTokens`, not finished naturally. */
   finishReason: string;
+  /** Present when `schema` was given: the parsed, schema-validated response. */
+  object?: unknown;
 }
 
 /** The one model call workflows and services depend on; providers stay behind it. */
@@ -50,8 +59,20 @@ export function createGenerate({ baseUrl, apiKey, timeoutMs = 180_000 }: AiOptio
     apiKey,
     includeUsage: true,
     fetch: tracedFetch,
+    // Off by default: without it, this provider sends the older `json_object` response_format
+    // instead of `json_schema`, which doesn't enforce required fields via constrained decoding.
+    supportsStructuredOutputs: true,
   });
-  return async ({ model, system, prompt, maxOutputTokens, temperature = 0, signal }) => {
+  return async ({
+    model,
+    system,
+    prompt,
+    maxOutputTokens,
+    temperature = 0,
+    signal,
+    schema,
+    schemaName,
+  }) => {
     const result = await generateText({
       model: provider.chatModel(model),
       system,
@@ -62,12 +83,16 @@ export function createGenerate({ baseUrl, apiKey, timeoutMs = 180_000 }: AiOptio
       abortSignal: signal
         ? AbortSignal.any([AbortSignal.timeout(timeoutMs), signal])
         : AbortSignal.timeout(timeoutMs),
+      output: schema
+        ? Output.object({ schema: jsonSchema(schema as Parameters<typeof jsonSchema>[0]), name: schemaName })
+        : undefined,
     });
     return {
       text: result.text,
       model,
       usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
       finishReason: result.finishReason,
+      object: result.output,
     };
   };
 }

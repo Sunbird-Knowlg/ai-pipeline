@@ -28,18 +28,34 @@ export function makeBatches<T>(
   return batches;
 }
 
-const TranslatedSegment = z.object({ id: z.number().int(), text: z.string() });
-const TranslatedBatch = z.array(TranslatedSegment);
+/** Segment id (as a string, the JSON Schema key) -> translated text. */
+const TranslatedMap = z.record(z.string(), z.string());
 
 function translationPrompt(languageName: string, segments: TranscriptSegment[]): string {
   const payload = segments.map((s) => ({ id: s.id, text: s.text }));
   return [
     `Translate each "text" value below into ${languageName}. Keep the meaning natural, not literal.`,
-    'Return a JSON array of the same length, each item shaped exactly {"id": <number>, "text": "<translation>"}.',
-    'Preserve every "id" unchanged. Do not add, remove, merge or reorder items. Return only the JSON array, nothing else.',
+    'Respond with the translation for every segment, keyed by its id as a string.',
     '',
     JSON.stringify(payload),
   ].join('\n');
+}
+
+/**
+ * `required` lists every segment's id: a `strict` schema (see `generate.ts`) means the model
+ * cannot finish a response that omits one, enforced by constrained decoding rather than
+ * instruction -- this is what actually closes the gap `translateChunk`'s retry/split loop used to
+ * cover for on its own.
+ */
+function translationSchema(chunk: TranscriptSegment[]): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const seg of chunk) {
+    const key = String(seg.id);
+    properties[key] = { type: 'string' };
+    required.push(key);
+  }
+  return { type: 'object', properties, required, additionalProperties: false };
 }
 
 /** Per-segment token budget for a translation call; doubled on each truncated retry. */
@@ -54,19 +70,6 @@ const MAX_BUDGET_ATTEMPTS = 3;
 function baseBudgetFor(chunkSize: number): number {
   return Math.max(chunkSize * BASE_TOKENS_PER_SEGMENT, BASE_TOKEN_BUDGET_FLOOR) +
     BASE_TOKEN_BUDGET_HEADROOM;
-}
-
-/** Returns `null` instead of throwing, so a bad parse is just another retryable attempt. */
-function tryParseTranslatedBatch(text: string): z.infer<typeof TranslatedBatch> | null {
-  const jsonStart = text.indexOf('[');
-  const jsonEnd = text.lastIndexOf(']');
-  if (jsonStart === -1 || jsonEnd === -1) return null;
-  try {
-    const result = TranslatedBatch.safeParse(JSON.parse(text.slice(jsonStart, jsonEnd + 1)));
-    return result.success ? result.data : null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -84,8 +87,9 @@ async function translateChunk(
   languageName: string,
   model: string,
   stepKey: string,
-): Promise<z.infer<typeof TranslatedBatch>> {
+): Promise<Record<string, string>> {
   let budget = baseBudgetFor(chunk.length);
+  const requiredKeys = chunk.map((s) => String(s.id));
 
   for (let attempt = 0; attempt < MAX_BUDGET_ATTEMPTS; attempt++) {
     const result = await ctx.run(
@@ -97,6 +101,8 @@ async function translateChunk(
             prompt: translationPrompt(languageName, chunk),
             temperature: 0,
             maxOutputTokens: budget,
+            schema: translationSchema(chunk),
+            schemaName: 'translations',
           });
         } catch (error) {
           if (isRetryableModelError(error)) {
@@ -118,9 +124,9 @@ async function translateChunk(
       { initialRetryInterval: { seconds: 2 }, maxRetryInterval: { seconds: 60 } },
     );
 
-    const parsed = tryParseTranslatedBatch(result.text);
-    const complete = parsed !== null && chunk.every((s) => parsed.some((p) => p.id === s.id));
-    if (complete) return parsed;
+    const parsed = TranslatedMap.safeParse(result.object);
+    const complete = parsed.success && requiredKeys.every((key) => key in parsed.data);
+    if (complete) return parsed.data;
 
     log.warn(
       {
@@ -168,7 +174,7 @@ async function translateChunk(
     model,
     `${stepKey}-R`,
   );
-  return [...left, ...right];
+  return { ...left, ...right };
 }
 
 /**
@@ -227,9 +233,8 @@ export async function translateSegments(
       model,
       `batch-${index}`,
     );
-    const byId = new Map(parsed.map((item) => [item.id, item.text]));
     for (const seg of batch.slice(newFrom)) {
-      const text = byId.get(seg.id);
+      const text = parsed[String(seg.id)];
       // Safety net; translateChunk should never return with an id missing.
       if (text === undefined) {
         log.error(
