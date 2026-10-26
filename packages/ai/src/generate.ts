@@ -18,6 +18,8 @@ export interface GenerateResult {
   text: string;
   model: string;
   usage: { inputTokens?: number; outputTokens?: number };
+  /** `'length'` means the response was cut off at `maxOutputTokens`, not finished naturally. */
+  finishReason: string;
 }
 
 /** The one model call workflows and services depend on; providers stay behind it. */
@@ -65,6 +67,7 @@ export function createGenerate({ baseUrl, apiKey, timeoutMs = 180_000 }: AiOptio
       text: result.text,
       model,
       usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
+      finishReason: result.finishReason,
     };
   };
 }

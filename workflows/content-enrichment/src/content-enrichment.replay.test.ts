@@ -30,6 +30,7 @@ describe('ContentEnrichment (always replay)', () => {
     text: 'A short summary.',
     model,
     usage: { inputTokens: 10, outputTokens: 4 },
+    finishReason: 'stop',
   }));
   let env: RestateTestEnvironment;
   let ingress: clients.Ingress;

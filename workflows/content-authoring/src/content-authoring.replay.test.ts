@@ -49,7 +49,12 @@ const QUESTION = {
 describe('ContentAuthoring (always replay)', () => {
   const generate = vi.fn<Generate>(async ({ system, model }) => {
     if (system === SUMMARY_SYSTEM)
-      return { text: 'Plants turn light into food.', model, usage: { outputTokens: 6 } };
+      return {
+        text: 'Plants turn light into food.',
+        model,
+        usage: { outputTokens: 6 },
+        finishReason: 'stop',
+      };
     if (system === CONTENT_METADATA_SYSTEM)
       return {
         text: JSON.stringify({
@@ -59,9 +64,15 @@ describe('ContentAuthoring (always replay)', () => {
         }),
         model,
         usage: { outputTokens: 20 },
+        finishReason: 'stop',
       };
     if (system === QUIZ_SYSTEM)
-      return { text: JSON.stringify([QUESTION]), model, usage: { outputTokens: 40 } };
+      return {
+        text: JSON.stringify([QUESTION]),
+        model,
+        usage: { outputTokens: 40 },
+        finishReason: 'stop',
+      };
     throw new Error(`unexpected system prompt: ${String(system)}`);
   });
   const publish = vi.fn();

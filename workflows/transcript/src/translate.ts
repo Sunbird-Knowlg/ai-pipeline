@@ -42,11 +42,152 @@ function translationPrompt(languageName: string, segments: TranscriptSegment[]):
   ].join('\n');
 }
 
+/** Per-segment token budget for a translation call; doubled on each truncated retry. */
+const BASE_TOKENS_PER_SEGMENT = 60;
+const BASE_TOKEN_BUDGET_FLOOR = 1024;
+const BASE_TOKEN_BUDGET_HEADROOM = 2000;
+/** Hard ceiling so a runaway doubling sequence can't request an absurd budget. */
+const MAX_TOKEN_BUDGET = 32_000;
+/** Budget-doubling attempts on one chunk before splitting it in half and recursing. */
+const MAX_BUDGET_ATTEMPTS = 3;
+
+function baseBudgetFor(chunkSize: number): number {
+  return Math.max(chunkSize * BASE_TOKENS_PER_SEGMENT, BASE_TOKEN_BUDGET_FLOOR) +
+    BASE_TOKEN_BUDGET_HEADROOM;
+}
+
+/**
+ * Parses a model response into `{id, text}` pairs. Returns `null` (not a throw) on anything
+ * short of a clean parse -- malformed/missing JSON is just one more "this attempt didn't work",
+ * handled identically to truncation by `translateChunk`'s retry/split loop, not a distinct
+ * failure path.
+ */
+function tryParseTranslatedBatch(text: string): z.infer<typeof TranslatedBatch> | null {
+  const jsonStart = text.indexOf('[');
+  const jsonEnd = text.lastIndexOf(']');
+  if (jsonStart === -1 || jsonEnd === -1) return null;
+  try {
+    const result = TranslatedBatch.safeParse(JSON.parse(text.slice(jsonStart, jsonEnd + 1)));
+    return result.success ? result.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Translates one chunk of segments, resiliently.
+ *
+ * `gpt-5-mini` (behind "chat-default") is a reasoning model: its internal reasoning tokens are
+ * spent out of the same `maxOutputTokens` budget as the visible answer, in an amount that varies
+ * call to call and cannot be predicted from the request. No token budget can be computed as
+ * "correct" in advance -- so instead of guessing once and failing, this keeps retrying the same
+ * chunk with a doubled budget, and if that still isn't enough, splits the chunk in half and
+ * recurses on each half independently. A chunk of one segment has a tiny, near-fixed expected
+ * output size, so recursion converges on attempts that are structurally very unlikely to need
+ * more than a modest budget -- the recursion depth is bounded by log2(chunk length), so this
+ * always terminates.
+ */
+async function translateChunk(
+  ctx: restate.Context,
+  generate: Generate,
+  log: Logger,
+  chunk: TranscriptSegment[],
+  targetLanguage: string,
+  languageName: string,
+  model: string,
+  stepKey: string,
+): Promise<z.infer<typeof TranslatedBatch>> {
+  let budget = baseBudgetFor(chunk.length);
+
+  for (let attempt = 0; attempt < MAX_BUDGET_ATTEMPTS; attempt++) {
+    const result = await ctx.run(
+      `llm.translate-${targetLanguage}-${stepKey}-try${attempt}`,
+      async () => {
+        try {
+          return await generate({
+            model,
+            prompt: translationPrompt(languageName, chunk),
+            temperature: 0,
+            maxOutputTokens: budget,
+          });
+        } catch (error) {
+          if (isRetryableModelError(error)) {
+            log.warn(
+              { event: 'translate.retry', targetLanguage, stepKey, err: error },
+              'translation model call failed, retrying',
+            );
+            throw error;
+          }
+          log.error(
+            { event: 'translate.rejected', targetLanguage, stepKey, err: error },
+            'translation model rejected chunk',
+          );
+          throw new restate.TerminalError(
+            `translation model rejected chunk ${stepKey} for ${targetLanguage}: ${(error as Error).message}`,
+          );
+        }
+      },
+      { initialRetryInterval: { seconds: 2 }, maxRetryInterval: { seconds: 60 } },
+    );
+
+    const parsed = tryParseTranslatedBatch(result.text);
+    const complete = parsed !== null && chunk.every((s) => parsed.some((p) => p.id === s.id));
+    if (complete) return parsed;
+
+    log.warn(
+      {
+        event: 'translate.incomplete_attempt',
+        targetLanguage,
+        stepKey,
+        attempt,
+        budget,
+        finishReason: result.finishReason,
+        outputTokens: result.usage.outputTokens,
+      },
+      'translation attempt incomplete, retrying with a larger budget',
+    );
+    budget = Math.min(budget * 2, MAX_TOKEN_BUDGET);
+  }
+
+  const [only] = chunk;
+  if (chunk.length === 1 && only) {
+    log.error(
+      { event: 'translate.exhausted', targetLanguage, stepKey, segmentId: only.id },
+      'translation repeatedly incomplete even at a single segment',
+    );
+    throw new restate.TerminalError(
+      `translation for ${targetLanguage} segment ${only.id} failed after exhausting retries`,
+    );
+  }
+  const mid = Math.floor(chunk.length / 2);
+  const left = await translateChunk(
+    ctx,
+    generate,
+    log,
+    chunk.slice(0, mid),
+    targetLanguage,
+    languageName,
+    model,
+    `${stepKey}-L`,
+  );
+  const right = await translateChunk(
+    ctx,
+    generate,
+    log,
+    chunk.slice(mid),
+    targetLanguage,
+    languageName,
+    model,
+    `${stepKey}-R`,
+  );
+  return [...left, ...right];
+}
+
 /**
  * Translates a full segment list into one target language, batching to stay within the model's
  * context window (`batchSize`, with `overlap` segments of leading context per batch after the
- * first) and running each batch as its own durable `ctx.run` step. One bad batch fails the whole
- * translation rather than silently returning partial/misaligned segments.
+ * first). Each batch is translated via `translateChunk`, which retries and splits on an
+ * incomplete response rather than failing the whole translation on one bad call.
  */
 export async function translateSegments(
   ctx: restate.Context,
@@ -87,53 +228,22 @@ export async function translateSegments(
       },
       'translating batch',
     );
-    const result = await ctx.run(
-      `llm.translate-${targetLanguage}-batch-${index}`,
-      async () => {
-        try {
-          return await generate({
-            model,
-            prompt: translationPrompt(languageName, batch),
-            temperature: 0,
-            // Sized per segment, not flat: a longer batch needs a bigger budget, and some
-            // target languages (e.g. pt, fr) render noticeably longer per segment than the
-            // English source -- an under-provisioned call risks the model's output getting cut
-            // off mid-array, silently dropping trailing segments (see translate.missing_segment).
-            // ~60 tokens/segment covers translated text plus the `{"id":N,"text":"..."}` wrapper.
-            //
-            // The model behind "chat-default" is a reasoning model (gpt-5-mini): its internal
-            // reasoning tokens count against this SAME budget, spent before any visible text.
-            // Reasoning effort is set to "minimal" LiteLLM-side to keep that overhead small, but
-            // this fixed buffer is extra headroom on top of the per-segment answer budget in case
-            // some reasoning still occurs -- without it, reasoning alone can exhaust a
-            // tightly-sized budget before the model emits a single character of the array (see
-            // translate.no_json).
-            maxOutputTokens: Math.max(batch.length * 60, 1024) + 2000,
-          });
-        } catch (error) {
-          if (isRetryableModelError(error)) {
-            log.warn(
-              { event: 'translate.retry', targetLanguage, batch: index, err: error },
-              'translation model call failed, retrying',
-            );
-            throw error;
-          }
-          log.error(
-            { event: 'translate.rejected', targetLanguage, batch: index, err: error },
-            'translation model rejected batch',
-          );
-          throw new restate.TerminalError(
-            `translation model rejected batch ${index} for ${targetLanguage}: ${(error as Error).message}`,
-          );
-        }
-      },
-      { initialRetryInterval: { seconds: 2 }, maxRetryInterval: { seconds: 60 } },
-    );
 
-    const parsed = parseTranslatedBatch(result.text, targetLanguage, index, log);
+    const parsed = await translateChunk(
+      ctx,
+      generate,
+      log,
+      batch,
+      targetLanguage,
+      languageName,
+      model,
+      `batch-${index}`,
+    );
     const byId = new Map(parsed.map((item) => [item.id, item.text]));
     for (const seg of batch.slice(newFrom)) {
       const text = byId.get(seg.id);
+      // Unreachable in practice -- translateChunk only ever returns once every id in `batch` is
+      // present -- kept as a hard safety net rather than trusting that invariant silently.
       if (text === undefined) {
         log.error(
           { event: 'translate.missing_segment', targetLanguage, batch: index, segmentId: seg.id },
@@ -162,34 +272,4 @@ export async function translateSegments(
     'translation complete',
   );
   return segments.map((seg) => ({ ...seg, text: translatedById.get(seg.id) ?? seg.text }));
-}
-
-function parseTranslatedBatch(
-  text: string,
-  targetLanguage: string,
-  batchIndex: number,
-  log: Logger,
-): z.infer<typeof TranslatedBatch> {
-  const jsonStart = text.indexOf('[');
-  const jsonEnd = text.lastIndexOf(']');
-  if (jsonStart === -1 || jsonEnd === -1) {
-    log.error(
-      { event: 'translate.no_json', targetLanguage, batch: batchIndex },
-      'translation batch did not return a JSON array',
-    );
-    throw new restate.TerminalError(
-      `translation batch ${batchIndex} for ${targetLanguage} did not return a JSON array`,
-    );
-  }
-  try {
-    return TranslatedBatch.parse(JSON.parse(text.slice(jsonStart, jsonEnd + 1)));
-  } catch (error) {
-    log.error(
-      { event: 'translate.malformed_json', targetLanguage, batch: batchIndex, err: error },
-      'translation batch returned malformed JSON',
-    );
-    throw new restate.TerminalError(
-      `translation batch ${batchIndex} for ${targetLanguage} returned malformed JSON: ${(error as Error).message}`,
-    );
-  }
 }
