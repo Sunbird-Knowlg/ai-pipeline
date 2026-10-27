@@ -3,10 +3,12 @@
   "kind": "service",
   "name": "whisper",
   "restateName": "WhisperService",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Speech-to-text transcription via faster-whisper",
   "visibility": "private",
   "config": {
-    "abortTimeoutMinutes": 60
+    "abortTimeoutMinutes": 60,
+    "chunkTargetSeconds": 600,
+    "chunkMinSilenceMs": 1000
   }
 }

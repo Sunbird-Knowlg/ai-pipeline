@@ -5,12 +5,15 @@ import os
 import pathlib
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from typing import Optional
 
 import httpx
 import restate
 from faster_whisper import WhisperModel
+from faster_whisper.audio import decode_audio
+from faster_whisper.vad import VadOptions, get_speech_timestamps
 from pydantic import BaseModel
 from restate import Context
 from restate.exceptions import TerminalError
@@ -26,14 +29,39 @@ logger = logging.getLogger(__name__)
 MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "small")
 DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
+# Matches the pod's actual CPU limit; cpu_threads below is sized off this, not os.cpu_count()
+# (which reports the host's cores, not the container's cgroup limit).
+CPU_CORES = int(os.environ.get("WHISPER_CPU_CORES", "4"))
+# Chunks run concurrently (see _transcribe), so both the thread pool and the model itself need to
+# know the fan-out: num_workers lets CTranslate2 actually run concurrent transcribe() calls in
+# parallel instead of serializing them internally, and cpu_threads is divided across that fan-out
+# so concurrent chunks don't oversubscribe the pod's CPU limit.
+MAX_CONCURRENT_CHUNKS = int(os.environ.get("WHISPER_MAX_CONCURRENT_CHUNKS", "4"))
+CPU_THREADS_PER_CHUNK = max(1, CPU_CORES // MAX_CONCURRENT_CHUNKS)
 
-model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
-logger.info(
-    "whisper model loaded: size=%s device=%s compute_type=%s", MODEL_SIZE, DEVICE, COMPUTE_TYPE
+model = WhisperModel(
+    MODEL_SIZE,
+    device=DEVICE,
+    compute_type=COMPUTE_TYPE,
+    cpu_threads=CPU_THREADS_PER_CHUNK,
+    num_workers=MAX_CONCURRENT_CHUNKS,
 )
+logger.info(
+    "whisper model loaded: size=%s device=%s compute_type=%s cpu_threads=%d num_workers=%d",
+    MODEL_SIZE,
+    DEVICE,
+    COMPUTE_TYPE,
+    CPU_THREADS_PER_CHUNK,
+    MAX_CONCURRENT_CHUNKS,
+)
+SAMPLE_RATE = model.feature_extractor.sampling_rate
 
 _METADATA = json.loads((pathlib.Path(__file__).parent / "metadata.json").read_text())
 _ABORT_TIMEOUT_MINUTES = _METADATA["config"]["abortTimeoutMinutes"]
+# Target length for a VAD-aligned chunk, and how much silence must surround a cut for it to count
+# as a real boundary rather than the forced "longest available gap" fallback.
+_CHUNK_TARGET_SECONDS = _METADATA["config"]["chunkTargetSeconds"]
+_CHUNK_MIN_SILENCE_MS = _METADATA["config"]["chunkMinSilenceMs"]
 
 
 class TranscribeRequest(BaseModel):
@@ -56,50 +84,121 @@ class TranscribeResponse(BaseModel):
 
 
 def _download(artifact_url: str) -> str:
-    logger.debug("downloading artifact: %s", artifact_url)
+    logger.info("download started: %s", artifact_url)
     started = time.monotonic()
-    with httpx.Client(timeout=None) as client:
-        response = client.get(artifact_url)
+    suffix = os.path.splitext(artifact_url.split("?")[0])[1] or ".media"
+    # Streamed to disk rather than buffered via response.content: the old version held the whole
+    # artifact in RAM before writing it out, doubling peak memory for no reason.
+    with httpx.Client(timeout=None) as client, client.stream("GET", artifact_url) as response:
         if response.status_code != 200:
-            logger.error("failed to fetch artifact %s: %s", artifact_url, response.status_code)
+            logger.error("download failed: %s -> HTTP %d", artifact_url, response.status_code)
             raise TerminalError(f"failed to fetch {artifact_url}: {response.status_code}")
-        suffix = os.path.splitext(artifact_url.split("?")[0])[1] or ".media"
+        total_bytes = 0
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-            tmp.write(response.content)
-            logger.debug(
-                "downloaded artifact to %s (%d bytes, %.2fs)",
-                tmp.name,
-                len(response.content),
-                time.monotonic() - started,
-            )
-            return tmp.name
+            for data in response.iter_bytes():
+                tmp.write(data)
+                total_bytes += len(data)
+            tmp_path = tmp.name
+    logger.info(
+        "download complete: %s (%.1f MB, %.2fs)",
+        tmp_path,
+        total_bytes / 1_000_000,
+        time.monotonic() - started,
+    )
+    return tmp_path
+
+
+def _transcribe_chunk(
+    index: int, boundary: dict, audio, language: Optional[str]
+) -> tuple[list[tuple[float, float, str]], object]:
+    """Transcribes one VAD-bounded slice of the already-decoded audio array. Runs on a worker
+    thread (see _transcribe's ThreadPoolExecutor) -- CTranslate2 releases the GIL during inference,
+    and num_workers on the model (set at startup) lets these calls actually run concurrently
+    instead of queuing behind each other."""
+    offset = boundary["start"] / SAMPLE_RATE
+    chunk_end = boundary["end"] / SAMPLE_RATE
+    chunk_audio = audio[boundary["start"] : boundary["end"]]
+    logger.info("chunk %d started: %.1fs-%.1fs (%.1fs)", index, offset, chunk_end, chunk_end - offset)
+    chunk_started = time.monotonic()
+    segments_iter, info = model.transcribe(chunk_audio, language=language, vad_filter=True)
+    segments = [(seg.start + offset, seg.end + offset, seg.text) for seg in segments_iter]
+    logger.info(
+        "chunk %d complete: %.1fs-%.1fs, %d segment(s), language=%s (%.2f), elapsed=%.1fs",
+        index,
+        offset,
+        chunk_end,
+        len(segments),
+        info.language,
+        info.language_probability,
+        time.monotonic() - chunk_started,
+    )
+    return segments, info
 
 
 def _transcribe(tmp_path: str, language: Optional[str]) -> TranscribeResponse:
-    logger.debug(
-        "starting transcription: %s (language hint: %s)", tmp_path, language or "auto-detect"
+    logger.info(
+        "transcription started: %s (language hint: %s)", tmp_path, language or "auto-detect"
     )
     started = time.monotonic()
     try:
-        segments_iter, info = model.transcribe(tmp_path, language=language, vad_filter=True)
+        # Decoded once: slicing this one array per chunk is what keeps per-chunk memory (VAD +
+        # feature extraction) bounded, instead of running those steps over the whole file at once.
+        decode_started = time.monotonic()
+        audio = decode_audio(tmp_path, sampling_rate=SAMPLE_RATE)
+        duration = len(audio) / SAMPLE_RATE
+        logger.info(
+            "decode complete: %.1fs audio, %.2fs to decode", duration, time.monotonic() - decode_started
+        )
+
+        chunks = get_speech_timestamps(
+            audio,
+            VadOptions(
+                max_speech_duration_s=_CHUNK_TARGET_SECONDS,
+                min_silence_duration_ms=_CHUNK_MIN_SILENCE_MS,
+            ),
+        )
+        if not chunks:
+            chunks = [{"start": 0, "end": len(audio)}]
+        logger.info(
+            "chunk plan: %d chunk(s) for %.1fs audio (target=%ds, min_silence=%dms, concurrency=%d)",
+            len(chunks),
+            duration,
+            _CHUNK_TARGET_SECONDS,
+            _CHUNK_MIN_SILENCE_MS,
+            MAX_CONCURRENT_CHUNKS,
+        )
+
+        # Boundaries sit in silence (VadOptions above), so chunks don't overlap and results can
+        # just be concatenated in order -- no stitching/dedup needed across the cut points.
+        with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_CHUNKS) as pool:
+            results = list(
+                pool.map(
+                    lambda item: _transcribe_chunk(item[0], item[1], audio, language),
+                    enumerate(chunks),
+                )
+            )
+
         segments = []
-        for i, seg in enumerate(segments_iter):
-            segments.append(WhisperSegment(id=i, start=seg.start, end=seg.end, text=seg.text))
-            if i % 10 == 0:
-                logger.debug("transcribing: segment %d at %.1fs", i, seg.start)
+        for chunk_segments, _ in results:
+            for start, end, text in chunk_segments:
+                segments.append(WhisperSegment(id=len(segments), start=start, end=end, text=text))
+        # First chunk's detection stands in for the whole file; when `language` is forced this is
+        # the same value for every chunk anyway.
+        info = results[0][1]
     finally:
         os.remove(tmp_path)
     logger.info(
-        "transcription complete: language=%s duration=%.1fs segments=%d elapsed=%.1fs",
+        "transcription complete: language=%s duration=%.1fs chunks=%d segments=%d elapsed=%.1fs",
         info.language,
-        info.duration,
+        duration,
+        len(chunks),
         len(segments),
         time.monotonic() - started,
     )
     return TranscribeResponse(
         language=info.language,
         languageProbability=info.language_probability,
-        duration=info.duration,
+        duration=duration,
         segments=segments,
     )
 
