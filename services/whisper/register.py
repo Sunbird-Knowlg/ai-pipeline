@@ -57,8 +57,12 @@ _OUTPUT_SCHEMA = {
 
 _CONFIG_SCHEMA = {
     "type": "object",
-    "properties": {"abortTimeoutMinutes": {"type": "integer", "minimum": 1}},
-    "required": ["abortTimeoutMinutes"],
+    "properties": {
+        "abortTimeoutMinutes": {"type": "integer", "minimum": 1},
+        "chunkTargetSeconds": {"type": "integer", "minimum": 1},
+        "chunkMinSilenceMs": {"type": "integer", "minimum": 1},
+    },
+    "required": ["abortTimeoutMinutes", "chunkTargetSeconds", "chunkMinSilenceMs"],
     "additionalProperties": False,
 }
 
