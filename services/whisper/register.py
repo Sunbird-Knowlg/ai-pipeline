@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 _METADATA_PATH = pathlib.Path(__file__).parent / "metadata.json"
 
+# Mirrors main.py's WhisperSegment/TranscribeRequest/TranscribeResponse by hand — update both sides
+# together, or this schema silently drifts from what the handler actually sends.
 _SEGMENT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -55,6 +57,8 @@ _OUTPUT_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Mirrors metadata.json's "config" keys by hand — a key added there without being added here fails
+# registration with INVALID_CONFIG (additionalProperties rejects it).
 _CONFIG_SCHEMA = {
     "type": "object",
     "properties": {
