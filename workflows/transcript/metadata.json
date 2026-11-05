@@ -4,7 +4,7 @@
   "name": "transcript",
   "restateName": "Transcript",
   "version": "0.1.14",
-  "description": "Generates a source-language transcript from a video/audio Content's artifact via Whisper, then translates it into the configured target languages",
+  "description": "Generates a source-language transcript from a video Content's artifact via Whisper, then translates it into the configured target languages",
   "config": {
     "targetLanguages": ["ar", "pt", "fr"],
     "translationModel": "chat-default",

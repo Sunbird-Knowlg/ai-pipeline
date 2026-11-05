@@ -5,6 +5,16 @@ import { z } from 'zod';
  * This workflow's data shapes. Kept apart from `./api.ts` so the catalogue side needs no SDK.
  */
 
+/**
+ * Content this workflow can actually transcribe. The Kafka adapter applies this before a run ever
+ * starts; `run` applies it again for the REST trigger, which has no adapter of its own to gate it.
+ */
+export const TRANSCRIPT_MIME_TYPES = ['video/mp4', 'video/webm'];
+
+export function isTranscriptEligible(objectType: string, mimeType: string): boolean {
+  return objectType === 'Content' && TRANSCRIPT_MIME_TYPES.includes(mimeType);
+}
+
 /** The generic enrichment-request event, mapped by the trigger adapter to just what this workflow needs. */
 export const TranscriptInput = z.strictObject({
   /** The Content (or other objectType) this Transcript attaches to. */

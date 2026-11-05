@@ -80,8 +80,11 @@
   "devDependencies": {
     "@ai-pipeline/eslint-config": "workspace:*",
     "@ai-pipeline/typescript-config": "workspace:*",
+    "@restatedev/restate-sdk-clients": "catalog:",
+    "@restatedev/restate-sdk-testcontainers": "catalog:",
     "@types/node": "catalog:",
     "eslint": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

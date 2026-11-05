@@ -1,6 +1,6 @@
 import type { Logger } from '@ai-pipeline/observability/logger';
 import { z } from 'zod';
-import type { TranscriptInput } from './schemas.js';
+import { TRANSCRIPT_MIME_TYPES, type TranscriptInput } from './schemas.js';
 
 /**
  * knowlg-publish's generic content-published event — fired exactly once for every Content/
@@ -20,11 +20,6 @@ const ContentPublishedEvent = z.object({
     enrichmentTypes: z.array(z.string()),
   }),
 });
-
-/** knowlg-publish applies no mimeType gate at all — every publish fires this event regardless.
- *  So this workflow's own eligibility check (does this even make sense as a video) lives here,
- *  the only place that actually knows what Transcript needs. */
-const TRANSCRIPT_MIME_TYPES = ['video/mp4', 'video/webm'];
 
 /**
  * Trigger adapters: pure maps from an event to this workflow's canonical input. Returning `null`

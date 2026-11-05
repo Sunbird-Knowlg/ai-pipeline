@@ -12,6 +12,6 @@ export const transcriptApi = restate.iface.workflow(
   },
   {
     description:
-      "Generates a source-language transcript from a video/audio Content's artifact via Whisper, then translates it into the configured target languages",
+      "Generates a source-language transcript from a video Content's artifact via Whisper, then translates it into the configured target languages",
   },
 );

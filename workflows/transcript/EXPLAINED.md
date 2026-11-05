@@ -1,6 +1,6 @@
 # Transcript Workflow — How It Starts, Works, and Ends
 
-Restate workflow that generates a source-language transcript for a Content's video/audio
+Restate workflow that generates a source-language transcript for a Content's video
 artifact, then translates it into the configured target languages (`ar`, `pt`, `fr`), writing
 each as its own `Transcript` `EnrichmentObject` on the parent Content.
 

@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { transcriptApi } from './api.js';
 import { segmentsToJson, segmentsToVtt } from './captions.js';
 import { languageName } from './language.js';
-import { EnrichmentObjectResult, TranscriptSegment } from './schemas.js';
+import { EnrichmentObjectResult, isTranscriptEligible, TranscriptSegment } from './schemas.js';
 import { translateSegments } from './translate.js';
 import { config, metadata } from './unit.js';
 
@@ -136,7 +136,12 @@ async function buildTranslation(
   );
 
   deps.log.debug(
-    { event: 'blob.upload.start', operation: `blob.upload-${targetLanguage}`, parentId, targetLanguage },
+    {
+      event: 'blob.upload.start',
+      operation: `blob.upload-${targetLanguage}`,
+      parentId,
+      targetLanguage,
+    },
     'uploading translated transcript and captions',
   );
   const urls = await ctx.run(
@@ -171,7 +176,11 @@ async function buildTranslation(
     retry.http,
   );
   deps.log.debug(
-    { event: 'knowlg.response', operation: `knowlg.update-${targetLanguage}`, identifier: created.identifier },
+    {
+      event: 'knowlg.response',
+      operation: `knowlg.update-${targetLanguage}`,
+      identifier: created.identifier,
+    },
     'knowlg responded',
   );
 
@@ -203,7 +212,7 @@ async function buildTranslation(
 }
 
 /**
- * Generates a source-language transcript for a Content's video/audio artifact, then translates it
+ * Generates a source-language transcript for a Content's video artifact, then translates it
  * into every configured target language, each as its own Transcript sibling.
  *
  * 1. Read the Content for its artifact — the enrichment-request event itself never carries this,
@@ -226,6 +235,14 @@ export function createTranscript(deps: TranscriptDeps) {
       run: async (ctx, { input, trigger }) => {
         ctx.set('trigger', trigger);
         ctx.set('version', metadata.version);
+
+        // The Kafka adapter already applies this; the REST trigger has no adapter of its own, so
+        // without this a REST caller could push a non-video Content all the way to Whisper.
+        if (!isTranscriptEligible(input.objectType, input.mimeType)) {
+          throw new restate.TerminalError(
+            `Transcript does not support objectType "${input.objectType}" / mimeType "${input.mimeType}"`,
+          );
+        }
 
         const runStartedAt = await ctx.date.now();
         const parentId = input.identifier;
@@ -273,7 +290,12 @@ export function createTranscript(deps: TranscriptDeps) {
             'source already Live, resuming from stored segments',
           );
           deps.log.debug(
-            { event: 'blob.download.start', operation: 'blob.download-source', parentId, languageCode: sourceLanguageCode },
+            {
+              event: 'blob.download.start',
+              operation: 'blob.download-source',
+              parentId,
+              languageCode: sourceLanguageCode,
+            },
             'downloading stored source segments',
           );
           sourceSegments = await ctx.run(
@@ -282,7 +304,11 @@ export function createTranscript(deps: TranscriptDeps) {
             retry.http,
           );
           deps.log.debug(
-            { event: 'blob.download.complete', operation: 'blob.download-source', segments: sourceSegments.length },
+            {
+              event: 'blob.download.complete',
+              operation: 'blob.download-source',
+              segments: sourceSegments.length,
+            },
             'download complete',
           );
         } else {
@@ -378,7 +404,11 @@ export function createTranscript(deps: TranscriptDeps) {
             retry.http,
           );
           deps.log.debug(
-            { event: 'knowlg.response', operation: 'knowlg.update-source', identifier: source.identifier },
+            {
+              event: 'knowlg.response',
+              operation: 'knowlg.update-source',
+              identifier: source.identifier,
+            },
             'knowlg responded',
           );
 
