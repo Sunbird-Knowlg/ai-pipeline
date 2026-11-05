@@ -57,8 +57,8 @@ const print = (value: unknown) => {
 };
 
 // Omitted entirely (not defaulted to '') when unset, so the unit's own LITELLM_API_KEY stays
-// genuinely absent — an empty string would still count as "specified" and send an empty
-// Authorization header, unlike a truly missing env var.
+// genuinely absent rather than an empty string — generate.ts's schema now rejects an explicitly
+// empty key (z.string().min(1).optional()) rather than silently treating it the same as absent.
 const litellmApiKey = process.env.LITELLM_MASTER_KEY ?? dotEnv.LITELLM_MASTER_KEY;
 
 // There's no safe default for a real knowlg instance (EXPLAINED.md's manual flow port-forwards

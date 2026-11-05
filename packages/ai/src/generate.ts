@@ -43,8 +43,10 @@ export type Generate = (request: GenerateRequest) => Promise<GenerateResult>;
 const envSchema = z.object({
   LITELLM_URL: z.url(),
   // Optional: unset when litellm has no auth configured (cluster-internal, no caller to
-  // authenticate). Set when the target litellm does enforce auth.
-  LITELLM_API_KEY: z.string().optional(),
+  // authenticate). Set when the target litellm does enforce auth. min(1), not just optional():
+  // an explicitly empty key is indistinguishable from a real one downstream (the HTTP client
+  // sends no Authorization header either way), so this fails at boot instead of silently.
+  LITELLM_API_KEY: z.string().min(1).optional(),
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
 });
 
