@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "AI Pipeline on Restate \u2014 core-api",
-    "description": "The complete core-api surface: health, the catalogue, trigger management, starting and inspecting runs, the run lifecycle, and the control plane.\n\n**Setup**\n1. Select the `Local` environment (or edit the collection variables).\n2. Bring the stack up: `docker compose up -d --build`.\n3. Deploy the example units: `pnpm pipeline deploy summary && pnpm pipeline deploy content-enrichment`.\n\n**How the variables work**\n`Start a run` and `List runs` save `runId` into a collection variable, so the run requests below them work without copy-pasting. Same for `deploymentId` from `List deployments`.\n\n**Errors** all use one envelope: `{ \"error\": { \"code\", \"message\" } }`. The codes are a closed set \u2014 see `packages/api-contract/src/errors.ts`.\n\n**Not in here:** the Restate admin API (`:9070`) and the Restate ingress (`:8080`). The ingress is deliberately not published; REST goes through this API.",
+    "description": "The complete core-api surface: health, the catalogue, trigger management, starting and inspecting runs, the run lifecycle, and the control plane.\n\n**Setup**\n1. Select the `Local` environment (or edit the collection variables).\n2. Bring the stack up: `docker compose up -d --build`.\n3. Deploy the example workflow: `pnpm pipeline deploy transcript` (`whisper` is a Python service, built and run separately from its own `Dockerfile`).\n\n**How the variables work**\n`Start a run` and `List runs` save `runId` into a collection variable, so the run requests below them work without copy-pasting. Same for `deploymentId` from `List deployments`.\n\n**Errors** all use one envelope: `{ \"error\": { \"code\", \"message\" } }`. The codes are a closed set \u2014 see `packages/api-contract/src/errors.ts`.\n\n**Not in here:** the Restate admin API (`:9070`) and the Restate ingress (`:8080`). The ingress is deliberately not published; REST goes through this API.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -12,12 +12,12 @@
     },
     {
       "key": "workflow",
-      "value": "content-enrichment",
+      "value": "transcript",
       "description": "Catalogue name of the workflow under test."
     },
     {
       "key": "service",
-      "value": "summary",
+      "value": "whisper",
       "description": "A private service, for contrast."
     },
     {
@@ -346,7 +346,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"input\": {\n    \"contentId\": \"postman-1\",\n    \"title\": \"Restate\",\n    \"text\": \"Restate is a durable execution engine. It journals every step of a handler so that, after a crash, the handler replays from the journal and resumes where it left off.\"\n  }\n}"
+              "raw": "{\n  \"input\": {\n    \"identifier\": \"postman-1\",\n    \"objectType\": \"Content\",\n    \"mimeType\": \"video/mp4\"\n  }\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/workflows/{{workflow}}/runs",
@@ -392,7 +392,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"input\": {\n    \"contentId\": \"missing-text\"\n  }\n}"
+              "raw": "{\n  \"input\": {\n    \"identifier\": \"missing-fields\"\n  }\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/workflows/{{workflow}}/runs",

@@ -21,12 +21,12 @@ const twoUnits = () =>
       definitions: [
         definitionOf(),
         definitionOf({
-          metadata: metadataOf({ name: 'summary', kind: 'service', restateName: 'SummaryService' }),
-          name: 'summary',
+          metadata: metadataOf({ name: 'whisper', kind: 'service', restateName: 'WhisperService' }),
+          name: 'whisper',
           kind: 'service',
         }),
       ],
-      deployments: [deploymentOf(), deploymentOf({ deploymentId: 'dp_2', name: 'summary' })],
+      deployments: [deploymentOf(), deploymentOf({ deploymentId: 'dp_2', name: 'whisper' })],
       triggers: [triggerOf()],
     },
   });
@@ -35,7 +35,7 @@ describe('listUnits', () => {
   it('lists every catalogued unit with its triggers and active deployment', async () => {
     const cp = twoUnits();
     const units = await listUnits(cp);
-    expect(units.map((u) => u.name)).toEqual(['content-enrichment', 'summary']);
+    expect(units.map((u) => u.name)).toEqual(['transcript', 'whisper']);
     expect(units[0]).toMatchObject({
       kind: 'workflow',
       activeDeployment: 'dp_1',
@@ -45,7 +45,7 @@ describe('listUnits', () => {
 
   it('filters by kind', async () => {
     const cp = twoUnits();
-    expect((await listUnits(cp, 'service')).map((u) => u.name)).toEqual(['summary']);
+    expect((await listUnits(cp, 'service')).map((u) => u.name)).toEqual(['whisper']);
   });
 
   it('fetches the subscription list once, not once per unit', async () => {
@@ -62,11 +62,11 @@ describe('listUnits', () => {
 describe('describeUnit', () => {
   it('assembles versions, deployments, dependencies and triggers', async () => {
     const cp = twoUnits();
-    const detail = await describeUnit(cp, 'content-enrichment');
+    const detail = await describeUnit(cp, 'transcript');
     expect(detail).toMatchObject({
-      name: 'content-enrichment',
+      name: 'transcript',
       version: '1.0.0',
-      restateName: 'ContentEnrichment',
+      restateName: 'Transcript',
       contractHash: expect.stringMatching(/^sha256:/),
     });
     expect(detail.versions).toEqual([

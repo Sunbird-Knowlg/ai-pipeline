@@ -37,7 +37,7 @@ describe('discoverUnits', () => {
     // Asserted as a subset on purpose: a hardcoded list would mean adding a workflow breaks this
     // test, which is exactly the friction the scaffold exists to remove.
     expect(units.map((u) => u.metadata.name)).toEqual(
-      expect.arrayContaining(['content-enrichment', 'summary', 'versioned-sleeper']),
+      expect.arrayContaining(['transcript', 'versioned-sleeper']),
     );
   });
 
@@ -57,7 +57,7 @@ describe('discoverUnits', () => {
   });
 
   it('names the units it knows when asked for one it does not', () => {
-    expect(() => findUnit(ROOT, 'nope')).toThrow(/known units: .*content-enrichment/);
+    expect(() => findUnit(ROOT, 'nope')).toThrow(/known units: .*transcript/);
   });
 });
 

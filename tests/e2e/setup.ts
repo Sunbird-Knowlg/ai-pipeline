@@ -5,16 +5,13 @@ import { cli } from './support.js';
  * Builds and deploys the example units once per e2e run
  * (idempotent: unchanged artifacts are reused).
  *
- * Services before the workflows that call them: a workflow whose dependency is not yet registered
- * is refused by the control plane.
+ * `whisper` is not deployed here: it is a Python service with no `package.json`/`src/main.ts`, so
+ * the CLI's unit discovery (`apps/cli/src/units.ts`) does not see it as a deployable unit at all —
+ * a pre-existing gap, not something this file can paper over.
  */
 export default async function setup() {
   execFileSync('pnpm', ['turbo', 'run', 'build', '--output-logs=errors-only'], {
     stdio: 'inherit',
   });
-  cli('deploy', 'summary');
-  cli('deploy', 'content-metadata');
-  cli('deploy', 'quiz-generate');
-  cli('deploy', 'content-enrichment');
-  cli('deploy', 'content-authoring');
+  cli('deploy', 'transcript');
 }

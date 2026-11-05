@@ -18,7 +18,7 @@ import { registerDeployment } from './registration.js';
  * which the deploy CLI uses to decide whether it may tear the container down again.
  */
 
-const ENDPOINT = 'http://content-enrichment-abc123:9080';
+const ENDPOINT = 'http://transcript-abc123:9080';
 
 function request(overrides: Partial<DeploymentRequest> = {}): DeploymentRequest {
   return {
@@ -37,7 +37,7 @@ function request(overrides: Partial<DeploymentRequest> = {}): DeploymentRequest 
 }
 
 /** A Restate that serves the workflow at the endpoint, as a healthy deploy would. */
-function serving(admin: FakeAdmin, names = ['ContentEnrichment']): FakeAdmin {
+function serving(admin: FakeAdmin, names = ['Transcript']): FakeAdmin {
   admin.served.set(ENDPOINT, names);
   return admin;
 }
@@ -60,7 +60,7 @@ describe('registerDeployment', () => {
     const result = await registerDeployment(cp, request());
 
     expect(result).toMatchObject({
-      name: 'content-enrichment',
+      name: 'transcript',
       version: '1.0.0',
       deploymentId: 'dp_1',
       active: true,
@@ -81,7 +81,7 @@ describe('registerDeployment', () => {
     serving(cp.admin);
     await registerDeployment(cp, request());
 
-    expect(cp.store.locks).toEqual(['register:content-enrichment', 'reconcile:content-enrichment']);
+    expect(cp.store.locks).toEqual(['register:transcript', 'reconcile:transcript']);
     expect(cp.store.maxNestedLocks).toBe(1);
   });
 
@@ -113,7 +113,7 @@ describe('registerDeployment', () => {
     ]);
     // Each section ran to completion before the next began — never `enter, enter, exit, exit`.
     expect(order).toEqual(['enter:1', 'exit:1', 'enter:1', 'exit:1']);
-    expect(both.every((r) => r.name === 'content-enrichment')).toBe(true);
+    expect(both.every((r) => r.name === 'transcript')).toBe(true);
   });
 
   it('refuses before touching Restate, and only with pre-registration codes', async () => {
@@ -168,7 +168,7 @@ describe('registerDeployment', () => {
             seed: {
               definitions: [
                 definitionOf({
-                  metadata: metadataOf({ name: 'other-unit', restateName: 'ContentEnrichment' }),
+                  metadata: metadataOf({ name: 'other-unit', restateName: 'Transcript' }),
                   name: 'other-unit',
                 }),
               ],
@@ -187,7 +187,7 @@ describe('registerDeployment', () => {
             seed: {
               definitions: [
                 definitionOf({
-                  metadata: metadataOf({ restateName: 'ContentEnrichmentV2', version: '0.0.9' }),
+                  metadata: metadataOf({ restateName: 'TranscriptV2', version: '0.0.9' }),
                 }),
               ],
             },
@@ -219,7 +219,7 @@ describe('registerDeployment', () => {
             seed: {
               definitions: [
                 definitionOf({
-                  metadata: metadataOf({ name: 'summary', restateName: 'SummaryWorkflow' }),
+                  metadata: metadataOf({ name: 'whisper', restateName: 'WhisperWorkflow' }),
                 }),
               ],
             },
@@ -229,7 +229,7 @@ describe('registerDeployment', () => {
             cp,
             request({
               // Catalogued as a workflow; declared here as a service.
-              metadata: metadataOf({ dependencies: [{ kind: 'service', name: 'summary' }] }),
+              metadata: metadataOf({ dependencies: [{ kind: 'service', name: 'whisper' }] }),
             }),
           );
         },
@@ -243,7 +243,7 @@ describe('registerDeployment', () => {
           return registerDeployment(
             cp,
             request({
-              metadata: metadataOf({ dependencies: [{ kind: 'service', name: 'summary' }] }),
+              metadata: metadataOf({ dependencies: [{ kind: 'service', name: 'whisper' }] }),
             }),
           );
         },
@@ -257,11 +257,11 @@ describe('registerDeployment', () => {
               definitions: [
                 definitionOf({
                   metadata: metadataOf({
-                    name: 'summary',
+                    name: 'whisper',
                     kind: 'service',
-                    restateName: 'SummaryService',
+                    restateName: 'WhisperService',
                   }),
-                  name: 'summary',
+                  name: 'whisper',
                 }),
               ],
             },
@@ -270,7 +270,7 @@ describe('registerDeployment', () => {
           return registerDeployment(
             cp,
             request({
-              metadata: metadataOf({ dependencies: [{ kind: 'service', name: 'summary' }] }),
+              metadata: metadataOf({ dependencies: [{ kind: 'service', name: 'whisper' }] }),
             }),
           );
         },
@@ -295,7 +295,7 @@ describe('registerDeployment', () => {
 
   it('accepts the endpoint when it also serves the unit’s own trigger service', async () => {
     const cp = fakeControlPlane();
-    serving(cp.admin, ['ContentEnrichment', 'ContentEnrichmentTrigger']);
+    serving(cp.admin, ['Transcript', 'TranscriptTrigger']);
     await expect(registerDeployment(cp, request())).resolves.toMatchObject({ active: true });
   });
 
@@ -320,7 +320,7 @@ describe('registerDeployment', () => {
       const cp = seeded();
       serving(cp.admin);
       // Restate returns the same deployment id for an unchanged endpoint, so it stays the routed one.
-      cp.admin.routing.set('ContentEnrichment', 'dp_1');
+      cp.admin.routing.set('Transcript', 'dp_1');
       await expect(registerDeployment(cp, request())).resolves.toMatchObject({
         deploymentId: 'dp_1',
         active: true,
@@ -354,7 +354,7 @@ describe('registerDeployment', () => {
           cp,
           request({ mode: 'dev', artifactDigest: `sha256:${'d'.repeat(64)}` }),
         ),
-      ).resolves.toMatchObject({ name: 'content-enrichment' });
+      ).resolves.toMatchObject({ name: 'transcript' });
     });
   });
 
@@ -369,7 +369,7 @@ describe('registerDeployment', () => {
       serving(cp.admin);
       // Restate keeps routing to the older deployment: re-registering an unchanged endpoint does
       // not move routing back to it.
-      cp.admin.routing.set('ContentEnrichment', 'dp_9');
+      cp.admin.routing.set('Transcript', 'dp_9');
 
       const result = await registerDeployment(cp, request());
       expect(result.active).toBe(false);
@@ -383,7 +383,7 @@ describe('registerDeployment', () => {
       const cp = fakeControlPlane();
       serving(cp.admin);
       // Restate says it routes to a deployment the catalogue has never heard of.
-      cp.admin.routing.set('ContentEnrichment', 'dp_unknown');
+      cp.admin.routing.set('Transcript', 'dp_unknown');
 
       const error = await registerDeployment(cp, request()).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(PipelineError);
@@ -403,7 +403,7 @@ describe('registerDeployment', () => {
       serving(cp.admin);
       const result = await registerDeployment(cp, request(first));
       // What real Restate does on registration: route the service to the new deployment.
-      cp.admin.routing.set('ContentEnrichment', result.deploymentId);
+      cp.admin.routing.set('Transcript', result.deploymentId);
       return { cp, first: result };
     }
 
@@ -439,7 +439,7 @@ describe('registerDeployment', () => {
     it('reports where routing stands when a newer build has taken over', async () => {
       const { cp, first } = await registeredOnce();
       cp.store.seed.deployments.push(deploymentOf({ deploymentId: 'dp_9', status: 'draining' }));
-      cp.admin.routing.set('ContentEnrichment', 'dp_9');
+      cp.admin.routing.set('Transcript', 'dp_9');
 
       const again = await registerDeployment(cp, request());
       expect(again).toMatchObject({
@@ -473,7 +473,7 @@ describe('registerDeployment', () => {
       // Only a drained deployment can be retired, so nothing routes to it any more.
       row!.status = 'retired';
       await cp.admin.deleteDeployment(row!.deploymentId);
-      cp.admin.routing.delete('ContentEnrichment');
+      cp.admin.routing.delete('Transcript');
 
       const again = await registerDeployment(cp, request());
       expect(again.alreadyRegistered).toBe(false);
@@ -482,7 +482,7 @@ describe('registerDeployment', () => {
 
     it('is registered again when anything registration writes has changed', async () => {
       const changes: { what: string; change: Partial<DeploymentRequest> }[] = [
-        { what: 'another endpoint', change: { endpoint: 'http://content-enrichment-other:9080' } },
+        { what: 'another endpoint', change: { endpoint: 'http://transcript-other:9080' } },
         {
           what: 'metadata under a stale artifact digest',
           change: { metadata: metadataOf({ description: 'changed', triggers: [] }) },
@@ -490,7 +490,7 @@ describe('registerDeployment', () => {
       ];
       for (const { what, change } of changes) {
         const { cp } = await registeredOnce();
-        if (change.endpoint) cp.admin.served.set(change.endpoint, ['ContentEnrichment']);
+        if (change.endpoint) cp.admin.served.set(change.endpoint, ['Transcript']);
         const again = await registerDeployment(cp, request(change));
         expect({ what, alreadyRegistered: again.alreadyRegistered }).toEqual({
           what,
@@ -542,7 +542,7 @@ describe('registerDeployment', () => {
       },
     });
     serving(cp.admin);
-    cp.admin.routing.set('ContentEnrichment', 'dp_9');
+    cp.admin.routing.set('Transcript', 'dp_9');
 
     await registerDeployment(
       cp,

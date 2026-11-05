@@ -21,7 +21,7 @@ export type RunStatus = z.infer<typeof runStatus>;
  */
 export const blockedInvocation = z.object({
   invocationId: z.string(),
-  /** Restate's own target string, e.g. `SummaryService/summarize`. */
+  /** Restate's own target string, e.g. `WhisperService/transcribe`. */
   target: z.string(),
   /** Restate's invocation status, unmapped: `backing-off` or `paused`. Only `paused` is resumable. */
   restateStatus: z.string(),

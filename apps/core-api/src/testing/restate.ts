@@ -161,8 +161,8 @@ export function fakeControlPlane(
 const BASE_METADATA = {
   apiVersion: 'ai-pipeline/v1alpha1',
   kind: 'workflow',
-  name: 'content-enrichment',
-  restateName: 'ContentEnrichment',
+  name: 'transcript',
+  restateName: 'Transcript',
   version: '1.0.0',
 };
 
@@ -196,9 +196,9 @@ export function definitionOf(overrides: Partial<Definition> = {}): Definition {
 export function deploymentOf(overrides: Partial<Deployment> = {}): Deployment {
   return {
     deploymentId: 'dp_1',
-    name: 'content-enrichment',
+    name: 'transcript',
     version: '1.0.0',
-    endpoint: 'http://content-enrichment-abc:9080',
+    endpoint: 'http://transcript-abc:9080',
     artifactDigest: `sha256:${'b'.repeat(64)}`,
     mode: 'immutable',
     status: 'active',
@@ -209,7 +209,7 @@ export function deploymentOf(overrides: Partial<Deployment> = {}): Deployment {
 
 export function triggerOf(overrides: Partial<TriggerRecord> = {}): TriggerRecord {
   return {
-    name: 'content-enrichment',
+    name: 'transcript',
     triggerId: 'api',
     type: 'rest',
     definition: { id: 'api', type: 'rest' },

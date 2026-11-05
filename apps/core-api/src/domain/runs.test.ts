@@ -14,7 +14,7 @@ import { cancelRun, getRun, killRun, listRuns, resumeRun, startRun } from './run
  * Each refusal is a distinct wire code the CLI and the e2e suites rely on.
  */
 
-/** A catalogue with content-enrichment deployed and its REST trigger on. */
+/** A catalogue with transcript deployed and its REST trigger on. */
 const ready = () =>
   fakeControlPlane({
     seed: {
@@ -27,13 +27,13 @@ const ready = () =>
 describe('startRun', () => {
   it('submits the run with a trigger context the caller cannot forge', async () => {
     const cp = ready();
-    const accepted = await startRun(cp, 'content-enrichment', { text: 'hello' }, 'key-1');
+    const accepted = await startRun(cp, 'transcript', { text: 'hello' }, 'key-1');
 
     expect(accepted).toMatchObject({ status: 'Accepted', invocationId: 'inv_1' });
     expect(accepted.runId).toMatch(/^api_[0-9a-f]{32}$/);
 
     const [submission] = cp.ingress.submissions;
-    expect(submission).toMatchObject({ restateName: 'ContentEnrichment', runId: accepted.runId });
+    expect(submission).toMatchObject({ restateName: 'Transcript', runId: accepted.runId });
     expect(submission!.request).toMatchObject({
       input: { text: 'hello' },
       trigger: { type: 'rest', id: 'api', idempotencyKey: 'key-1' },
@@ -42,7 +42,7 @@ describe('startRun', () => {
 
   it('records a digest of the input, so a reused key can be checked against it', async () => {
     const cp = ready();
-    await startRun(cp, 'content-enrichment', { text: 'hello' }, 'key-1');
+    await startRun(cp, 'transcript', { text: 'hello' }, 'key-1');
     expect(cp.ingress.submissions[0]!.request).toMatchObject({
       trigger: { inputDigest: expect.stringMatching(/^[0-9a-f]{32}$/) },
     });
@@ -50,8 +50,8 @@ describe('startRun', () => {
 
   it('digests the input canonically, so key order in the JSON is not a different request', async () => {
     const cp = ready();
-    await startRun(cp, 'content-enrichment', { text: 'a', n: 1 }, 'key-1');
-    await startRun(cp, 'content-enrichment', { n: 1, text: 'a' }, 'key-2');
+    await startRun(cp, 'transcript', { text: 'a', n: 1 }, 'key-1');
+    await startRun(cp, 'transcript', { n: 1, text: 'a' }, 'key-2');
     const digests = cp.ingress.submissions.map(
       (s) => (s.request as { trigger: { inputDigest: string } }).trigger.inputDigest,
     );
@@ -60,7 +60,7 @@ describe('startRun', () => {
 
   it('does not record a digest when there is no key to bind it to', async () => {
     const cp = ready();
-    await startRun(cp, 'content-enrichment', { text: 'hello' });
+    await startRun(cp, 'transcript', { text: 'hello' });
     expect(cp.ingress.submissions[0]!.request).not.toMatchObject({
       trigger: { inputDigest: expect.anything() },
     });
@@ -80,41 +80,40 @@ describe('startRun', () => {
     };
 
     it('is accepted when the body really is the same', async () => {
-      const digest = await startRun(ready(), 'content-enrichment', { text: 'same' }, 'k').then(
-        async () => {
-          const probe = ready();
-          await startRun(probe, 'content-enrichment', { text: 'same' }, 'k');
-          return (probe.ingress.submissions[0]!.request as { trigger: { inputDigest: string } })
-            .trigger.inputDigest;
-        },
-      );
+      const digest = await startRun(ready(), 'transcript', { text: 'same' }, 'k').then(async () => {
+        const probe = ready();
+        await startRun(probe, 'transcript', { text: 'same' }, 'k');
+        return (probe.ingress.submissions[0]!.request as { trigger: { inputDigest: string } })
+          .trigger.inputDigest;
+      });
       const cp = seen({ type: 'rest', id: 'api', inputDigest: digest });
-      await expect(
-        startRun(cp, 'content-enrichment', { text: 'same' }, 'k'),
-      ).resolves.toMatchObject({ status: 'PreviouslyAccepted' });
+      await expect(startRun(cp, 'transcript', { text: 'same' }, 'k')).resolves.toMatchObject({
+        status: 'PreviouslyAccepted',
+      });
     });
 
     it('is refused when it carries a different body, instead of dropping the new work', async () => {
       const cp = seen({ type: 'rest', id: 'api', inputDigest: 'f'.repeat(32) });
-      await expect(
-        startRun(cp, 'content-enrichment', { text: 'different' }, 'k'),
-      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED', statusCode: 409 });
+      await expect(startRun(cp, 'transcript', { text: 'different' }, 'k')).rejects.toMatchObject({
+        code: 'IDEMPOTENCY_KEY_REUSED',
+        statusCode: 409,
+      });
     });
 
     it('is allowed through when the run has not recorded anything to compare yet', async () => {
       // The handler writes its trigger as its first act; a submit that arrives before it does has
       // nothing to check, and guessing would refuse a legitimate retry.
       await expect(
-        startRun(seen(undefined), 'content-enrichment', { text: 'x' }, 'k'),
+        startRun(seen(undefined), 'transcript', { text: 'x' }, 'k'),
       ).resolves.toMatchObject({ status: 'PreviouslyAccepted' });
       await expect(
-        startRun(seen({ type: 'rest', id: 'api' }), 'content-enrichment', { text: 'x' }, 'k'),
+        startRun(seen({ type: 'rest', id: 'api' }), 'transcript', { text: 'x' }, 'k'),
       ).resolves.toMatchObject({ status: 'PreviouslyAccepted' });
     });
 
     it('is not checked at all when no key was given', async () => {
       const cp = seen({ type: 'rest', id: 'api', inputDigest: 'f'.repeat(32) });
-      await expect(startRun(cp, 'content-enrichment', { text: 'x' })).resolves.toMatchObject({
+      await expect(startRun(cp, 'transcript', { text: 'x' })).resolves.toMatchObject({
         status: 'PreviouslyAccepted',
       });
     });
@@ -122,9 +121,9 @@ describe('startRun', () => {
 
   it('derives the same run id from the same Idempotency-Key, and a fresh one without', async () => {
     const cp = ready();
-    const first = await startRun(cp, 'content-enrichment', { text: 'a' }, 'key-1');
-    const again = await startRun(cp, 'content-enrichment', { text: 'a' }, 'key-1');
-    const keyless = await startRun(cp, 'content-enrichment', { text: 'a' });
+    const first = await startRun(cp, 'transcript', { text: 'a' }, 'key-1');
+    const again = await startRun(cp, 'transcript', { text: 'a' }, 'key-1');
+    const keyless = await startRun(cp, 'transcript', { text: 'a' });
 
     expect(again.runId).toBe(first.runId);
     expect(keyless.runId).not.toBe(first.runId);
@@ -142,17 +141,17 @@ describe('startRun', () => {
         definitions: [
           definitionOf({
             metadata: metadataOf({
-              name: 'summary',
+              name: 'whisper',
               kind: 'service',
-              restateName: 'SummaryService',
+              restateName: 'WhisperService',
             }),
-            name: 'summary',
+            name: 'whisper',
             kind: 'service',
           }),
         ],
       },
     });
-    await expect(startRun(service, 'summary', {})).rejects.toMatchObject({
+    await expect(startRun(service, 'whisper', {})).rejects.toMatchObject({
       code: 'NOT_INVOCABLE',
       statusCode: 409,
     });
@@ -160,7 +159,7 @@ describe('startRun', () => {
     const private_ = fakeControlPlane({
       seed: { definitions: [definitionOf({ metadata: metadataOf({ visibility: 'private' }) })] },
     });
-    await expect(startRun(private_, 'content-enrichment', {})).rejects.toMatchObject({
+    await expect(startRun(private_, 'transcript', {})).rejects.toMatchObject({
       code: 'NOT_INVOCABLE',
     });
   });
@@ -169,7 +168,7 @@ describe('startRun', () => {
     const cp = fakeControlPlane({
       seed: { definitions: [definitionOf()], deployments: [deploymentOf()], triggers: [] },
     });
-    await expect(startRun(cp, 'content-enrichment', { text: 'a' })).rejects.toMatchObject({
+    await expect(startRun(cp, 'transcript', { text: 'a' })).rejects.toMatchObject({
       code: 'NO_REST_TRIGGER',
       statusCode: 409,
     });
@@ -183,7 +182,7 @@ describe('startRun', () => {
         triggers: [triggerOf({ desiredEnabled: false })],
       },
     });
-    await expect(startRun(cp, 'content-enrichment', { text: 'a' })).rejects.toMatchObject({
+    await expect(startRun(cp, 'transcript', { text: 'a' })).rejects.toMatchObject({
       code: 'TRIGGER_DISABLED',
       statusCode: 409,
     });
@@ -197,7 +196,7 @@ describe('startRun', () => {
         triggers: [triggerOf()],
       },
     });
-    await expect(startRun(cp, 'content-enrichment', { text: 'a' })).rejects.toMatchObject({
+    await expect(startRun(cp, 'transcript', { text: 'a' })).rejects.toMatchObject({
       code: 'NOT_DEPLOYED',
       statusCode: 409,
     });
@@ -205,11 +204,11 @@ describe('startRun', () => {
 
   it('validates input against the catalogued schema and says what failed', async () => {
     const cp = ready();
-    const error = (await startRun(cp, 'content-enrichment', { wrong: true }).catch(
+    const error = (await startRun(cp, 'transcript', { wrong: true }).catch(
       (e: unknown) => e,
     )) as PipelineError;
     expect(error).toMatchObject({ code: 'INVALID_INPUT', statusCode: 400 });
-    expect(error.message).toContain('content-enrichment 1.0.0');
+    expect(error.message).toContain('transcript 1.0.0');
     expect(cp.ingress.submissions).toHaveLength(0);
   });
 
@@ -218,7 +217,7 @@ describe('startRun', () => {
     const cp = fakeControlPlane({
       seed: { definitions: [definitionOf()], deployments: [], triggers: [triggerOf()] },
     });
-    await expect(startRun(cp, 'content-enrichment', { wrong: true })).rejects.toMatchObject({
+    await expect(startRun(cp, 'transcript', { wrong: true })).rejects.toMatchObject({
       code: 'NOT_DEPLOYED',
     });
   });
@@ -227,7 +226,7 @@ describe('startRun', () => {
 describe('listRuns', () => {
   const invocation = (id: string, createdAt: string) => ({
     id,
-    target_service_name: 'ContentEnrichment',
+    target_service_name: 'Transcript',
     target_service_key: `api_${id}`,
     status: 'completed',
     completion_result: 'success',
@@ -252,7 +251,7 @@ describe('listRuns', () => {
 
     const { runs, nextCursor } = await listRuns(cp, { limit: 50 });
     expect(runs).toHaveLength(1);
-    expect(runs[0]).toMatchObject({ workflow: 'content-enrichment', status: 'completed' });
+    expect(runs[0]).toMatchObject({ workflow: 'transcript', status: 'completed' });
     expect(nextCursor).toBeUndefined();
   });
 
@@ -276,14 +275,14 @@ describe('getRun', () => {
     cp.admin.rows = [
       {
         id: 'inv_1',
-        target_service_name: 'ContentEnrichment',
+        target_service_name: 'Transcript',
         target_service_key: 'api_1',
         status: 'completed',
         completion_result: 'success',
         created_at: '2026-01-01T00:00:00.000Z',
       },
     ];
-    await expect(getRun(cp, 'content-enrichment', 'api_1')).resolves.toMatchObject({
+    await expect(getRun(cp, 'transcript', 'api_1')).resolves.toMatchObject({
       status: 'completed',
       output: { summary: 'done' },
     });
@@ -292,7 +291,7 @@ describe('getRun', () => {
   it('404s on an unknown run', async () => {
     const cp = fakeControlPlane({ seed: { definitions: [definitionOf()] } });
     cp.admin.rows = [];
-    await expect(getRun(cp, 'content-enrichment', 'api_missing')).rejects.toMatchObject({
+    await expect(getRun(cp, 'transcript', 'api_missing')).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
   });
@@ -301,7 +300,7 @@ describe('getRun', () => {
 describe('cancelRun', () => {
   const row = {
     id: 'inv_1',
-    target_service_name: 'ContentEnrichment',
+    target_service_name: 'Transcript',
     target_service_key: 'api_1',
     status: 'running',
     created_at: '2026-01-01T00:00:00.000Z',
@@ -310,7 +309,7 @@ describe('cancelRun', () => {
   it('asks Restate to cancel and reports the request as accepted', async () => {
     const cp = fakeControlPlane({ seed: { definitions: [definitionOf()] } });
     cp.admin.rows = [row];
-    await expect(cancelRun(cp, 'content-enrichment', 'api_1')).resolves.toEqual({
+    await expect(cancelRun(cp, 'transcript', 'api_1')).resolves.toEqual({
       runId: 'api_1',
       invocationId: 'inv_1',
       status: 'cancellation_requested',
@@ -323,7 +322,7 @@ describe('cancelRun', () => {
       admin: { cancelInvocation: async () => 'completed' },
     });
     finished.admin.rows = [row];
-    await expect(cancelRun(finished, 'content-enrichment', 'api_1')).rejects.toMatchObject({
+    await expect(cancelRun(finished, 'transcript', 'api_1')).rejects.toMatchObject({
       code: 'RUN_COMPLETED',
       statusCode: 409,
     });
@@ -333,7 +332,7 @@ describe('cancelRun', () => {
       admin: { cancelInvocation: async () => 'not_found' },
     });
     gone.admin.rows = [row];
-    await expect(cancelRun(gone, 'content-enrichment', 'api_1')).rejects.toMatchObject({
+    await expect(cancelRun(gone, 'transcript', 'api_1')).rejects.toMatchObject({
       code: 'NOT_FOUND',
       statusCode: 404,
     });
@@ -343,7 +342,7 @@ describe('cancelRun', () => {
 describe('killRun', () => {
   const row = {
     id: 'inv_1',
-    target_service_name: 'ContentEnrichment',
+    target_service_name: 'Transcript',
     target_service_key: 'api_1',
     status: 'running',
     created_at: '2026-01-01T00:00:00.000Z',
@@ -352,7 +351,7 @@ describe('killRun', () => {
   it('kills without waiting for the handler to unwind', async () => {
     const cp = fakeControlPlane({ seed: { definitions: [definitionOf()] } });
     cp.admin.rows = [row];
-    await expect(killRun(cp, 'content-enrichment', 'api_1')).resolves.toEqual({
+    await expect(killRun(cp, 'transcript', 'api_1')).resolves.toEqual({
       runId: 'api_1',
       invocationId: 'inv_1',
       status: 'kill_requested',
@@ -365,7 +364,7 @@ describe('killRun', () => {
       admin: { killInvocation: async () => 'completed' },
     });
     cp.admin.rows = [row];
-    await expect(killRun(cp, 'content-enrichment', 'api_1')).rejects.toMatchObject({
+    await expect(killRun(cp, 'transcript', 'api_1')).rejects.toMatchObject({
       code: 'RUN_COMPLETED',
       statusCode: 409,
     });
@@ -375,7 +374,7 @@ describe('killRun', () => {
 describe('resumeRun', () => {
   const paused = {
     id: 'inv_1',
-    target_service_name: 'ContentEnrichment',
+    target_service_name: 'Transcript',
     target_service_key: 'api_1',
     status: 'paused',
     created_at: '2026-01-01T00:00:00.000Z',
@@ -384,7 +383,7 @@ describe('resumeRun', () => {
   it('resumes a paused run, which is the counterpart to pausing on exhausted retries', async () => {
     const cp = fakeControlPlane({ seed: { definitions: [definitionOf()] } });
     cp.admin.rows = [paused];
-    await expect(resumeRun(cp, 'content-enrichment', 'api_1')).resolves.toEqual({
+    await expect(resumeRun(cp, 'transcript', 'api_1')).resolves.toEqual({
       runId: 'api_1',
       invocationId: 'inv_1',
       status: 'resume_requested',
@@ -397,7 +396,7 @@ describe('resumeRun', () => {
       admin: { resumeInvocation: async () => 'not_paused' },
     });
     cp.admin.rows = [paused];
-    const error = (await resumeRun(cp, 'content-enrichment', 'api_1').catch(
+    const error = (await resumeRun(cp, 'transcript', 'api_1').catch(
       (e: unknown) => e,
     )) as PipelineError;
     expect(error).toMatchObject({ code: 'RUN_NOT_RESUMABLE', statusCode: 409 });
@@ -412,7 +411,7 @@ describe('resumeRun', () => {
       admin: { resumeInvocation: async () => 'not_found' },
     });
     cp.admin.rows = [paused];
-    await expect(resumeRun(cp, 'content-enrichment', 'api_1')).rejects.toMatchObject({
+    await expect(resumeRun(cp, 'transcript', 'api_1')).rejects.toMatchObject({
       code: 'NOT_FOUND',
       statusCode: 404,
     });
@@ -421,7 +420,7 @@ describe('resumeRun', () => {
   it('reports a paused run as `paused`, so an operator can find it to resume', async () => {
     const cp = fakeControlPlane({ seed: { definitions: [definitionOf()] } });
     cp.admin.rows = [paused];
-    await expect(getRun(cp, 'content-enrichment', 'api_1')).resolves.toMatchObject({
+    await expect(getRun(cp, 'transcript', 'api_1')).resolves.toMatchObject({
       status: 'paused',
     });
   });
@@ -435,14 +434,14 @@ describe('resumeRun', () => {
 describe('a run blocked on a paused call', () => {
   const running = {
     id: 'inv_1',
-    target_service_name: 'ContentEnrichment',
+    target_service_name: 'Transcript',
     target_service_key: 'api_1',
     status: 'running',
     created_at: '2026-01-01T00:00:00.000Z',
   };
   const child = {
     id: 'inv_2',
-    target_service_name: 'SummaryService',
+    target_service_name: 'WhisperService',
     target_handler_name: 'summarize',
     status: 'paused',
     last_failure: 'litellm unreachable',
@@ -455,12 +454,12 @@ describe('a run blocked on a paused call', () => {
   };
 
   it('names the paused call on the run, with what failed', async () => {
-    const run = await getRun(blocked(), 'content-enrichment', 'api_1');
+    const run = await getRun(blocked(), 'transcript', 'api_1');
     expect(run.status).toBe('running');
     expect(run.blocked).toEqual([
       {
         invocationId: 'inv_2',
-        target: 'SummaryService/summarize',
+        target: 'WhisperService/summarize',
         restateStatus: 'paused',
         lastError: 'litellm unreachable',
       },
@@ -472,25 +471,25 @@ describe('a run blocked on a paused call', () => {
     // indefinitely rather than exhausting its attempts, so this is the state an operator finds.
     const cp = blocked();
     cp.admin.childRows = [{ ...child, status: 'backing-off' }];
-    const run = await getRun(cp, 'content-enrichment', 'api_1');
+    const run = await getRun(cp, 'transcript', 'api_1');
     expect(run.blocked).toMatchObject([{ invocationId: 'inv_2', restateStatus: 'backing-off' }]);
   });
 
   it('leaves `blocked` off a run whose calls are all progressing', async () => {
     const cp = blocked();
     cp.admin.childRows = [{ ...child, status: 'running' }];
-    expect(await getRun(cp, 'content-enrichment', 'api_1')).not.toHaveProperty('blocked');
+    expect(await getRun(cp, 'transcript', 'api_1')).not.toHaveProperty('blocked');
   });
 
   it('truncates the failure, which arrives as a provider stack trace', async () => {
     const cp = blocked();
     cp.admin.childRows = [{ ...child, last_failure: 'x'.repeat(5_000) }];
-    const run = await getRun(cp, 'content-enrichment', 'api_1');
+    const run = await getRun(cp, 'transcript', 'api_1');
     expect(run.blocked![0]!.lastError).toHaveLength(500);
   });
 
   it('resumes the named call rather than the run that is waiting on it', async () => {
-    await expect(resumeRun(blocked(), 'content-enrichment', 'api_1', 'inv_2')).resolves.toEqual({
+    await expect(resumeRun(blocked(), 'transcript', 'api_1', 'inv_2')).resolves.toEqual({
       runId: 'api_1',
       invocationId: 'inv_2',
       status: 'resume_requested',
@@ -498,9 +497,10 @@ describe('a run blocked on a paused call', () => {
   });
 
   it('refuses an invocation that is not a call of this run', async () => {
-    await expect(
-      resumeRun(blocked(), 'content-enrichment', 'api_1', 'inv_999'),
-    ).rejects.toMatchObject({ code: 'NOT_FOUND', statusCode: 404 });
+    await expect(resumeRun(blocked(), 'transcript', 'api_1', 'inv_999')).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+    });
   });
 
   it('never interpolates the requested invocation id into SQL', async () => {
@@ -508,7 +508,7 @@ describe('a run blocked on a paused call', () => {
     // value that reaches the query is the parent invocation id, which came from Restate.
     const cp = blocked();
     const hostile = "inv_1' OR '1'='1";
-    await expect(resumeRun(cp, 'content-enrichment', 'api_1', hostile)).rejects.toMatchObject({
+    await expect(resumeRun(cp, 'transcript', 'api_1', hostile)).rejects.toMatchObject({
       code: 'NOT_FOUND',
       statusCode: 404,
     });

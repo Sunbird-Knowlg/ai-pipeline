@@ -16,8 +16,8 @@ const metadata = (triggers: unknown[]) =>
   parseMetadata({
     apiVersion: 'ai-pipeline/v1alpha1',
     kind: 'workflow',
-    name: 'content-enrichment',
-    restateName: 'ContentEnrichment',
+    name: 'transcript',
+    restateName: 'Transcript',
     version: '1.0.0',
     triggers,
   });
@@ -47,7 +47,7 @@ describe('kafkaTrigger', () => {
 
   it('names the service after the workflow it feeds', () => {
     const service = kafkaTrigger({ metadata: metadata([kafka('content-published')]), input });
-    expect((service as unknown as { name: string }).name).toBe('ContentEnrichmentTrigger');
+    expect((service as unknown as { name: string }).name).toBe('TranscriptTrigger');
   });
 
   it('refuses a unit that declares no Kafka triggers', () => {
