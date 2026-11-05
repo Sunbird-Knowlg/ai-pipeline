@@ -36,7 +36,7 @@ export async function triggerViews(
   const live = (subscriptions ?? (await cp.admin.listSubscriptions())).filter((s) =>
     s.sink.startsWith(prefix),
   );
-  const sinks = desiredSubscriptions(definition.metadata, () => true);
+  const sinks = desiredSubscriptions(definition.metadata, () => true, cp.kafka?.topicPrefix);
   return records.map((record) =>
     toTriggerView(record, subscriptionFor(record.triggerId, sinks, live)),
   );
@@ -61,7 +61,11 @@ export async function reconcileWithin(
   if (!definition) throw notFound(`workflow ${name}`);
   const records = await catalogue.triggers.list(name);
   const desiredFlag = new Map(records.map((r) => [r.triggerId, r.desiredEnabled]));
-  const desired = desiredSubscriptions(definition.metadata, (id) => desiredFlag.get(id) ?? true);
+  const desired = desiredSubscriptions(
+    definition.metadata,
+    (id) => desiredFlag.get(id) ?? true,
+    cp.kafka?.topicPrefix,
+  );
   const prefix = sinkPrefix(definition.restateName);
   const diff = diffSubscriptions(desired, await cp.admin.listSubscriptions(), prefix);
 
@@ -87,7 +91,7 @@ export async function reconcileWithin(
 
   const live = await cp.admin.listSubscriptions();
   const owned = live.filter((s) => s.sink.startsWith(prefix));
-  const sinks = desiredSubscriptions(definition.metadata, () => true);
+  const sinks = desiredSubscriptions(definition.metadata, () => true, cp.kafka?.topicPrefix);
   for (const record of records) {
     const subscription =
       diff.keep.get(record.triggerId) ?? subscriptionFor(record.triggerId, sinks, owned);

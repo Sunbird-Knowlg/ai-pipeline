@@ -151,7 +151,7 @@ export function fakeControlPlane(
     store: fakeStore(parts.seed),
     admin: fakeAdmin(parts.admin),
     ingress: fakeIngress(parts.ingress),
-    kafka: { cluster: 'local', bootstrapServers: 'kafka:9092' },
+    kafka: { cluster: 'local', bootstrapServers: 'kafka:9092', topicPrefix: '' },
     log: silentLogger(),
   };
 }

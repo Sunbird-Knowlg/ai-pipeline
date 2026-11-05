@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { ContractEntry } from '@ai-pipeline/contracts/entry';
 import { contractHash, contractSchemas } from '@ai-pipeline/contracts/schemas';
 import { describe, expect, it } from 'vitest';
-import { discoverUnits, findUnit } from './units.js';
+import { allDeclaredUnitNames, discoverUnits, findUnit } from './units.js';
 import { workspaceGroups, workspacePackages } from './workspace.js';
 
 /**
@@ -111,7 +111,9 @@ describe('units and contracts agree', () => {
   );
 
   it('every unit dependency names another unit in the workspace', () => {
-    const names = new Set(units.map((u) => u.metadata.name));
+    // Not `units.map(...)`: a dependency can be a unit this CLI can't deploy itself (whisper is
+    // Python), so the name just needs to exist somewhere, not be TS-deployable.
+    const names = allDeclaredUnitNames(ROOT);
     for (const unit of units)
       for (const dependency of unit.metadata.dependencies)
         expect(names, `${unit.metadata.name} → ${dependency.name}`).toContain(dependency.name);

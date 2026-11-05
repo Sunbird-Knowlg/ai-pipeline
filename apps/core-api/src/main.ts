@@ -42,7 +42,11 @@ const app = buildApp({
   db,
   admin,
   ingress: new RestateIngress(config.RESTATE_INGRESS_URL),
-  kafka: { cluster: config.KAFKA_CLUSTER_NAME, bootstrapServers: config.KAFKA_BOOTSTRAP_SERVERS },
+  kafka: {
+    cluster: config.KAFKA_CLUSTER_NAME,
+    bootstrapServers: config.KAFKA_BOOTSTRAP_SERVERS,
+    topicPrefix: config.KAFKA_TOPIC_PREFIX,
+  },
   log,
   allowedHosts: config.ALLOWED_HOSTS,
 });

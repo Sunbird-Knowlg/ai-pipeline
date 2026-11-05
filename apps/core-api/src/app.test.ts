@@ -16,7 +16,7 @@ function app(overrides: { dbOk?: boolean; restateOk?: boolean } = {}) {
     db: db as unknown as Db,
     admin: fakeAdmin({ health: async () => overrides.restateOk ?? true }),
     ingress: fakeIngress(),
-    kafka: { cluster: 'local', bootstrapServers: 'kafka:9092' },
+    kafka: { cluster: 'local', bootstrapServers: 'kafka:9092', topicPrefix: '' },
     log: silentLogger(),
     allowedHosts: ['localhost', '127.0.0.1', 'core-api'],
   };

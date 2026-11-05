@@ -15,6 +15,6 @@ export interface ControlPlane {
   admin: RestateAdminPort;
   ingress: IngressPort;
   /** The Kafka cluster core-api keeps registered in Restate (re-ensured before subscribing). */
-  kafka?: { cluster: string; bootstrapServers: string };
+  kafka?: { cluster: string; bootstrapServers: string; topicPrefix: string };
   log: Logger;
 }
