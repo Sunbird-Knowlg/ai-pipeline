@@ -134,6 +134,26 @@ services:
     ports:
       - 127.0.0.1:4318:4318
 
+  # Local stand-in for Azure Blob Storage. Its well-known devstoreaccount1 key below is Microsoft's
+  # own published emulator credential, not a secret -- same key on every Azurite instance everywhere.
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0
+    restart: unless-stopped
+    command: ['azurite-blob', '--blobHost', '0.0.0.0', '--blobPort', '10000']
+    ports:
+      - 127.0.0.1:10000:10000
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('net').connect(10000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
   core-api:
     build:
       context: .

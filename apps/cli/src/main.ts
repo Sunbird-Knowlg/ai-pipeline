@@ -32,7 +32,7 @@ const USAGE = `pipeline <command>
   cancel <workflow> <runId>       cancel a run
 
 env: CORE_API_URL (http://127.0.0.1:3000), UNIT_CORE_API_URL (http://core-api:3000),
-     DOCKER_NETWORK (ai-pipeline)`;
+     DOCKER_NETWORK (ai-pipeline), UNIT_KNOWLG_BASE_URL (unset -- required by units that call knowlg)`;
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -61,12 +61,32 @@ const print = (value: unknown) => {
 // Authorization header, unlike a truly missing env var.
 const litellmApiKey = process.env.LITELLM_MASTER_KEY ?? dotEnv.LITELLM_MASTER_KEY;
 
+// There's no safe default for a real knowlg instance (EXPLAINED.md's manual flow port-forwards
+// one from the dev cluster), so this is omitted entirely unless the caller sets it — units that
+// don't need it (most of them) deploy exactly as before.
+const knowlgBaseUrl = process.env.UNIT_KNOWLG_BASE_URL ?? dotEnv.UNIT_KNOWLG_BASE_URL;
+
+// Azurite's own published emulator credential (same on every Azurite instance everywhere, not a
+// secret) — safe to default directly, unlike the knowlg URL above.
+const AZURITE_CONNECTION_STRING =
+  'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;' +
+  'AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;' +
+  'BlobEndpoint=http://azurite:10000/devstoreaccount1;';
+
 /** The environment a unit's container runs with. Secrets travel in the environment, not in argv. */
 const unitEnv = () => ({
   // Where the unit registers itself on boot: core-api as seen from inside the Docker network.
   CORE_API_URL: setting(dotEnv, 'UNIT_CORE_API_URL', 'http://core-api:3000'),
   LITELLM_URL: setting(dotEnv, 'UNIT_LITELLM_URL', 'http://litellm:4000'),
   ...(litellmApiKey ? { LITELLM_API_KEY: litellmApiKey } : {}),
+  ...(knowlgBaseUrl ? { KNOWLG_BASE_URL: knowlgBaseUrl } : {}),
+  AZURE_STORAGE_ACCOUNT: setting(dotEnv, 'UNIT_AZURE_STORAGE_ACCOUNT', 'devstoreaccount1'),
+  AZURE_STORAGE_CONTAINER: setting(dotEnv, 'UNIT_AZURE_STORAGE_CONTAINER', 'transcripts'),
+  AZURE_STORAGE_CONNECTION_STRING: setting(
+    dotEnv,
+    'UNIT_AZURE_STORAGE_CONNECTION_STRING',
+    AZURITE_CONNECTION_STRING,
+  ),
   OTEL_EXPORTER_OTLP_ENDPOINT: setting(dotEnv, 'UNIT_OTEL_ENDPOINT', 'http://otel:4318'),
 });
 
