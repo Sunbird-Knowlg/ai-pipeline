@@ -136,7 +136,7 @@ async function translateChunk(
     const complete = parsed.success && requiredKeys.every((key) => key in parsed.data);
     if (complete) return parsed.data;
 
-    log.warn(
+    ctx.console.warn(
       {
         event: 'translate.incomplete_attempt',
         targetLanguage,
@@ -204,8 +204,9 @@ export async function translateSegments(
   const targetLanguageName = languageName(targetLanguage);
   const batches = makeBatches(segments, batchSize, overlap);
   const translatedById = new Map<number, string>();
-  const startedAt = await ctx.date.now();
-  log.info(
+  // ctx.console, not log: this runs on every replay (nothing here is inside a step), and
+  // ctx.console is silenced during replay instead of emitting a duplicate line per resume.
+  ctx.console.info(
     {
       event: 'translate.start',
       targetLanguage,
@@ -218,8 +219,7 @@ export async function translateSegments(
   );
 
   for (const [index, { batch, newFrom }] of batches.entries()) {
-    const batchStartedAt = await ctx.date.now();
-    log.debug(
+    ctx.console.debug(
       {
         event: 'translate.batch_start',
         targetLanguage,
@@ -242,7 +242,8 @@ export async function translateSegments(
     );
     for (const seg of batch.slice(newFrom)) {
       const text = parsed[String(seg.id)];
-      // Safety net; translateChunk should never return with an id missing.
+      // Safety net; translateChunk should never return with an id missing. Right before a
+      // terminal throw, so this (unlike the progress logs above/below) only ever runs once.
       if (text === undefined) {
         log.error(
           { event: 'translate.missing_segment', targetLanguage, batch: index, segmentId: seg.id },
@@ -254,21 +255,12 @@ export async function translateSegments(
       }
       translatedById.set(seg.id, text);
     }
-    log.debug(
-      {
-        event: 'translate.batch_complete',
-        targetLanguage,
-        batch: index,
-        segments: batch.length,
-        elapsedMs: (await ctx.date.now()) - batchStartedAt,
-      },
+    ctx.console.debug(
+      { event: 'translate.batch_complete', targetLanguage, batch: index, segments: batch.length },
       'translation batch complete',
     );
   }
 
-  log.info(
-    { event: 'translate.complete', targetLanguage, elapsedMs: (await ctx.date.now()) - startedAt },
-    'translation complete',
-  );
+  ctx.console.info({ event: 'translate.complete', targetLanguage }, 'translation complete');
   return segments.map((seg) => ({ ...seg, text: translatedById.get(seg.id) ?? seg.text }));
 }

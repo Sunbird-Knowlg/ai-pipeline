@@ -5,16 +5,17 @@ import type { Logger } from '@ai-pipeline/observability/logger';
 import { translateSegments } from './translate.js';
 import type { TranscriptSegment } from './schemas.js';
 
-/** `translateSegments`/`translateChunk` only ever call `ctx.run`, `ctx.date.now` and `ctx.request`. */
+const noop = () => undefined;
+
+/** `translateSegments`/`translateChunk` only ever call `ctx.run`, `ctx.request` and `ctx.console`. */
 function fakeContext(): restate.Context {
   return {
     run: async (_name: string, fn: () => unknown) => fn(),
-    date: { now: async () => Date.now() },
     request: () => ({ attemptCompletedSignal: new AbortController().signal }),
+    console: { info: noop, debug: noop, warn: noop, error: noop },
   } as unknown as restate.Context;
 }
 
-const noop = () => undefined;
 const silentLog = { info: noop, debug: noop, warn: noop, error: noop } as unknown as Logger;
 
 function segments(ids: number[]): TranscriptSegment[] {

@@ -28,6 +28,11 @@ export interface BlobStorageOptions {
   connectionString?: string;
 }
 
+// The SDK's own retry loop (default maxTries: 4, its own backoff) would otherwise run inside
+// every single ctx.run attempt, invisibly multiplying the retry count Restate thinks it owns --
+// same reasoning as generate.ts's maxRetries: 0. Restate's own retry profile is the sole authority.
+const pipelineOptions = { retryOptions: { maxTries: 1 } };
+
 /**
  * Which credential backs the container client: a connection string (Azurite, local testing) wins
  * if present, then OIDC (`DefaultAzureCredential` — Workload Identity, only works from inside a
@@ -35,19 +40,24 @@ export interface BlobStorageOptions {
  */
 function buildContainerClient(options: BlobStorageOptions): ContainerClient {
   if (options.connectionString) {
-    return BlobServiceClient.fromConnectionString(options.connectionString).getContainerClient(
-      options.container,
-    );
+    return BlobServiceClient.fromConnectionString(
+      options.connectionString,
+      pipelineOptions,
+    ).getContainerClient(options.container);
   }
   const url = `https://${options.accountName}.blob.core.windows.net`;
   if (options.authType === 'OIDC') {
-    return new BlobServiceClient(url, new DefaultAzureCredential()).getContainerClient(
-      options.container,
-    );
+    return new BlobServiceClient(
+      url,
+      new DefaultAzureCredential(),
+      pipelineOptions,
+    ).getContainerClient(options.container);
   }
   if (!options.accountKey) throw new Error('accountKey is required for ACCESS_KEY auth');
   const credential = new StorageSharedKeyCredential(options.accountName, options.accountKey);
-  return new BlobServiceClient(url, credential).getContainerClient(options.container);
+  return new BlobServiceClient(url, credential, pipelineOptions).getContainerClient(
+    options.container,
+  );
 }
 
 export function createBlobUploader(options: BlobStorageOptions): BlobUploader {

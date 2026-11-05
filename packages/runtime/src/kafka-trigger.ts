@@ -136,7 +136,8 @@ function handlerFor(
         inputSerde: restate.serde.json,
       });
       const invocationId = await handle.invocationId;
-      log.info(
+      // ctx.console, not log: this is outside any step, so it would otherwise repeat on replay.
+      ctx.console.info(
         { event: 'kafka.trigger.dispatched', triggerId: trigger.id, runId, invocationId },
         'record accepted, run dispatched',
       );
