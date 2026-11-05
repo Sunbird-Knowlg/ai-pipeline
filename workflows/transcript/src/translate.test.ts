@@ -5,11 +5,12 @@ import type { Logger } from '@ai-pipeline/observability/logger';
 import { translateSegments } from './translate.js';
 import type { TranscriptSegment } from './schemas.js';
 
-/** `translateSegments`/`translateChunk` only ever call `ctx.run` and `ctx.date.now`. */
+/** `translateSegments`/`translateChunk` only ever call `ctx.run`, `ctx.date.now` and `ctx.request`. */
 function fakeContext(): restate.Context {
   return {
     run: async (_name: string, fn: () => unknown) => fn(),
     date: { now: async () => Date.now() },
+    request: () => ({ attemptCompletedSignal: new AbortController().signal }),
   } as unknown as restate.Context;
 }
 
@@ -93,7 +94,16 @@ describe('translateSegments', () => {
   it('fails the run if a single segment never completes', async () => {
     const generate = vi.fn<Generate>(async () => response({}));
     await expect(
-      translateSegments(fakeContext(), generate, silentLog, segments([9]), 'ar', 'chat-default', 80, 0),
+      translateSegments(
+        fakeContext(),
+        generate,
+        silentLog,
+        segments([9]),
+        'ar',
+        'chat-default',
+        80,
+        0,
+      ),
     ).rejects.toThrow(restate.TerminalError);
   });
 });

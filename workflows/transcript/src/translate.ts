@@ -1,8 +1,10 @@
 import type { Generate } from '@ai-pipeline/ai/generate';
 import { isRetryableModelError } from '@ai-pipeline/ai/errors';
 import type { Logger } from '@ai-pipeline/observability/logger';
+import { retry } from '@ai-pipeline/runtime/retry';
 import * as restate from '@restatedev/restate-sdk';
 import { z } from 'zod';
+import { languageName } from './language.js';
 import type { TranscriptSegment } from './schemas.js';
 
 /**
@@ -68,8 +70,10 @@ const MAX_TOKEN_BUDGET = 32_000;
 const MAX_BUDGET_ATTEMPTS = 3;
 
 function baseBudgetFor(chunkSize: number): number {
-  return Math.max(chunkSize * BASE_TOKENS_PER_SEGMENT, BASE_TOKEN_BUDGET_FLOOR) +
-    BASE_TOKEN_BUDGET_HEADROOM;
+  return (
+    Math.max(chunkSize * BASE_TOKENS_PER_SEGMENT, BASE_TOKEN_BUDGET_FLOOR) +
+    BASE_TOKEN_BUDGET_HEADROOM
+  );
 }
 
 /**
@@ -90,6 +94,9 @@ async function translateChunk(
 ): Promise<Record<string, string>> {
   let budget = baseBudgetFor(chunk.length);
   const requiredKeys = chunk.map((s) => String(s.id));
+  // Abandon the model call when this attempt ends (cancel, suspension, retry) -- these are the
+  // longest-running calls in the workflow, so they benefit most from not running on after that.
+  const signal = ctx.request().attemptCompletedSignal;
 
   for (let attempt = 0; attempt < MAX_BUDGET_ATTEMPTS; attempt++) {
     const result = await ctx.run(
@@ -101,6 +108,7 @@ async function translateChunk(
             prompt: translationPrompt(languageName, chunk),
             temperature: 0,
             maxOutputTokens: budget,
+            signal,
             schema: translationSchema(chunk),
             schemaName: 'translations',
           });
@@ -121,7 +129,7 @@ async function translateChunk(
           );
         }
       },
-      { initialRetryInterval: { seconds: 2 }, maxRetryInterval: { seconds: 60 } },
+      retry.llm,
     );
 
     const parsed = TranslatedMap.safeParse(result.object);
@@ -193,8 +201,7 @@ export async function translateSegments(
   batchSize: number,
   overlap: number,
 ): Promise<TranscriptSegment[]> {
-  const languageName =
-    new Intl.DisplayNames(['en'], { type: 'language' }).of(targetLanguage) ?? targetLanguage;
+  const targetLanguageName = languageName(targetLanguage);
   const batches = makeBatches(segments, batchSize, overlap);
   const translatedById = new Map<number, string>();
   const startedAt = await ctx.date.now();
@@ -229,7 +236,7 @@ export async function translateSegments(
       log,
       batch,
       targetLanguage,
-      languageName,
+      targetLanguageName,
       model,
       `batch-${index}`,
     );

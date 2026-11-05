@@ -1,6 +1,12 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { context, propagation } from '@opentelemetry/api';
-import { Output, generateText, jsonSchema } from 'ai';
+import {
+  NoObjectGeneratedError,
+  NoOutputGeneratedError,
+  Output,
+  generateText,
+  jsonSchema,
+} from 'ai';
 import { z } from 'zod';
 
 export interface GenerateRequest {
@@ -73,26 +79,56 @@ export function createGenerate({ baseUrl, apiKey, timeoutMs = 180_000 }: AiOptio
     schema,
     schemaName,
   }) => {
-    const result = await generateText({
-      model: provider.chatModel(model),
-      system,
-      prompt,
-      maxOutputTokens,
-      temperature,
-      maxRetries: 0,
-      abortSignal: signal
-        ? AbortSignal.any([AbortSignal.timeout(timeoutMs), signal])
-        : AbortSignal.timeout(timeoutMs),
-      output: schema
-        ? Output.object({ schema: jsonSchema(schema as Parameters<typeof jsonSchema>[0]), name: schemaName })
-        : undefined,
-    });
+    let result;
+    try {
+      result = await generateText({
+        model: provider.chatModel(model),
+        system,
+        prompt,
+        maxOutputTokens,
+        temperature,
+        maxRetries: 0,
+        abortSignal: signal
+          ? AbortSignal.any([AbortSignal.timeout(timeoutMs), signal])
+          : AbortSignal.timeout(timeoutMs),
+        output: schema
+          ? Output.object({
+              schema: jsonSchema(schema as Parameters<typeof jsonSchema>[0]),
+              name: schemaName,
+            })
+          : undefined,
+      });
+    } catch (error) {
+      // Truncated or unparseable structured output is an incomplete answer, not a failed call --
+      // the caller (e.g. translate's budget-doubling/split) needs to see it as data, not a throw.
+      if (schema && NoObjectGeneratedError.isInstance(error)) {
+        return {
+          text: error.text ?? '',
+          model,
+          usage: { inputTokens: error.usage?.inputTokens, outputTokens: error.usage?.outputTokens },
+          finishReason: error.finishReason ?? 'unknown',
+          object: undefined,
+        };
+      }
+      throw error;
+    }
+    // `result.output` is a getter that throws `NoOutputGeneratedError` when the model finished
+    // without emitting usable content (empty reply, content filter) -- only relevant when a
+    // schema was requested; an unschema'd caller never reads `object` anyway.
+    let object: unknown;
+    if (schema) {
+      try {
+        object = result.output;
+      } catch (error) {
+        if (!NoOutputGeneratedError.isInstance(error)) throw error;
+      }
+    }
     return {
       text: result.text,
       model,
       usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
       finishReason: result.finishReason,
-      object: result.output,
+      ...(schema ? { object } : {}),
     };
   };
 }
