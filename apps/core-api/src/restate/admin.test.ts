@@ -69,7 +69,7 @@ describe('expected non-2xx responses', () => {
 
   it('reports the routed deployment of a known service', async () => {
     const { client } = admin(() => json(200, { deployment_id: 'dp_7', revision: 3 }));
-    await expect(client.service('ContentEnrichment')).resolves.toEqual({
+    await expect(client.service('Transcript')).resolves.toEqual({
       deployment_id: 'dp_7',
       revision: 3,
     });

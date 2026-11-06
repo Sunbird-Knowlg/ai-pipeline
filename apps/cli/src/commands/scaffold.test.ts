@@ -184,7 +184,7 @@ describe('triggerIdFor', () => {
   it('derives a valid trigger id from topic names Kafka allows but metadata.json does not', () => {
     // Each of these is a legal Kafka topic whose naive `.replace(/[._]/g, '-')` produces an id the
     // metadata schema rejects — and one such unit used to block `deploy` for every other unit.
-    expect(triggerIdFor('content.published', 'content-enrichment')).toBe('content-published');
+    expect(triggerIdFor('content.published', 'transcript')).toBe('content-published');
     expect(triggerIdFor('Orders.Placed', 'order-fulfilment')).toBe('orders-placed');
     expect(triggerIdFor('orders..placed', 'order-fulfilment')).toBe('orders-placed');
     expect(triggerIdFor('orders_placed_', 'order-fulfilment')).toBe('orders-placed');

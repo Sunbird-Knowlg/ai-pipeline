@@ -37,15 +37,15 @@ const withKafka = () => {
 describe('reconcileTriggers', () => {
   it('creates the missing subscription and ensures the cluster first', async () => {
     const cp = withKafka();
-    const views = await reconcileTriggers(cp, 'content-enrichment');
+    const views = await reconcileTriggers(cp, 'transcript');
 
     expect(cp.admin.clusters).toEqual(['local']);
     expect(cp.admin.subscriptions).toEqual([
       expect.objectContaining({
         source: 'kafka://local/content.published',
-        sink: 'service://ContentEnrichmentTrigger/onContentPublished',
+        sink: 'service://TranscriptTrigger/onContentPublished',
         options: expect.objectContaining({
-          'group.id': 'wf.content-enrichment.content-published',
+          'group.id': 'wf.transcript.content-published',
           'auto.offset.reset': 'earliest',
         }) as unknown,
       }),
@@ -62,15 +62,15 @@ describe('reconcileTriggers', () => {
 
   it('serialises reconciles, because creating a subscription is not idempotent', async () => {
     const cp = withKafka();
-    await reconcileTriggers(cp, 'content-enrichment');
-    expect(cp.store.locks).toEqual(['reconcile:content-enrichment']);
+    await reconcileTriggers(cp, 'transcript');
+    expect(cp.store.locks).toEqual(['reconcile:transcript']);
   });
 
   it('does nothing twice: a second pass keeps the existing subscription', async () => {
     const cp = withKafka();
-    await reconcileTriggers(cp, 'content-enrichment');
+    await reconcileTriggers(cp, 'transcript');
     const [first] = cp.admin.subscriptions;
-    await reconcileTriggers(cp, 'content-enrichment');
+    await reconcileTriggers(cp, 'transcript');
     expect(cp.admin.subscriptions).toHaveLength(1);
     expect(cp.admin.subscriptions[0]!.id).toBe(first!.id);
   });
@@ -79,7 +79,7 @@ describe('reconcileTriggers', () => {
     const cp = withKafka();
     cp.admin.failCreate = 'kafka cluster unreachable';
 
-    const views = await reconcileTriggers(cp, 'content-enrichment');
+    const views = await reconcileTriggers(cp, 'transcript');
     const kafka = views.find((v) => v.id === 'content-published');
     expect(kafka).toMatchObject({
       observedStatus: 'error',
@@ -94,11 +94,11 @@ describe('reconcileTriggers', () => {
       {
         id: 'sub_stale',
         source: 'kafka://local/content.old',
-        sink: 'service://ContentEnrichmentTrigger/onContentPublished',
+        sink: 'service://TranscriptTrigger/onContentPublished',
         options: {},
       },
     ];
-    await reconcileTriggers(cp, 'content-enrichment');
+    await reconcileTriggers(cp, 'transcript');
     expect(cp.admin.subscriptions.map((s) => s.id)).not.toContain('sub_stale');
     expect(cp.admin.subscriptions).toHaveLength(1);
   });
@@ -113,7 +113,7 @@ describe('reconcileTriggers', () => {
         options: {},
       },
     ];
-    await reconcileTriggers(cp, 'content-enrichment');
+    await reconcileTriggers(cp, 'transcript');
     expect(cp.admin.subscriptions.map((s) => s.id)).toContain('sub_other');
   });
 
@@ -127,35 +127,33 @@ describe('reconcileTriggers', () => {
 describe('setTriggerEnabled', () => {
   it('reports `disabling` while the subscription is still being torn down', async () => {
     const cp = withKafka();
-    await reconcileTriggers(cp, 'content-enrichment');
+    await reconcileTriggers(cp, 'transcript');
     // Deleting the subscription stops the consumer, but Restate may already have enqueued records.
-    const view = await setTriggerEnabled(cp, 'content-enrichment', 'content-published', false);
+    const view = await setTriggerEnabled(cp, 'transcript', 'content-published', false);
     expect(view).toMatchObject({ desiredEnabled: false, observedStatus: 'disabled' });
     expect(cp.admin.subscriptions).toHaveLength(0);
   });
 
   it('re-creates the subscription with the same group id, so it resumes from committed offsets', async () => {
     const cp = withKafka();
-    await reconcileTriggers(cp, 'content-enrichment');
-    await setTriggerEnabled(cp, 'content-enrichment', 'content-published', false);
-    await setTriggerEnabled(cp, 'content-enrichment', 'content-published', true);
+    await reconcileTriggers(cp, 'transcript');
+    await setTriggerEnabled(cp, 'transcript', 'content-published', false);
+    await setTriggerEnabled(cp, 'transcript', 'content-published', true);
 
     expect(cp.admin.subscriptions).toHaveLength(1);
-    expect(cp.admin.subscriptions[0]!.options['group.id']).toBe(
-      'wf.content-enrichment.content-published',
-    );
+    expect(cp.admin.subscriptions[0]!.options['group.id']).toBe('wf.transcript.content-published');
   });
 
   it('switches a REST trigger off without touching Restate', async () => {
     const cp = withKafka();
-    const view = await setTriggerEnabled(cp, 'content-enrichment', 'api', false);
+    const view = await setTriggerEnabled(cp, 'transcript', 'api', false);
     expect(view).toMatchObject({ id: 'api', desiredEnabled: false, observedStatus: 'disabled' });
   });
 
   it('404s on an unknown trigger', async () => {
-    await expect(
-      setTriggerEnabled(withKafka(), 'content-enrichment', 'nope', false),
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(setTriggerEnabled(withKafka(), 'transcript', 'nope', false)).rejects.toMatchObject(
+      { code: 'NOT_FOUND' },
+    );
   });
 });
 
@@ -166,7 +164,7 @@ describe('triggerViews', () => {
     cp.store.seed.triggers[1]!.observedStatus = 'active';
     cp.store.seed.triggers[1]!.subscriptionId = 'sub_gone';
 
-    const views = await triggerViews(cp, cp.store, 'content-enrichment');
+    const views = await triggerViews(cp, cp.store, 'transcript');
     expect(views.find((v) => v.id === 'content-published')).toMatchObject({
       observedStatus: 'pending',
     });

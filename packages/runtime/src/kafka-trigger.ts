@@ -2,6 +2,8 @@ import type { TriggerContext } from '@ai-pipeline/contracts/trigger';
 import { type KafkaTrigger, type Metadata } from '@ai-pipeline/metadata/metadata';
 import { kafkaHandlerName, triggerServiceName } from '@ai-pipeline/metadata/naming';
 import { kafkaRunId } from '@ai-pipeline/metadata/run-ids';
+import { createLogger } from '@ai-pipeline/observability/logger';
+import type { Logger } from '@ai-pipeline/observability/logger';
 import * as restate from '@restatedev/restate-sdk';
 import type { z } from 'zod';
 import { serviceOptions } from './options.js';
@@ -13,14 +15,24 @@ import { serviceOptions } from './options.js';
  * The return type is plain `unknown` because `unknown | null` collapses to `unknown` — the skip
  * contract lives in this comment and in the `=== null` check below, not in the type. Either way the
  * mapped value is validated against the workflow's input schema before a run starts.
+ *
+ * `log` is the unit's own logger (one instance, built once in `kafkaTrigger()` below and shared
+ * across every record) — so an adapter can report *why* it skipped a record without constructing
+ * its own logger or threading env vars through, same as every other dependency in this codebase.
  */
-export type TriggerAdapter = (event: unknown) => unknown;
+export type TriggerAdapter = (event: unknown, log: Logger) => unknown;
 
 export interface KafkaTriggerOptions<I extends z.ZodType> {
   metadata: Metadata;
   /** The workflow's canonical input schema (from its contract). */
   input: I;
   adapters?: Record<string, TriggerAdapter>;
+  /** Derives a run id from the mapped, validated input instead of the per-record `kafkaRunId`.
+   *  Two records producing the same key collapse onto one workflow execution (Restate's own
+   *  submission semantics: the second attaches/no-ops instead of running again). Return
+   *  `undefined` for a given record to fall back to the default `kafkaRunId`. Optional: a unit
+   *  that doesn't set this keeps today's exact behavior, one run per Kafka record. */
+  runKey?: (input: z.infer<I>) => string | undefined;
 }
 
 export type KafkaTriggerResult = { runId: string; invocationId: string } | { skipped: true };
@@ -35,9 +47,11 @@ export function kafkaTrigger<I extends z.ZodType>({
   metadata,
   input,
   adapters = {},
+  runKey,
 }: KafkaTriggerOptions<I>) {
   const triggers = metadata.triggers.filter((t): t is KafkaTrigger => t.type === 'kafka');
   if (triggers.length === 0) throw new Error(`${metadata.name} declares no kafka triggers`);
+  const log = createLogger(metadata.name);
   const handlers: Record<string, ReturnType<typeof handlerFor>> = {};
   for (const trigger of triggers) {
     const adapter = trigger.adapter ? adapters[trigger.adapter] : undefined;
@@ -45,7 +59,7 @@ export function kafkaTrigger<I extends z.ZodType>({
       throw new Error(`${metadata.name}: adapter "${trigger.adapter}" is not exported`);
     const handler = kafkaHandlerName(trigger.id);
     if (handlers[handler]) throw new Error(`${metadata.name}: duplicate kafka handler ${handler}`);
-    handlers[handler] = handlerFor(metadata, trigger, input, adapter);
+    handlers[handler] = handlerFor(metadata, trigger, input, log, adapter, runKey);
   }
   return restate.service({
     name: triggerServiceName(metadata.restateName),
@@ -55,11 +69,31 @@ export function kafkaTrigger<I extends z.ZodType>({
   });
 }
 
-function handlerFor(
+/** The default per-record run id: opaque, derived only from coordinates the broker itself
+ *  distinguishes (never the narrowed numeric offset -- see `decimalHeader`'s own doc comment). */
+function defaultRunId(
+  trigger: KafkaTrigger,
+  partition: { text: string },
+  offset: { text: string },
+  timestamp: { text: string } | undefined,
+): string {
+  return kafkaRunId({
+    cluster: trigger.cluster,
+    triggerId: trigger.id,
+    topic: trigger.topic,
+    partition: partition.text,
+    offset: offset.text,
+    ...(timestamp ? { timestamp: timestamp.text } : {}),
+  });
+}
+
+function handlerFor<I extends z.ZodType>(
   metadata: Metadata,
   trigger: KafkaTrigger,
-  input: z.ZodType,
+  input: I,
+  log: Logger,
   adapter?: TriggerAdapter,
+  runKey?: (input: z.infer<I>) => string | undefined,
 ) {
   return restate.createServiceHandler(
     { input: restate.serde.binary },
@@ -80,7 +114,7 @@ function handlerFor(
       }
       let mapped: unknown;
       try {
-        mapped = adapter ? adapter(event) : event;
+        mapped = adapter ? adapter(event, log) : event;
       } catch (error) {
         throw new restate.TerminalError(
           `adapter rejected the Kafka record: ${(error as Error).message}`,
@@ -109,17 +143,7 @@ function handlerFor(
         offset: offset.value,
         receivedAt: timestamp && timestamp.value > 0 ? timestamp.value : await ctx.date.now(),
       };
-      // Derived from the exact header text, never the narrowed number: past 2^53 two adjacent
-      // offsets round to the same double, and Restate would dedupe the second record as a replay
-      // of the first. The run id must distinguish records the broker distinguishes.
-      const runId = kafkaRunId({
-        cluster: trigger.cluster,
-        triggerId: trigger.id,
-        topic: trigger.topic,
-        partition: partition.text,
-        offset: offset.text,
-        ...(timestamp ? { timestamp: timestamp.text } : {}),
-      });
+      const runId = runKey?.(parsed.data) ?? defaultRunId(trigger, partition, offset, timestamp);
       const handle = ctx.genericSend({
         service: metadata.restateName,
         method: 'run',
@@ -127,7 +151,13 @@ function handlerFor(
         parameter: { input: parsed.data, trigger: trigger_ },
         inputSerde: restate.serde.json,
       });
-      return { runId, invocationId: await handle.invocationId };
+      const invocationId = await handle.invocationId;
+      // ctx.console, not log: this is outside any step, so it would otherwise repeat on replay.
+      ctx.console.info(
+        { event: 'kafka.trigger.dispatched', triggerId: trigger.id, runId, invocationId },
+        'record accepted, run dispatched',
+      );
+      return { runId, invocationId };
     },
   );
 }

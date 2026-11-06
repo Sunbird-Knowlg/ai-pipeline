@@ -103,7 +103,7 @@ describe('createLogger', () => {
 
   it('tags every line with the service', () => {
     const sink = capture();
-    createLogger('content-authoring', sink.stream).info('up');
-    expect(sink.lines()[0]).toMatchObject({ service: 'content-authoring', msg: 'up' });
+    createLogger('transcript', sink.stream).info('up');
+    expect(sink.lines()[0]).toMatchObject({ service: 'transcript', msg: 'up' });
   });
 });

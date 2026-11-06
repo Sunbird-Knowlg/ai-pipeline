@@ -12,11 +12,11 @@ import { retireDeployment } from './deployments.js';
  * file exists for — an endpoint claimed by a deploy that landed while the DELETE was in flight.
  */
 
-const ENDPOINT = 'http://summary-abc123def456:9080';
+const ENDPOINT = 'http://transcript-abc123def456:9080';
 
 const view = (over: Partial<DeploymentView> = {}): DeploymentView => ({
   deploymentId: 'dp_1',
-  name: 'summary',
+  name: 'transcript',
   version: '0.1.0',
   endpoint: ENDPOINT,
   artifactDigest: `sha256:${'a'.repeat(64)}`,
@@ -54,7 +54,7 @@ function fakes(lists: DeploymentView[][]): {
     removeImage: (tag) => recorded.removedImages.push(tag),
     containerState: () => 'running',
     containerLabel: () => undefined,
-    containerImage: () => 'ai-pipeline/summary:0.1.0-abc123def456',
+    containerImage: () => 'ai-pipeline/transcript:0.1.0-abc123def456',
     runContainer: () => undefined,
     removeContainer: (name) => recorded.removedContainers.push(name),
     containerLogs: () => '',
@@ -69,8 +69,8 @@ describe('retireDeployment', () => {
       deploymentId: 'dp_1',
       status: 'retired',
     });
-    expect(recorded.removedContainers).toEqual(['summary-abc123def456']);
-    expect(recorded.removedImages).toEqual(['ai-pipeline/summary:0.1.0-abc123def456']);
+    expect(recorded.removedContainers).toEqual(['transcript-abc123def456']);
+    expect(recorded.removedImages).toEqual(['ai-pipeline/transcript:0.1.0-abc123def456']);
   });
 
   it('leaves the container alone when another live deployment shares the endpoint', async () => {

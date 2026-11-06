@@ -23,7 +23,7 @@ describe('run view', () => {
   const base = {
     runId: 'kf_1',
     invocationId: 'inv_1',
-    workflow: 'content-enrichment',
+    workflow: 'transcript',
     status: 'completed',
     restateStatus: 'completed',
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -76,17 +76,17 @@ describe('workflow detail', () => {
     };
 
     const body = await serve(responseSchema(workflowDetail), {
-      name: 'content-enrichment',
+      name: 'transcript',
       kind: 'workflow',
       version: '1.0.0',
-      restateName: 'ContentEnrichment',
+      restateName: 'Transcript',
       visibility: 'public',
       description: 'Summarises published content',
       config: { summaryMaxWords: 120 },
       schemas,
       contractHash: `sha256:${'a'.repeat(64)}`,
       triggers: [{ id: 'api', type: 'rest', desiredEnabled: true, observedStatus: 'active' }],
-      dependencies: [{ name: 'summary', kind: 'service' }],
+      dependencies: [{ name: 'whisper', kind: 'service' }],
       versions: [
         {
           version: '1.0.0',

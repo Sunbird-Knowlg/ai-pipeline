@@ -15,6 +15,9 @@ export const configSchema = z.object({
   RESTATE_ADMIN_URL: z.url(),
   KAFKA_CLUSTER_NAME: z.string().default('local'),
   KAFKA_BOOTSTRAP_SERVERS: z.string().default('kafka:9092'),
+  /** Prepended to every unit's declared topic name when subscribing, so metadata.json (hashed
+   *  into the artifact digest) stays environment-neutral -- the environment lives here instead. */
+  KAFKA_TOPIC_PREFIX: z.string().default(''),
   /** Host-header allow-list; the only DNS-rebinding guard since v1 has no auth. */
   ALLOWED_HOSTS: list.default(['localhost', '127.0.0.1', '::1', 'core-api']),
 });

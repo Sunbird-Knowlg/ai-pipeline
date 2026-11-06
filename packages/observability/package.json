@@ -13,6 +13,11 @@
       "@ai-pipeline/source": "./src/telemetry.ts",
       "types": "./dist/telemetry.d.ts",
       "default": "./dist/telemetry.js"
+    },
+    "./testing/logger": {
+      "@ai-pipeline/source": "./src/testing/logger.ts",
+      "types": "./dist/testing/logger.d.ts",
+      "default": "./dist/testing/logger.js"
     }
   },
   "files": [

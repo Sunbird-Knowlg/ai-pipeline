@@ -1,5 +1,11 @@
 import type { RunOptions } from '@restatedev/restate-sdk';
 
+/** Shared backoff shape for plain HTTP APIs; `http` and `httpResumable` differ only in the cap. */
+const httpBackoff = {
+  initialRetryInterval: { milliseconds: 500 },
+  maxRetryInterval: { seconds: 10 },
+};
+
 /**
  * Presets for `ctx.run(name, fn, retry.x)`. Override freely — these are defaults, not a policy
  * engine. A capped profile throws a TerminalError when exhausted (the run fails); an uncapped
@@ -16,11 +22,14 @@ export const retry = {
     maxRetryInterval: { seconds: 60 },
   },
   /** Plain HTTP APIs. */
-  http: {
-    maxRetryAttempts: 5,
-    initialRetryInterval: { milliseconds: 500 },
-    maxRetryInterval: { seconds: 10 },
-  },
+  http: { maxRetryAttempts: 5, ...httpBackoff },
+  /**
+   * `http`, uncapped: for a step whose failure would discard already-completed, expensive
+   * upstream work (e.g. a multi-minute transcription) rather than just retrying something cheap.
+   * Same reasoning as `llm` -- an outage pauses the run (resumable, upstream work stays in the
+   * journal) instead of failing it and throwing that work away.
+   */
+  httpResumable: { ...httpBackoff },
   /** Database reads/writes. */
   db: {
     maxRetryAttempts: 3,

@@ -36,17 +36,24 @@ const CONSUMER_OPTIONS: Readonly<Record<string, string>> = {
   'max.poll.interval.ms': '600000',
 };
 
-/** One subscription per enabled Kafka trigger, into that trigger's handler. */
+/**
+ * One subscription per enabled Kafka trigger, into that trigger's handler.
+ *
+ * `topicPrefix` keeps a unit's declared topic (in `metadata.json`, hashed into its artifact
+ * digest) environment-neutral: the environment-specific part is applied here, at subscribe time,
+ * by core-api's own config, not baked into the artifact.
+ */
 export function desiredSubscriptions(
   metadata: Metadata,
   enabled: (triggerId: string) => boolean,
+  topicPrefix = '',
 ): DesiredSubscription[] {
   return metadata.triggers.flatMap((t) =>
     t.type === 'kafka' && enabled(t.id)
       ? [
           {
             triggerId: t.id,
-            source: `kafka://${t.cluster}/${t.topic}`,
+            source: `kafka://${t.cluster}/${topicPrefix}${t.topic}`,
             sink: `${sinkPrefix(metadata.restateName)}${kafkaHandlerName(t.id)}`,
             // A stable group id lets a re-created subscription resume from committed offsets.
             options: { 'group.id': `wf.${metadata.name}.${t.id}`, ...CONSUMER_OPTIONS },

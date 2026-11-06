@@ -36,7 +36,7 @@ export async function triggerViews(
   const live = (subscriptions ?? (await cp.admin.listSubscriptions())).filter((s) =>
     s.sink.startsWith(prefix),
   );
-  const sinks = desiredSubscriptions(definition.metadata, () => true);
+  const sinks = desiredSubscriptions(definition.metadata, () => true, cp.kafka?.topicPrefix);
   return records.map((record) =>
     toTriggerView(record, subscriptionFor(record.triggerId, sinks, live)),
   );
@@ -61,15 +61,24 @@ export async function reconcileWithin(
   if (!definition) throw notFound(`workflow ${name}`);
   const records = await catalogue.triggers.list(name);
   const desiredFlag = new Map(records.map((r) => [r.triggerId, r.desiredEnabled]));
-  const desired = desiredSubscriptions(definition.metadata, (id) => desiredFlag.get(id) ?? true);
+  const desired = desiredSubscriptions(
+    definition.metadata,
+    (id) => desiredFlag.get(id) ?? true,
+    cp.kafka?.topicPrefix,
+  );
   const prefix = sinkPrefix(definition.restateName);
   const diff = diffSubscriptions(desired, await cp.admin.listSubscriptions(), prefix);
 
   const errors = new Map<string, string>();
   for (const subscription of diff.remove) await cp.admin.deleteSubscription(subscription.id);
-  // Idempotent; covers a Restate whose metadata was reset while core-api kept running.
-  if (diff.create.length > 0 && cp.kafka)
+  // Idempotent; covers a Restate whose metadata was reset while core-api kept running. Only ever
+  // ensures this process's own configured cluster -- not whatever name a subscription declares.
+  // ensureKafkaCluster treats "already exists" as success, so auto-creating an unknown name here
+  // would make it permanently mean "core-api's own brokers", silently masking a typo or a cluster
+  // that genuinely lives elsewhere instead of letting createSubscription fail on it below.
+  if (diff.create.length > 0 && cp.kafka) {
     await cp.admin.ensureKafkaCluster(cp.kafka.cluster, cp.kafka.bootstrapServers);
+  }
   for (const create of diff.create) {
     try {
       diff.keep.set(
@@ -83,7 +92,7 @@ export async function reconcileWithin(
 
   const live = await cp.admin.listSubscriptions();
   const owned = live.filter((s) => s.sink.startsWith(prefix));
-  const sinks = desiredSubscriptions(definition.metadata, () => true);
+  const sinks = desiredSubscriptions(definition.metadata, () => true, cp.kafka?.topicPrefix);
   for (const record of records) {
     const subscription =
       diff.keep.get(record.triggerId) ?? subscriptionFor(record.triggerId, sinks, owned);

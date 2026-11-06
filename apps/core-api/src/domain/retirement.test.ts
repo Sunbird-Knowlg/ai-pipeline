@@ -16,7 +16,7 @@ describe('retireDeployment', () => {
       deploymentOf({ deploymentId: 'dp_1', status: 'active' }),
       deploymentOf({ deploymentId: 'dp_0', status: 'draining' }),
     ]);
-    cp.admin.routing.set('ContentEnrichment', 'dp_1');
+    cp.admin.routing.set('Transcript', 'dp_1');
     cp.admin.rows = [{ n: 0 }];
 
     await expect(retireDeployment(cp, 'dp_0')).resolves.toEqual({
@@ -53,7 +53,7 @@ describe('retireDeployment', () => {
   it('refuses a deployment Restate still routes to, even when the catalogue disagrees', async () => {
     // The catalogue says draining, Restate says it is still the target. Restate wins.
     const cp = seeded([deploymentOf({ deploymentId: 'dp_0', status: 'draining' })]);
-    cp.admin.routing.set('ContentEnrichment', 'dp_0');
+    cp.admin.routing.set('Transcript', 'dp_0');
     cp.admin.rows = [{ n: 0 }];
 
     await expect(retireDeployment(cp, 'dp_0')).rejects.toMatchObject({ code: 'DEPLOYMENT_ACTIVE' });
@@ -65,7 +65,7 @@ describe('retireDeployment', () => {
       deploymentOf({ deploymentId: 'dp_1', status: 'active' }),
       deploymentOf({ deploymentId: 'dp_0', status: 'draining' }),
     ]);
-    cp.admin.routing.set('ContentEnrichment', 'dp_1');
+    cp.admin.routing.set('Transcript', 'dp_1');
     cp.admin.rows = [{ n: 3 }];
 
     const error = (await retireDeployment(cp, 'dp_0').catch((e: unknown) => e)) as PipelineError;

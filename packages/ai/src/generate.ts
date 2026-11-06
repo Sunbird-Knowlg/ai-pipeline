@@ -1,6 +1,12 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { context, propagation } from '@opentelemetry/api';
-import { generateText } from 'ai';
+import {
+  NoObjectGeneratedError,
+  NoOutputGeneratedError,
+  Output,
+  generateText,
+  jsonSchema,
+} from 'ai';
 import { z } from 'zod';
 
 export interface GenerateRequest {
@@ -12,12 +18,23 @@ export interface GenerateRequest {
   temperature?: number;
   /** Aborts the call early, e.g. when the Restate attempt ends (`attemptCompletedSignal`). */
   signal?: AbortSignal;
+  /**
+   * A JSON Schema the response must satisfy exactly (`strict` structured output). Required
+   * fields are enforced by constrained decoding, not just by instruction -- the model cannot
+   * finish a response that omits one.
+   */
+  schema?: Record<string, unknown>;
+  schemaName?: string;
 }
 
 export interface GenerateResult {
   text: string;
   model: string;
   usage: { inputTokens?: number; outputTokens?: number };
+  /** `'length'` means the response was cut off at `maxOutputTokens`, not finished naturally. */
+  finishReason: string;
+  /** Present when `schema` was given: the parsed, schema-validated response. */
+  object?: unknown;
 }
 
 /** The one model call workflows and services depend on; providers stay behind it. */
@@ -25,13 +42,17 @@ export type Generate = (request: GenerateRequest) => Promise<GenerateResult>;
 
 const envSchema = z.object({
   LITELLM_URL: z.url(),
-  LITELLM_API_KEY: z.string().min(1),
+  // Optional: unset when litellm has no auth configured (cluster-internal, no caller to
+  // authenticate). Set when the target litellm does enforce auth. min(1), not just optional():
+  // an explicitly empty key is indistinguishable from a real one downstream (the HTTP client
+  // sends no Authorization header either way), so this fails at boot instead of silently.
+  LITELLM_API_KEY: z.string().min(1).optional(),
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
 });
 
 export interface AiOptions {
   baseUrl: string;
-  apiKey: string;
+  apiKey?: string;
   timeoutMs?: number;
 }
 
@@ -46,23 +67,70 @@ export function createGenerate({ baseUrl, apiKey, timeoutMs = 180_000 }: AiOptio
     apiKey,
     includeUsage: true,
     fetch: tracedFetch,
+    // Off by default: without it, this provider sends the older `json_object` response_format
+    // instead of `json_schema`, which doesn't enforce required fields via constrained decoding.
+    supportsStructuredOutputs: true,
   });
-  return async ({ model, system, prompt, maxOutputTokens, temperature = 0, signal }) => {
-    const result = await generateText({
-      model: provider.chatModel(model),
-      system,
-      prompt,
-      maxOutputTokens,
-      temperature,
-      maxRetries: 0,
-      abortSignal: signal
-        ? AbortSignal.any([AbortSignal.timeout(timeoutMs), signal])
-        : AbortSignal.timeout(timeoutMs),
-    });
+  return async ({
+    model,
+    system,
+    prompt,
+    maxOutputTokens,
+    temperature = 0,
+    signal,
+    schema,
+    schemaName,
+  }) => {
+    let result;
+    try {
+      result = await generateText({
+        model: provider.chatModel(model),
+        system,
+        prompt,
+        maxOutputTokens,
+        temperature,
+        maxRetries: 0,
+        abortSignal: signal
+          ? AbortSignal.any([AbortSignal.timeout(timeoutMs), signal])
+          : AbortSignal.timeout(timeoutMs),
+        output: schema
+          ? Output.object({
+              schema: jsonSchema(schema as Parameters<typeof jsonSchema>[0]),
+              name: schemaName,
+            })
+          : undefined,
+      });
+    } catch (error) {
+      // Truncated or unparseable structured output is an incomplete answer, not a failed call --
+      // the caller (e.g. translate's budget-doubling/split) needs to see it as data, not a throw.
+      if (schema && NoObjectGeneratedError.isInstance(error)) {
+        return {
+          text: error.text ?? '',
+          model,
+          usage: { inputTokens: error.usage?.inputTokens, outputTokens: error.usage?.outputTokens },
+          finishReason: error.finishReason ?? 'unknown',
+          object: undefined,
+        };
+      }
+      throw error;
+    }
+    // `result.output` is a getter that throws `NoOutputGeneratedError` when the model finished
+    // without emitting usable content (empty reply, content filter) -- only relevant when a
+    // schema was requested; an unschema'd caller never reads `object` anyway.
+    let object: unknown;
+    if (schema) {
+      try {
+        object = result.output;
+      } catch (error) {
+        if (!NoOutputGeneratedError.isInstance(error)) throw error;
+      }
+    }
     return {
       text: result.text,
       model,
       usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
+      finishReason: result.finishReason,
+      ...(schema ? { object } : {}),
     };
   };
 }

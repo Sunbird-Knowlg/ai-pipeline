@@ -19,6 +19,18 @@ export function kafkaRunId(parts: {
   return `kf_${digest(`kafka:${cluster}:${triggerId}:${topic}:${partition}:${offset}:${timestamp}`)}`;
 }
 
+/**
+ * Run id for a Kafka record whose business input has its own stable identity (e.g. a Content's
+ * identifier plus the artifact it was published with). Two records that produce the same key
+ * collapse onto one workflow execution -- Restate's own submission semantics dedupe them (the
+ * second attaches/no-ops rather than running again), with no extra storage or infrastructure.
+ * Same shape as `kafkaRunId` (`kf_` prefix, 32 hex chars) so nothing downstream that expects
+ * `RUN_ID_PATTERN` needs to change.
+ */
+export function contentRunId(identifier: string, artifactHash: string): string {
+  return `kf_${digest(`content:${identifier}:${artifactHash}`)}`;
+}
+
 /** Run id for a REST start: derived from the caller's Idempotency-Key, else random. */
 export function apiRunId(workflow: string, idempotencyKey?: string): string {
   return idempotencyKey
