@@ -17,8 +17,14 @@ export function isTranscriptEligible(objectType: string, mimeType: string): bool
 
 /** The generic enrichment-request event, mapped by the trigger adapter to just what this workflow needs. */
 export const TranscriptInput = z.strictObject({
-  /** The Content (or other objectType) this Transcript attaches to. */
-  identifier: z.string().min(1).max(256),
+  /** The Content (or other objectType) this Transcript attaches to. knowlg-client interpolates
+   *  this into REST paths (percent-encoded); restricting the character set here, not just there,
+   *  keeps a `../` or `?` out before it ever reaches a URL. */
+  identifier: z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(/^[A-Za-z0-9_.-]+$/, 'identifier must be alphanumeric (with _.- allowed)'),
   objectType: z.string().min(1).max(100),
   mimeType: z.string().min(1).max(200),
   channel: z.string().min(1).max(200).default('all'),
