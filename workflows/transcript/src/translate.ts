@@ -133,7 +133,12 @@ async function translateChunk(
     );
 
     const parsed = TranslatedMap.safeParse(result.object);
-    const complete = parsed.success && requiredKeys.every((key) => key in parsed.data);
+    // Not just "key present": the strict schema forces the model to emit *some* string per key,
+    // and a model under load can satisfy that with an empty one instead of actually translating --
+    // seen in practice on a small local model, tail segments of a large chunk coming back blank
+    // while the response still parses as schema-complete. Blank counts the same as missing.
+    const complete =
+      parsed.success && requiredKeys.every((key) => (parsed.data[key] ?? '').trim().length > 0);
     if (complete) return parsed.data;
 
     ctx.console.warn(

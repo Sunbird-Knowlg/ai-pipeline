@@ -92,6 +92,26 @@ describe('translateSegments', () => {
     expect(generate).toHaveBeenCalledTimes(3 + 1 + 1);
   });
 
+  it('retries when a required id is present but blank, not just when missing', async () => {
+    const generate = vi
+      .fn<Generate>()
+      .mockResolvedValueOnce(response({ '0': 'translated 0', '1': '' })) // id 1 blank, not absent
+      .mockResolvedValueOnce(response(toMap([0, 1])));
+
+    const result = await translateSegments(
+      fakeContext(),
+      generate,
+      silentLog,
+      segments([0, 1]),
+      'pt',
+      'chat-default',
+      80,
+      0,
+    );
+    expect(result.map((s) => s.text)).toEqual(['translated 0', 'translated 1']);
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
   it('fails the run if a single segment never completes', async () => {
     const generate = vi.fn<Generate>(async () => response({}));
     await expect(
