@@ -18,6 +18,7 @@ const ContentPublishedEvent = z.object({
     mimeType: z.string().min(1),
     channel: z.string().min(1).optional(),
     enrichmentTypes: z.array(z.string()),
+    artifactHash: z.string().min(1).optional(),
   }),
 });
 
@@ -90,6 +91,7 @@ export const adapters = {
       objectType: parsed.objectType,
       mimeType: parsed.mimeType,
       channel: parsed.channel ?? 'all',
+      artifactHash: parsed.artifactHash,
     };
   },
 };

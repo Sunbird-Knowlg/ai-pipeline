@@ -28,6 +28,10 @@ export const TranscriptInput = z.strictObject({
   objectType: z.string().min(1).max(100),
   mimeType: z.string().min(1).max(200),
   channel: z.string().min(1).max(200).default('all'),
+  /** The Content's current artifact fingerprint, when the event carries one. Lets a run tell a
+   *  resumed/replayed trigger (same artifact) apart from a re-publish with a replaced video
+   *  (different artifact) — see `createOrRefreshNode` in workflow.ts. */
+  artifactHash: z.string().min(1).max(128).optional(),
 });
 export type TranscriptInput = z.infer<typeof TranscriptInput>;
 
@@ -80,5 +84,7 @@ export const EnrichmentObjectResult = z.object({
   identifier: z.string(),
   status: z.string(),
   languageCode: z.string().optional(),
+  /** Set when a prior run stamped one via `updateEnrichmentObject` — absent on a brand-new node. */
+  artifactHash: z.string().optional(),
 });
 export type EnrichmentObjectResult = z.infer<typeof EnrichmentObjectResult>;

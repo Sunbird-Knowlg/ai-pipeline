@@ -8,7 +8,7 @@ import { RestateContainer, RestateTestEnvironment } from '@restatedev/restate-sd
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Generate, GenerateResult } from '@ai-pipeline/ai/generate';
 import type { TranscriptOutput, TranscriptRequest } from './schemas.js';
-import { createTranscript } from './workflow.js';
+import { createTranscript, createTranscriptObject } from './workflow.js';
 
 // By-name clients are typed with the handler map (callers outside Restate need no implementation).
 type TranscriptWf = {
@@ -66,7 +66,8 @@ describe('Transcript (always replay)', () => {
   let runExecutions = 0;
 
   beforeAll(async () => {
-    const transcript = createTranscript({
+    const transcript = createTranscript();
+    const transcriptObject = createTranscriptObject({
       knowlg,
       uploadBlob,
       downloadBlob,
@@ -88,7 +89,7 @@ describe('Transcript (always replay)', () => {
         }),
       },
     });
-    const definitions = [transcript, whisper];
+    const definitions = [transcript, transcriptObject, whisper];
     // Service-level options override server defaults, so always-replay must be forced per service:
     // suspend at every await (replay), and fail fast on a journal mismatch.
     for (const d of definitions as unknown as { options?: object }[])
