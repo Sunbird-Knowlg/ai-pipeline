@@ -7,13 +7,36 @@ import * as clients from '@restatedev/restate-sdk-clients';
 import { RestateContainer, RestateTestEnvironment } from '@restatedev/restate-sdk-testcontainers';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Generate, GenerateResult } from '@ai-pipeline/ai/generate';
+import type { KafkaTriggerResult } from '@ai-pipeline/runtime/kafka-trigger';
 import type { TranscriptOutput, TranscriptRequest } from './schemas.js';
+import { transcriptTrigger } from './trigger.js';
 import { createTranscript } from './workflow.js';
 
 // By-name clients are typed with the handler map (callers outside Restate need no implementation).
 type TranscriptWf = {
   run: (ctx: restate.WorkflowContext, request: TranscriptRequest) => Promise<TranscriptOutput>;
 };
+
+type TranscriptTriggerService = {
+  onContentPublished: (ctx: restate.Context, record: Uint8Array) => Promise<KafkaTriggerResult>;
+};
+
+/** A raw `content-published` Kafka record, matching the real shape `adapters.ts` parses. */
+function contentPublishedRecord(fields: { identifier: string; artifactHash?: string }): Uint8Array {
+  const event = {
+    eid: 'BE_JOB_REQUEST',
+    edata: {
+      action: 'content-published',
+      identifier: fields.identifier,
+      objectType: 'Content',
+      mimeType: 'video/mp4',
+      channel: 'all',
+      enrichmentTypes: ['Transcript'],
+      ...(fields.artifactHash ? { artifactHash: fields.artifactHash } : {}),
+    },
+  };
+  return new TextEncoder().encode(JSON.stringify(event));
+}
 
 /**
  * Runs the real handler against a Restate server with always-replay on, so any non-determinism
@@ -88,7 +111,7 @@ describe('Transcript (always replay)', () => {
         }),
       },
     });
-    const definitions = [transcript, whisper];
+    const definitions = [transcript, whisper, transcriptTrigger];
     // Service-level options override server defaults, so always-replay must be forced per service:
     // suspend at every await (replay), and fail fast on a journal mismatch.
     for (const d of definitions as unknown as { options?: object }[])
@@ -147,5 +170,40 @@ describe('Transcript (always replay)', () => {
     expect(approveEnrichmentObject).toHaveBeenCalledTimes(4);
     expect(uploadBlob).toHaveBeenCalledTimes(8); // (transcript.json + captions.vtt) * 4
     expect(generate).toHaveBeenCalledTimes(3); // one translation call per target language
+  });
+
+  it('two Kafka records for the same identifier+artifactHash collapse onto one run', async () => {
+    const before = createEnrichmentObject.mock.calls.length;
+    const trigger = ingress.serviceClient<TranscriptTriggerService>({ name: 'TranscriptTrigger' });
+    const record = contentPublishedRecord({ identifier: 'c-2', artifactHash: 'hash-1' });
+
+    // Two distinct Kafka records (different partitions, as a redelivery or a duplicate publish
+    // might arrive) describing the same Content with the same artifact.
+    const first = await trigger.onContentPublished(
+      record,
+      clients.rpc.opts({
+        headers: { 'kafka.partition': '0', 'kafka.offset': '10' },
+        input: clients.serde.binary,
+      }),
+    );
+    const second = await trigger.onContentPublished(
+      record,
+      clients.rpc.opts({
+        headers: { 'kafka.partition': '1', 'kafka.offset': '20' },
+        input: clients.serde.binary,
+      }),
+    );
+
+    if (!('runId' in first) || !('runId' in second)) throw new Error('record was skipped');
+    // Same identifier + artifactHash -> same run id, regardless of the records' own coordinates.
+    expect(second.runId).toBe(first.runId);
+
+    await ingress
+      .workflowClient<TranscriptWf>({ name: 'Transcript' }, first.runId)
+      .workflowAttach();
+
+    // One run's worth of work, not two: the second record attached to the first run instead of
+    // starting an independent execution.
+    expect(createEnrichmentObject.mock.calls.length - before).toBe(4); // source + 3 languages
   });
 });

@@ -58,14 +58,29 @@ to; `run()` itself re-applies the same check for the REST trigger, which has no 
 
 ## 2. What starts running
 
-Restate starts a workflow execution per trigger: a Kafka record gets a run id derived from its
-own coordinates (cluster/topic/partition/offset/timestamp — see `kafkaRunId`), not from the
-Content's identifier, so two publishes of the _same_ Content land as two independent runs. A REST
-start gets a random run id unless the caller passes an `Idempotency-Key`. Neither path currently
-serializes concurrent runs for one Content — a Virtual Object keyed by `identifier` was tried and
-reverted (it conflicts with core-api's rule that a deployment endpoint may serve only a unit's own
-service and its trigger sink); a proper fix needs its own deployable unit and is deferred (PR #4
-review, "two runs for the same Content can overlap").
+Restate starts a workflow execution per trigger. A Kafka record's run id depends on whether its
+event carries `artifactHash` (`trigger.ts`'s `runKey`):
+
+- **`artifactHash` present** — the run id is derived from `identifier + artifactHash`
+  (`contentRunId`), not the record's own coordinates. Two records describing the same Content with
+  the same artifact — a redelivered record, or knowlg-publish re-emitting `content-published` for
+  an unrelated metadata edit — produce the _same_ run id. Restate's own workflow-submission
+  semantics then dedupe them for free: the second attaches to the first (`PreviouslyAccepted`)
+  instead of starting an independent execution. Nothing is stored anywhere for this; it's a
+  property of the id itself.
+- **`artifactHash` absent** (hashing not deployed, or this particular publish didn't get one) —
+  falls back to a run id derived from the record's own coordinates
+  (cluster/topic/partition/offset/timestamp — `kafkaRunId`), same as before this fix: one run per
+  Kafka record, with no cross-record dedup.
+
+A REST start gets a random run id unless the caller passes an `Idempotency-Key`.
+
+This does **not** serialize two runs for _genuinely different_ artifacts of the same Content
+overlapping in time (old one still transcribing when a new one with a different `artifactHash`
+arrives) — those still get different run ids and can still run concurrently. A Virtual Object keyed
+by `identifier` was tried and reverted for that case (it conflicts with core-api's rule that a
+deployment endpoint may serve only a unit's own service and its trigger sink); a proper fix needs
+its own deployable unit and is deferred (PR #4 review, "two runs for the same Content can overlap").
 
 `run()` in `src/workflow.ts` is invoked with the mapped input. Every side-effecting step is
 wrapped in `ctx.run(name, fn, retryPolicy)` — Restate persists each step's result once it

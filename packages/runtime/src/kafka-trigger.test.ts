@@ -81,4 +81,16 @@ describe('kafkaTrigger', () => {
       }),
     ).not.toThrow();
   });
+
+  it('accepts an optional runKey, typed against the input schema', () => {
+    expect(() =>
+      kafkaTrigger({
+        metadata: metadata([kafka('content-published')]),
+        input,
+        // Exercises the type: runKey's parameter must be inferred as z.infer<typeof input>,
+        // not unknown -- this would fail to compile otherwise (see the handlerFor generic).
+        runKey: (parsed) => (parsed.text ? parsed.text : undefined),
+      }),
+    ).not.toThrow();
+  });
 });

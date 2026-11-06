@@ -27,6 +27,12 @@ export interface KafkaTriggerOptions<I extends z.ZodType> {
   /** The workflow's canonical input schema (from its contract). */
   input: I;
   adapters?: Record<string, TriggerAdapter>;
+  /** Derives a run id from the mapped, validated input instead of the per-record `kafkaRunId`.
+   *  Two records producing the same key collapse onto one workflow execution (Restate's own
+   *  submission semantics: the second attaches/no-ops instead of running again). Return
+   *  `undefined` for a given record to fall back to the default `kafkaRunId`. Optional: a unit
+   *  that doesn't set this keeps today's exact behavior, one run per Kafka record. */
+  runKey?: (input: z.infer<I>) => string | undefined;
 }
 
 export type KafkaTriggerResult = { runId: string; invocationId: string } | { skipped: true };
@@ -41,6 +47,7 @@ export function kafkaTrigger<I extends z.ZodType>({
   metadata,
   input,
   adapters = {},
+  runKey,
 }: KafkaTriggerOptions<I>) {
   const triggers = metadata.triggers.filter((t): t is KafkaTrigger => t.type === 'kafka');
   if (triggers.length === 0) throw new Error(`${metadata.name} declares no kafka triggers`);
@@ -52,7 +59,7 @@ export function kafkaTrigger<I extends z.ZodType>({
       throw new Error(`${metadata.name}: adapter "${trigger.adapter}" is not exported`);
     const handler = kafkaHandlerName(trigger.id);
     if (handlers[handler]) throw new Error(`${metadata.name}: duplicate kafka handler ${handler}`);
-    handlers[handler] = handlerFor(metadata, trigger, input, log, adapter);
+    handlers[handler] = handlerFor(metadata, trigger, input, log, adapter, runKey);
   }
   return restate.service({
     name: triggerServiceName(metadata.restateName),
@@ -62,12 +69,31 @@ export function kafkaTrigger<I extends z.ZodType>({
   });
 }
 
-function handlerFor(
+/** The default per-record run id: opaque, derived only from coordinates the broker itself
+ *  distinguishes (never the narrowed numeric offset -- see `decimalHeader`'s own doc comment). */
+function defaultRunId(
+  trigger: KafkaTrigger,
+  partition: { text: string },
+  offset: { text: string },
+  timestamp: { text: string } | undefined,
+): string {
+  return kafkaRunId({
+    cluster: trigger.cluster,
+    triggerId: trigger.id,
+    topic: trigger.topic,
+    partition: partition.text,
+    offset: offset.text,
+    ...(timestamp ? { timestamp: timestamp.text } : {}),
+  });
+}
+
+function handlerFor<I extends z.ZodType>(
   metadata: Metadata,
   trigger: KafkaTrigger,
-  input: z.ZodType,
+  input: I,
   log: Logger,
   adapter?: TriggerAdapter,
+  runKey?: (input: z.infer<I>) => string | undefined,
 ) {
   return restate.createServiceHandler(
     { input: restate.serde.binary },
@@ -117,17 +143,7 @@ function handlerFor(
         offset: offset.value,
         receivedAt: timestamp && timestamp.value > 0 ? timestamp.value : await ctx.date.now(),
       };
-      // Derived from the exact header text, never the narrowed number: past 2^53 two adjacent
-      // offsets round to the same double, and Restate would dedupe the second record as a replay
-      // of the first. The run id must distinguish records the broker distinguishes.
-      const runId = kafkaRunId({
-        cluster: trigger.cluster,
-        triggerId: trigger.id,
-        topic: trigger.topic,
-        partition: partition.text,
-        offset: offset.text,
-        ...(timestamp ? { timestamp: timestamp.text } : {}),
-      });
+      const runId = runKey?.(parsed.data) ?? defaultRunId(trigger, partition, offset, timestamp);
       const handle = ctx.genericSend({
         service: metadata.restateName,
         method: 'run',
