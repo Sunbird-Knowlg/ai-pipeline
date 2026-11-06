@@ -4,18 +4,16 @@ Restate workflow that generates a source-language transcript for a Content's vid
 artifact, then translates it into the configured target languages (`ar`, `pt`, `fr`), writing
 each as its own `Transcript` `EnrichmentObject` on the parent Content.
 
-Branch: `feat/transcript-workflow` (ai-pipeline repo). Status: source transcript proven
-end-to-end against the real dev cluster; translation blocked only by local CPU-Ollama speed,
-not a code defect (see "Known limitation" below).
-
 ---
 
 ## 1. What triggers it
 
 Two triggers are registered (`workflows/transcript/metadata.json`):
 
-- `api` — a plain REST trigger, useful for manual runs (`pnpm pipeline run transcript <input>`).
-- `content-published` — a Kafka trigger on topic `dev.content.published`.
+- `api` — a plain REST trigger, useful for manual runs (`pnpm pipeline start transcript --input '<json>'`).
+- `content-published` — a Kafka trigger on topic `content.published` (environment-neutral in the
+  artifact; core-api prepends an environment-specific prefix at subscribe time via
+  `KAFKA_TOPIC_PREFIX`).
 
 The Kafka topic carries a generic **content-published event**, emitted by knowlg-publish exactly
 once on every Content/Collection/Question/QuestionSet publish — always, whether or not any
@@ -43,27 +41,32 @@ enrichment was requested, wrapped in the platform's standard `BE_JOB_REQUEST` en
 
 knowlg-publish applies no eligibility gate at all — `edata.enrichmentTypes` is just the node's own
 array, verbatim, `[]` when nothing was requested. `src/adapters.ts`'s `contentPublishedEvent`
-adapter is the only place that decides whether a given event is worth reacting to (does the array
-contain `"Transcript"`, is it a Content, is the mimeType actually a video) — this producer never
-decides that on any consumer's behalf.
+adapter is the only place on the Kafka path that decides whether a given event is worth reacting
+to; `run()` itself re-applies the same check for the REST trigger, which has no adapter of its own.
 
-`contentPublishedEvent` is a pure function: `(event) => Input | null`.
+`contentPublishedEvent` is `(event, log) => Input | null`:
 
-- Returns `null` (silently skips the record, no run started) for any event whose
-  `edata.enrichmentTypes` doesn't contain `"Transcript"`, whose `edata.objectType` isn't
-  `"Content"`, or whose `edata.mimeType` isn't video — this is how the same topic can carry
-  unrelated publish events without this workflow reacting to them.
-- Throws (fails the record terminally) if the event doesn't even match the expected envelope —
-  a malformed event never blocks the rest of the partition.
-- Maps a matching event down to the workflow's actual input, `TranscriptInput`:
-  `{identifier, objectType, mimeType, channel}`.
+- First checks eligibility (`enrichmentTypes` contains `"Transcript"`, `objectType` is `"Content"`,
+  `mimeType` is a supported video type) against a loose, mostly-optional shape — deliberately
+  _before_ requiring the full event shape below, so a Collection/Question publish (which has no
+  `mimeType` at all) is skipped as "not mine", not failed as "malformed". Each skip is logged at
+  `debug` (this topic carries every publish of every object type, so skips are the overwhelming
+  majority of this adapter's calls); an accepted event logs at `info`.
+- Only once an event is known relevant does it get strict-parsed against the full envelope shape
+  and mapped to `TranscriptInput`: `{identifier, objectType, mimeType, channel}`. A malformed event
+  that still claims eligibility fails the record terminally here — it never blocks the partition.
 
 ## 2. What starts running
 
-Restate starts one workflow execution keyed by the Content's `identifier`, invoking `run()`
-in `src/workflow.ts`. Every side-effecting step is wrapped in `ctx.run(name, fn, retryPolicy)`
-— Restate persists each step's result once it succeeds, so a crash/restart resumes from the
-last completed step instead of redoing everything.
+Restate starts a workflow execution per trigger: a Kafka record gets a run id derived from its
+own coordinates (cluster/topic/partition/offset/timestamp — see `kafkaRunId`), not from the
+Content's identifier, so two publishes of the _same_ Content land as two independent runs. A REST
+start gets a random run id unless the caller passes an `Idempotency-Key`. (Neither path currently
+serializes concurrent runs for one Content — see the PR discussion on this for the open question.)
+
+`run()` in `src/workflow.ts` is invoked with the mapped input. Every side-effecting step is
+wrapped in `ctx.run(name, fn, retryPolicy)` — Restate persists each step's result once it
+succeeds, so a crash/restart resumes from the last completed step instead of redoing everything.
 
 ### Step 1 — create the source Transcript node
 
@@ -74,7 +77,8 @@ ctx.run('knowlg.create-source', () => createEnrichmentObject(..., { sourceLangua
 Calls knowlg's `POST /object/enrichment/v4/create`. The platform's own `uniqueOn` matching
 (on the registered `Transcript` category definition) makes this idempotent: if a source
 Transcript already exists for this parent, the call returns that existing node instead of
-creating a duplicate — this is what makes retried/redelivered Kafka records safe.
+creating a duplicate — this is what makes retried/redelivered Kafka records safe (it does not,
+by itself, protect against two genuinely concurrent runs for the same Content).
 
 Two paths from here:
 
@@ -90,14 +94,15 @@ Two paths from here:
 1. `knowlg.read-content` — `GET /content/v3/read/:id` for the video's `artifactUrl`. The event
    itself never carries this (see step 1's design note) — the workflow fetches it itself once
    it has the identifier.
-2. `whisper.transcribe` — `POST /transcribe?url=<artifactUrl>&fmt=json` against the Whisper
-   service. **No `language` parameter is passed** — the source language is auto-detected by
-   Whisper, never assumed or hardcoded. Uses a custom `undici.Agent` with a 900s
-   headers/body timeout (Node's global `fetch` caps non-streaming calls at 5 minutes by
-   default, which a full-length transcription blows through — this was a real bug, now fixed).
-   Returns `{language, languageProbability, duration, segments: [{id, start, end, text}, ...]}`.
+2. `ctx.client(whisperApi).transcribe({ artifactUrl })` — a Restate service call to Whisper's
+   `WhisperService`, journaled by the SDK like any other durable call (not a plain HTTP request
+   with a custom client-side timeout). **No `language` parameter is passed** — the source language
+   is auto-detected by Whisper, never assumed or hardcoded. Returns
+   `{language, languageProbability, duration, segments: [{id, start, end, text}, ...]}`.
 3. `blob.upload-source` — uploads `transcript.json` (raw segments) and `captions.vtt` (WebVTT)
-   to `content/<parentId>/transcripts/<languageCode>/` in blob storage.
+   to `content/<parentId>/transcripts/<languageCode>/` in blob storage. From here on the retry
+   profile for knowlg/blob steps is uncapped (`retry.httpResumable`): an outage now would
+   otherwise discard the already-completed Whisper transcription.
 4. `knowlg.update-source` — `PATCH /object/enrichment/v4/update/:id`, writing back
    `languageCode`, `artifactUrl`, `captionsUrl`, `autoApproved: true`, `status: "Processing"`.
 5. `knowlg.approve-source` — `POST /object/enrichment/v4/approve/:id` with `status: "Live"`.
@@ -122,12 +127,14 @@ upload → update → approve shape as the source:
 2. **Translate** (`src/translate.ts`): segments are split into overlapping batches
    (`translationBatchSize: 80`, `translationBatchOverlap: 2` — each batch after the first
    repeats the previous batch's last 2 segments as leading context only, never re-emitted in
-   the output). Each batch is one `ctx.run` step: prompts the configured LLM
-   (`translationModel`, via LiteLLM) for a strict JSON array `[{id, text}, ...]`, parses and
-   validates it, and raises a `TerminalError` on anything malformed or missing an expected id
-   (never returns a silently-partial or misaligned translation).
+   the output). Each batch is translated via `translateChunk`, which prompts the configured LLM
+   (`translationModel`, via LiteLLM) for a strict, schema-enforced JSON object keyed by segment
+   id (not an array) — a truncated or incomplete response is retried with a doubled token budget
+   up to 3 times, then the chunk is split in half and each half recurses; a single segment that
+   still can't complete raises a `TerminalError`.
 3. `blob.upload-<lang>` — same upload shape as the source, under
-   `content/<parentId>/transcripts/<lang>/`.
+   `content/<parentId>/transcripts/<lang>/`. Uncapped retry from here on too, for the same reason
+   as the source path (protects the already-completed LLM translation).
 4. `knowlg.update-<lang>` then `knowlg.approve-<lang>` — same as the source.
 
 ### What comes back
@@ -140,32 +147,34 @@ upload → update → approve shape as the source:
 }
 ```
 
-## 3. Known limitation (current local testing only)
+## 3. Timeouts
 
-Every translation attempt so far has timed out at the LLM call, purely because local testing
-uses a CPU-based Ollama model — too slow for an 80-segment batch. This is **not a code
-defect**: LiteLLM's own `request_timeout` and this workflow's client-side timeout are both
-already generous (600s), and the underlying `undici` headers-timeout ceiling was already fixed
-for Whisper the same way. Production will call a real hosted API key, which will be fast
-enough — per explicit instruction, timeouts are not to be raised further to chase this.
+The LLM call's timeout is 180s (`LLM_TIMEOUT_MS` in `packages/ai/src/generate.ts`, matching
+`infra/litellm/config.yaml`'s own `request_timeout: 180`), not longer — a slow local CPU model can
+still exceed this on a large batch; a real hosted model should not.
 
 ## 4. How to test manually (docker-compose)
 
-Prerequisites: `kubectl --kubeconfig=/Users/chethan/Downloads/dev.yaml -n sunbird port-forward
-svc/knowlg-service 9000:9000` running on the host (real dev-cluster data — a real video, real
-Content, real EnrichmentObject category registered as `Transcript`).
+Prerequisites: a `kubectl -n sunbird port-forward svc/knowlg-service 9000:9000` running on the
+host (real dev-cluster data — a real video, real Content, real EnrichmentObject category
+registered as `Transcript`), with `UNIT_KNOWLG_BASE_URL` in `.env` pointed at it
+(see `.env.example`).
 
 ```bash
 cd ai-pipeline
-docker-compose up -d          # postgres, kafka, restate, litellm, otel, core-api, azurite, whisper
+docker compose up -d          # postgres, kafka, restate, litellm, otel, core-api, azurite
 pnpm pipeline deploy transcript
-pnpm pipeline run transcript '{"identifier":"do_214666147480223744136","objectType":"Content","mimeType":"video/mp4","channel":"0146092176054435840"}'
-pnpm pipeline runs transcript                 # list recent runs / statuses
-pnpm pipeline run transcript <invocation-id>  # poll a specific run
+pnpm pipeline start transcript --input '{"identifier":"do_214666147480223744136","objectType":"Content","mimeType":"video/mp4","channel":"0146092176054435840"}'
+pnpm pipeline runs transcript          # list recent runs / statuses
+pnpm pipeline run transcript <runId>   # poll a specific run
 ```
 
+`whisper` (Python, no `package.json`) isn't part of this CLI's deploy flow yet and has no compose
+service either — it needs to be built and run against the same `ai-pipeline` Docker network
+separately.
+
 To trigger via Kafka instead of the REST API, produce a raw content-published event (matching
-the JSON shape in section 1) onto `dev.content.published`.
+the JSON shape in section 1) onto `content.published`.
 
 Verify results against the real cluster:
 
@@ -175,4 +184,4 @@ curl -s -X POST http://localhost:9000/object/enrichment/v4/list \
   -d '{"request":{"filters":{"parentId":"do_214666147480223744136"}}}'
 ```
 
-Tear down once satisfied: `docker-compose down`.
+Tear down once satisfied: `docker compose down`.
