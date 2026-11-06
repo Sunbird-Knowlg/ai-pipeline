@@ -1,7 +1,7 @@
 import * as restate from '@restatedev/restate-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import type { Generate, GenerateResult } from '@ai-pipeline/ai/generate';
-import type { Logger } from '@ai-pipeline/observability/logger';
+import { silentLogger } from '@ai-pipeline/observability/testing/logger';
 import { translateSegments } from './translate.js';
 import type { TranscriptSegment } from './schemas.js';
 
@@ -16,7 +16,7 @@ function fakeContext(): restate.Context {
   } as unknown as restate.Context;
 }
 
-const silentLog = { info: noop, debug: noop, warn: noop, error: noop } as unknown as Logger;
+const silentLog = silentLogger();
 
 function segments(ids: number[]): TranscriptSegment[] {
   return ids.map((id) => ({ id, start: id, end: id + 1, text: `source ${id}` }));

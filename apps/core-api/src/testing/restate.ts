@@ -1,4 +1,4 @@
-import { createLogger, type Logger } from '@ai-pipeline/observability/logger';
+import { silentLogger } from '@ai-pipeline/observability/testing/logger';
 import { parseMetadata, type Metadata } from '@ai-pipeline/metadata/metadata';
 import type { ControlPlane } from '../domain/deps.js';
 import type { RestateAdminPort, Subscription } from '../restate/admin.js';
@@ -141,7 +141,7 @@ export function fakeIngress(overrides: Partial<FakeIngress> = {}): FakeIngress {
   return ingress;
 }
 
-export const silentLogger = (): Logger => createLogger('test').child({}, { level: 'silent' });
+export { silentLogger };
 
 /** A `ControlPlane` wired entirely from fakes. */
 export function fakeControlPlane(
