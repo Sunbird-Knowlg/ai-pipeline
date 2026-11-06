@@ -27,7 +27,11 @@ const Envelope = z.looseObject({
 export interface KnowlgClientOptions {
   baseUrl: string;
   log: Logger;
+  timeoutMs?: number;
 }
+
+/** Transport-level in effect (a slow/rate-limited platform, not a bad request), despite being 4xx. */
+const RETRYABLE_STATUSES = new Set([408, 429]);
 
 /**
  * Runs one knowlg-platform HTTP call and unwraps its response envelope.
@@ -42,13 +46,15 @@ async function call(
   log: Logger,
   path: string,
   init: RequestInit,
+  timeoutMs: number,
 ): Promise<Record<string, unknown>> {
   const url = `${baseUrl}${path}`;
   const response = await fetch(url, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...init.headers },
+    signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!response.ok && response.status < 500) {
+  if (!response.ok && response.status < 500 && !RETRYABLE_STATUSES.has(response.status)) {
     const body = await response.text();
     log.error(
       { event: 'knowlg.rejected', url, status: response.status },
@@ -86,14 +92,20 @@ async function call(
  * (alongside its other dependencies), and reused for every run that unit ever handles — never
  * rebuilt per call or per request.
  */
-export function createKnowlgClient({ baseUrl, log }: KnowlgClientOptions) {
+export function createKnowlgClient({ baseUrl, log, timeoutMs = 30_000 }: KnowlgClientOptions) {
+  // A trailing slash on baseUrl would otherwise produce a doubled slash in every path below.
+  const base = baseUrl.replace(/\/$/, '');
   return {
     /** `GET /content/v3/read/:identifier`, optionally scoped to only the given fields. */
     async readContent(identifier: string, fields?: string[]): Promise<Record<string, unknown>> {
       const query = fields && fields.length > 0 ? `?fields=${fields.join(',')}` : '';
-      const result = await call(baseUrl, log, `/content/v3/read/${identifier}${query}`, {
-        method: 'GET',
-      });
+      const result = await call(
+        base,
+        log,
+        `/content/v3/read/${encodeURIComponent(identifier)}${query}`,
+        { method: 'GET' },
+        timeoutMs,
+      );
       return z.looseObject({}).parse(result.content);
     },
 
@@ -105,10 +117,13 @@ export function createKnowlgClient({ baseUrl, log }: KnowlgClientOptions) {
      * makes a redelivered or re-run trigger safe to call again without creating a duplicate node.
      */
     createEnrichmentObject(body: Record<string, unknown>): Promise<Record<string, unknown>> {
-      return call(baseUrl, log, '/object/enrichment/v4/create', {
-        method: 'POST',
-        body: JSON.stringify({ request: { enrichmentObject: body } }),
-      });
+      return call(
+        base,
+        log,
+        '/object/enrichment/v4/create',
+        { method: 'POST', body: JSON.stringify({ request: { enrichmentObject: body } }) },
+        timeoutMs,
+      );
     },
 
     /** `PATCH /object/enrichment/v4/update/:identifier`. */
@@ -116,10 +131,13 @@ export function createKnowlgClient({ baseUrl, log }: KnowlgClientOptions) {
       identifier: string,
       body: Record<string, unknown>,
     ): Promise<Record<string, unknown>> {
-      return call(baseUrl, log, `/object/enrichment/v4/update/${identifier}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ request: { enrichmentObject: body } }),
-      });
+      return call(
+        base,
+        log,
+        `/object/enrichment/v4/update/${encodeURIComponent(identifier)}`,
+        { method: 'PATCH', body: JSON.stringify({ request: { enrichmentObject: body } }) },
+        timeoutMs,
+      );
     },
 
     /** `POST /object/enrichment/v4/approve/:identifier` — moves toward `Live` or `Review`. */
@@ -127,10 +145,13 @@ export function createKnowlgClient({ baseUrl, log }: KnowlgClientOptions) {
       identifier: string,
       body: Record<string, unknown>,
     ): Promise<Record<string, unknown>> {
-      return call(baseUrl, log, `/object/enrichment/v4/approve/${identifier}`, {
-        method: 'POST',
-        body: JSON.stringify({ request: { enrichmentObject: body } }),
-      });
+      return call(
+        base,
+        log,
+        `/object/enrichment/v4/approve/${encodeURIComponent(identifier)}`,
+        { method: 'POST', body: JSON.stringify({ request: { enrichmentObject: body } }) },
+        timeoutMs,
+      );
     },
 
     /** `POST /object/enrichment/v4/reject/:identifier` — resets to `Draft` or retires to `Retired`. */
@@ -138,10 +159,13 @@ export function createKnowlgClient({ baseUrl, log }: KnowlgClientOptions) {
       identifier: string,
       body: Record<string, unknown>,
     ): Promise<Record<string, unknown>> {
-      return call(baseUrl, log, `/object/enrichment/v4/reject/${identifier}`, {
-        method: 'POST',
-        body: JSON.stringify({ request: { enrichmentObject: body } }),
-      });
+      return call(
+        base,
+        log,
+        `/object/enrichment/v4/reject/${encodeURIComponent(identifier)}`,
+        { method: 'POST', body: JSON.stringify({ request: { enrichmentObject: body } }) },
+        timeoutMs,
+      );
     },
   };
 }
