@@ -30,6 +30,7 @@ export const transcriptObjectApi = restate.iface.object(
     }),
   },
   {
-    description: 'Serializes Transcript work per-Content so concurrent runs for the same identifier cannot overlap',
+    description:
+      'Serializes Transcript work per-Content so concurrent runs for the same identifier cannot overlap',
   },
 );
