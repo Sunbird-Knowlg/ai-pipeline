@@ -22,6 +22,23 @@ const ContentPublishedEvent = z.object({
 });
 
 /**
+ * Just enough to decide whether this event is ours, without requiring the full shape above. The
+ * topic carries every publish of every object type, always — a Collection or Question publish has
+ * no `mimeType` at all, and must be skipped as "not mine" rather than fail the strict parse below
+ * as "malformed".
+ */
+const EligibilityGate = z.looseObject({
+  edata: z
+    .looseObject({
+      identifier: z.string().optional(),
+      objectType: z.string().optional(),
+      mimeType: z.string().optional(),
+      enrichmentTypes: z.array(z.string()).optional(),
+    })
+    .optional(),
+});
+
+/**
  * Trigger adapters: pure maps from an event to this workflow's canonical input. Returning `null`
  * drops the record without starting a run — used here for every content-published event that
  * isn't asking for a Transcript, or isn't a Content, or isn't a video. Throwing fails the record
@@ -29,17 +46,17 @@ const ContentPublishedEvent = z.object({
  */
 export const adapters = {
   contentPublishedEvent(event: unknown, log: Logger): TranscriptInput | null {
-    const parsed = ContentPublishedEvent.parse(event);
-    const { edata } = parsed;
-    if (!edata.enrichmentTypes.includes('Transcript')) {
-      log.info(
-        { event: 'adapter.skip', reason: 'enrichmentTypes', identifier: edata.identifier },
+    const gate = EligibilityGate.safeParse(event);
+    const edata = gate.success ? gate.data.edata : undefined;
+    if (!edata?.enrichmentTypes?.includes('Transcript')) {
+      log.debug(
+        { event: 'adapter.skip', reason: 'enrichmentTypes', identifier: edata?.identifier },
         'skipped: Transcript not requested',
       );
       return null;
     }
     if (edata.objectType !== 'Content') {
-      log.info(
+      log.debug(
         {
           event: 'adapter.skip',
           reason: 'objectType',
@@ -50,8 +67,8 @@ export const adapters = {
       );
       return null;
     }
-    if (!TRANSCRIPT_MIME_TYPES.includes(edata.mimeType)) {
-      log.info(
+    if (!edata.mimeType || !TRANSCRIPT_MIME_TYPES.includes(edata.mimeType)) {
+      log.debug(
         {
           event: 'adapter.skip',
           reason: 'mimeType',
@@ -62,15 +79,17 @@ export const adapters = {
       );
       return null;
     }
+    // Known relevant from here on — now worth failing the record terminally if malformed.
+    const { edata: parsed } = ContentPublishedEvent.parse(event);
     log.info(
-      { event: 'adapter.accept', identifier: edata.identifier, mimeType: edata.mimeType },
+      { event: 'adapter.accept', identifier: parsed.identifier, mimeType: parsed.mimeType },
       'accepted: dispatching Transcript run',
     );
     return {
-      identifier: edata.identifier,
-      objectType: edata.objectType,
-      mimeType: edata.mimeType,
-      channel: edata.channel ?? 'all',
+      identifier: parsed.identifier,
+      objectType: parsed.objectType,
+      mimeType: parsed.mimeType,
+      channel: parsed.channel ?? 'all',
     };
   },
 };
