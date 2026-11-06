@@ -81,19 +81,33 @@ function parseEnrichmentObjectResult(raw: unknown, operation: string): Enrichmen
 }
 
 /**
+ * True when this publish event itself reports the Content's artifact changing -- i.e. knowlg-publish
+ * computed a different hash for this publish than it read off the node immediately before. Both
+ * values come from the *same* event (see `schemas.ts`'s `TranscriptInput`), so this needs nothing
+ * stored anywhere on the Transcript side: no write to knowlg (its `EnrichmentObject` schema is
+ * deliberately strict about unknown fields), and no denormalized copy of a Content-level fact onto
+ * a child object (the kind of copy the project's own design doc traces a past production incident
+ * to). `artifactHash` undefined means knowlg-publish has no hash to report (not yet deployed, or
+ * this publish's hashing failed) -- no signal, so treated as "unchanged" rather than guessed at.
+ */
+function isArtifactReplaced(input: { artifactHash?: string; prevArtifactHash?: string }): boolean {
+  return input.artifactHash !== undefined && input.artifactHash !== input.prevArtifactHash;
+}
+
+/**
  * Creates (or resumes) one EnrichmentObject sibling for a logical key — the source, or one target
  * language. `create()`'s `uniqueOn` matching can return an *existing* sibling instead of a new
- * node; if that sibling is already `Live` but was stamped with a different `artifactHash` than the
- * Content's current artifact, it was transcribed from a video that has since been replaced. Retire
- * it (`Live` -> `Retired`, which `searchSiblings` then ignores) and create fresh in its place,
- * rather than resuming or skipping translation against stale content.
+ * node; if that sibling is already `Live` and this same publish event reports the Content's artifact
+ * replaced (`isArtifactReplaced`), it was transcribed from a video that has since been replaced.
+ * Retire it (`Live` -> `Retired`, which `searchSiblings` then ignores) and create fresh in its
+ * place, rather than resuming or skipping translation against stale content.
  */
 async function createOrRefreshNode(
   ctx: restate.Context,
   deps: TranscriptDeps,
   stepPrefix: string,
   createBody: Record<string, unknown>,
-  artifactHash: string | undefined,
+  artifactReplaced: boolean,
 ): Promise<EnrichmentObjectResult> {
   const first = parseEnrichmentObjectResult(
     await ctx.run(
@@ -103,21 +117,11 @@ async function createOrRefreshNode(
     ),
     `${stepPrefix}-create`,
   );
-  const stale =
-    first.status === 'Live' &&
-    artifactHash !== undefined &&
-    first.artifactHash !== undefined &&
-    first.artifactHash !== artifactHash;
-  if (!stale) return first;
+  if (first.status !== 'Live' || !artifactReplaced) return first;
 
   ctx.console.info(
-    {
-      event: 'transcript.stale',
-      identifier: first.identifier,
-      oldHash: first.artifactHash,
-      newHash: artifactHash,
-    },
-    'existing node was transcribed from a since-replaced artifact, retiring and recreating',
+    { event: 'transcript.stale', identifier: first.identifier },
+    'this publish reports the artifact replaced; retiring and recreating the existing node',
   );
   await ctx.run(
     `${stepPrefix}-retire-stale`,
@@ -139,10 +143,10 @@ async function createOrRefreshNode(
  *
  * `create()`'s `uniqueOn` matching may return an *existing* sibling already at `Live` — from an
  * earlier run of this same workflow for this same parent (a redelivered trigger, or simply
- * re-running it). When that happens, and its stamped `artifactHash` still matches, this skips
- * straight to returning it: translating and re-uploading again would just overwrite identical
+ * re-running it). When that happens, and this publish doesn't report the artifact replaced, this
+ * skips straight to returning it: translating and re-uploading again would just overwrite identical
  * content, and re-`update()`ing an already-Live node is rejected outright by the platform's
- * edit-lock rule. When the hash no longer matches, `createOrRefreshNode` has already retired it and
+ * edit-lock rule. When the artifact was replaced, `createOrRefreshNode` has already retired it and
  * handed back a fresh node, so this falls through to translating again.
  */
 async function buildTranslation(
@@ -152,7 +156,7 @@ async function buildTranslation(
   channel: string,
   sourceSegments: TranscriptSegment[],
   targetLanguage: string,
-  artifactHash: string | undefined,
+  artifactReplaced: boolean,
 ): Promise<TranscriptResult> {
   const createBody = {
     enrichmentObjectType: 'Transcript',
@@ -169,7 +173,7 @@ async function buildTranslation(
     deps,
     `knowlg.${targetLanguage}`,
     createBody,
-    artifactHash,
+    artifactReplaced,
   );
   ctx.console.debug(
     {
@@ -237,7 +241,6 @@ async function buildTranslation(
     captionsUrl: urls.captionsUrl,
     autoApproved: true,
     status: 'Processing',
-    ...(artifactHash ? { artifactHash } : {}),
   };
   ctx.console.debug(
     { event: 'knowlg.request', operation: `knowlg.update-${targetLanguage}`, body: updateBody },
@@ -292,10 +295,10 @@ async function buildTranslation(
  *    deliberately, so the event stays objectType-agnostic.
  * 2. Create the source Transcript (`sourceLanguage: true`) — `create()`'s own `uniqueOn` matching
  *    makes this idempotent on a redelivered/retried trigger. If that match is already `Live` and
- *    still matches the Content's current `artifactHash`, re-download its stored segments instead
- *    of re-transcribing (same reasoning as `buildTranslation`'s own already-Live shortcut). If the
- *    hash has moved on (the video was replaced), `createOrRefreshNode` retires the stale node and
- *    hands back a fresh one, so this transcribes again.
+ *    this publish doesn't report the artifact replaced (`isArtifactReplaced`), re-download its
+ *    stored segments instead of re-transcribing (same reasoning as `buildTranslation`'s own
+ *    already-Live shortcut). If the artifact was replaced, `createOrRefreshNode` retires the stale
+ *    node and hands back a fresh one, so this transcribes again.
  * 3. Otherwise, transcribe via Whisper — no `language` hint, so the source language is detected,
  *    not assumed.
  * 4. Upload the transcript/captions, self-report `Processing`, then auto-approve to `Live` — no
@@ -328,6 +331,7 @@ export function createTranscript(deps: TranscriptDeps) {
         }
 
         const parentId = input.identifier;
+        const artifactReplaced = isArtifactReplaced(input);
         ctx.console.info(
           { event: 'transcript.start', parentId, channel: input.channel },
           'transcript run started',
@@ -348,7 +352,7 @@ export function createTranscript(deps: TranscriptDeps) {
           deps,
           'knowlg.source',
           sourceCreateBody,
-          input.artifactHash,
+          artifactReplaced,
         );
         ctx.console.debug(
           {
@@ -484,7 +488,6 @@ export function createTranscript(deps: TranscriptDeps) {
             captionsUrl: sourceUrls.captionsUrl,
             autoApproved: true,
             status: 'Processing',
-            ...(input.artifactHash ? { artifactHash: input.artifactHash } : {}),
           };
           ctx.console.debug(
             { event: 'knowlg.request', operation: 'knowlg.update-source', body: sourceUpdateBody },
@@ -564,7 +567,7 @@ export function createTranscript(deps: TranscriptDeps) {
               input.channel,
               sourceSegments,
               lang,
-              input.artifactHash,
+              artifactReplaced,
             ),
           );
         }

@@ -18,7 +18,12 @@ const ContentPublishedEvent = z.object({
     mimeType: z.string().min(1),
     channel: z.string().min(1).optional(),
     enrichmentTypes: z.array(z.string()),
-    artifactHash: z.string().min(1).optional(),
+    // knowlg-publish sends these as "" (not absent) whenever there's no value yet -- a first
+    // publish's prevArtifactHash, or any publish at all before feat/artifactHashing is deployed.
+    // Normalized to undefined below, not validated with .min(1) here, which would otherwise fail
+    // every such record terminally.
+    artifactHash: z.string().optional(),
+    prevArtifactHash: z.string().optional(),
   }),
 });
 
@@ -38,6 +43,12 @@ const EligibilityGate = z.looseObject({
     })
     .optional(),
 });
+
+/** `??` only catches `undefined`; knowlg-publish sends an empty string, not an absent field, so
+ *  that needs its own check. */
+function emptyToUndefined(value: string | undefined): string | undefined {
+  return value === '' ? undefined : value;
+}
 
 /**
  * Trigger adapters: pure maps from an event to this workflow's canonical input. Returning `null`
@@ -91,7 +102,8 @@ export const adapters = {
       objectType: parsed.objectType,
       mimeType: parsed.mimeType,
       channel: parsed.channel ?? 'all',
-      artifactHash: parsed.artifactHash,
+      artifactHash: emptyToUndefined(parsed.artifactHash),
+      prevArtifactHash: emptyToUndefined(parsed.prevArtifactHash),
     };
   },
 };

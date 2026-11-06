@@ -84,16 +84,21 @@ creating a duplicate — this is what makes retried/redelivered Kafka records sa
 
 Three paths from here (`createOrRefreshNode`):
 
-- **Already `Live`, same artifact** (an earlier run already finished this Content, and the
-  event's `artifactHash` — when present — still matches what was stamped on the node): skip
-  straight to re-downloading the previously-uploaded `transcript.json` from blob storage
-  (`blob.download-source`) instead of re-transcribing. Needed because the platform's edit-lock
-  rule rejects any `update()` against an already-`Live` node — trying to redo the work would
-  just fail.
-- **Already `Live`, different artifact** (the Content was re-published with a replaced video):
-  the stale node is retired (`reject` → `Retired`, which the platform's `searchSiblings` then
-  ignores) and a fresh node is created in its place, so the rest of this step proceeds down the
-  "not yet Live" path below against the new node.
+- **Already `Live`, artifact unchanged** (an earlier run already finished this Content, and this
+  publish event's `artifactHash` matches its own `prevArtifactHash` — i.e. knowlg-publish itself
+  reports nothing changed): skip straight to re-downloading the previously-uploaded
+  `transcript.json` from blob storage (`blob.download-source`) instead of re-transcribing. Needed
+  because the platform's edit-lock rule rejects any `update()` against an already-`Live` node —
+  trying to redo the work would just fail.
+- **Already `Live`, artifact replaced** (`artifactHash !== prevArtifactHash` on this same event —
+  the Content was re-published with a different video): the stale node is retired (`reject` →
+  `Retired`, which the platform's `searchSiblings` then ignores) and a fresh node is created in its
+  place, so the rest of this step proceeds down the "not yet Live" path below against the new node.
+  Nothing is ever written back to knowlg for this check — `isArtifactReplaced` only compares two
+  fields already present on the _same_ publish event; `EnrichmentObject`'s schema is strict about
+  unknown fields (`schema_restrict_api`), and a Content-level fact doesn't belong denormalized onto
+  a child object regardless (see the design doc's own account of a past incident from exactly that
+  pattern).
 - **Not yet Live** (fresh, or was left mid-flight): proceed to generate it.
 
 ### Step 2 — read the Content, transcribe, upload, approve (fresh path only)
