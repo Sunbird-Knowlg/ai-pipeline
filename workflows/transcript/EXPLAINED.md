@@ -58,13 +58,21 @@ to; `run()` itself re-applies the same check for the REST trigger, which has no 
 
 ## 2. What starts running
 
-Restate starts a workflow execution per trigger: a Kafka record gets a run id derived from its
-own coordinates (cluster/topic/partition/offset/timestamp — see `kafkaRunId`), not from the
-Content's identifier, so two publishes of the _same_ Content land as two independent runs. A REST
-start gets a random run id unless the caller passes an `Idempotency-Key`. (Neither path currently
-serializes concurrent runs for one Content — see the PR discussion on this for the open question.)
+Restate starts a `Transcript` workflow execution per trigger: a Kafka record gets a run id
+derived from its own coordinates (cluster/topic/partition/offset/timestamp — see `kafkaRunId`),
+not from the Content's identifier, so two publishes of the _same_ Content still land as two
+independent workflow executions. A REST start gets a random run id unless the caller passes an
+`Idempotency-Key`.
 
-`run()` in `src/workflow.ts` is invoked with the mapped input. Every side-effecting step is
+`run()` (the workflow handler) does no work itself: it immediately delegates to a `TranscriptObject`
+Virtual Object, keyed by `identifier`, via `ctx.client(transcriptObjectApi, identifier).process(input)`.
+Virtual Object handlers are exclusive by default, so Restate serializes every call for the same
+key — a re-publish arriving while the first run is still in Whisper queues behind it instead of
+running concurrently. This is what actually prevents two runs for one Content from racing each
+other through knowlg; the workflow layer above exists only to give every Kafka delivery its own
+durable, inspectable run id.
+
+`process()` in `src/workflow.ts` is invoked with the mapped input. Every side-effecting step is
 wrapped in `ctx.run(name, fn, retryPolicy)` — Restate persists each step's result once it
 succeeds, so a crash/restart resumes from the last completed step instead of redoing everything.
 
@@ -77,16 +85,20 @@ ctx.run('knowlg.create-source', () => createEnrichmentObject(..., { sourceLangua
 Calls knowlg's `POST /object/enrichment/v4/create`. The platform's own `uniqueOn` matching
 (on the registered `Transcript` category definition) makes this idempotent: if a source
 Transcript already exists for this parent, the call returns that existing node instead of
-creating a duplicate — this is what makes retried/redelivered Kafka records safe (it does not,
-by itself, protect against two genuinely concurrent runs for the same Content).
+creating a duplicate — this is what makes retried/redelivered Kafka records safe.
 
-Two paths from here:
+Three paths from here (`createOrRefreshNode`):
 
-- **Already `Live`** (an earlier run already finished this Content): skip straight to
-  re-downloading the previously-uploaded `transcript.json` from blob storage
+- **Already `Live`, same artifact** (an earlier run already finished this Content, and the
+  event's `artifactHash` — when present — still matches what was stamped on the node): skip
+  straight to re-downloading the previously-uploaded `transcript.json` from blob storage
   (`blob.download-source`) instead of re-transcribing. Needed because the platform's edit-lock
   rule rejects any `update()` against an already-`Live` node — trying to redo the work would
   just fail.
+- **Already `Live`, different artifact** (the Content was re-published with a replaced video):
+  the stale node is retired (`reject` → `Retired`, which the platform's `searchSiblings` then
+  ignores) and a fresh node is created in its place, so the rest of this step proceeds down the
+  "not yet Live" path below against the new node.
 - **Not yet Live** (fresh, or was left mid-flight): proceed to generate it.
 
 ### Step 2 — read the Content, transcribe, upload, approve (fresh path only)
