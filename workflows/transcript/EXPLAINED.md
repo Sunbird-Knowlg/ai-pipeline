@@ -58,21 +58,16 @@ to; `run()` itself re-applies the same check for the REST trigger, which has no 
 
 ## 2. What starts running
 
-Restate starts a `Transcript` workflow execution per trigger: a Kafka record gets a run id
-derived from its own coordinates (cluster/topic/partition/offset/timestamp — see `kafkaRunId`),
-not from the Content's identifier, so two publishes of the _same_ Content still land as two
-independent workflow executions. A REST start gets a random run id unless the caller passes an
-`Idempotency-Key`.
+Restate starts a workflow execution per trigger: a Kafka record gets a run id derived from its
+own coordinates (cluster/topic/partition/offset/timestamp — see `kafkaRunId`), not from the
+Content's identifier, so two publishes of the _same_ Content land as two independent runs. A REST
+start gets a random run id unless the caller passes an `Idempotency-Key`. Neither path currently
+serializes concurrent runs for one Content — a Virtual Object keyed by `identifier` was tried and
+reverted (it conflicts with core-api's rule that a deployment endpoint may serve only a unit's own
+service and its trigger sink); a proper fix needs its own deployable unit and is deferred (PR #4
+review, "two runs for the same Content can overlap").
 
-`run()` (the workflow handler) does no work itself: it immediately delegates to a `TranscriptObject`
-Virtual Object, keyed by `identifier`, via `ctx.client(transcriptObjectApi, identifier).process(input)`.
-Virtual Object handlers are exclusive by default, so Restate serializes every call for the same
-key — a re-publish arriving while the first run is still in Whisper queues behind it instead of
-running concurrently. This is what actually prevents two runs for one Content from racing each
-other through knowlg; the workflow layer above exists only to give every Kafka delivery its own
-durable, inspectable run id.
-
-`process()` in `src/workflow.ts` is invoked with the mapped input. Every side-effecting step is
+`run()` in `src/workflow.ts` is invoked with the mapped input. Every side-effecting step is
 wrapped in `ctx.run(name, fn, retryPolicy)` — Restate persists each step's result once it
 succeeds, so a crash/restart resumes from the last completed step instead of redoing everything.
 

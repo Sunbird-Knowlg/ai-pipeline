@@ -3,20 +3,14 @@ import type { BlobDownloader, BlobUploader } from '@ai-pipeline/blob-storage/upl
 import { whisperApi } from '@ai-pipeline/contract-whisper/api';
 import type { KnowlgClient } from '@ai-pipeline/knowlg-client/client';
 import type { Logger } from '@ai-pipeline/observability/logger';
-import { serviceOptions, workflowOptions } from '@ai-pipeline/runtime/options';
+import { workflowOptions } from '@ai-pipeline/runtime/options';
 import { retry } from '@ai-pipeline/runtime/retry';
 import * as restate from '@restatedev/restate-sdk';
 import { z } from 'zod';
-import { transcriptApi, transcriptObjectApi } from './api.js';
+import { transcriptApi } from './api.js';
 import { segmentsToJson, segmentsToVtt } from './captions.js';
 import { languageName } from './language.js';
-import {
-  EnrichmentObjectResult,
-  isTranscriptEligible,
-  type TranscriptInput,
-  type TranscriptOutput,
-  TranscriptSegment,
-} from './schemas.js';
+import { EnrichmentObjectResult, isTranscriptEligible, TranscriptSegment } from './schemas.js';
 import { translateSegments } from './translate.js';
 import { config, metadata } from './unit.js';
 
@@ -310,303 +304,284 @@ async function buildTranslation(
  *    doc comment for why this isn't `RestatePromise.all`) — one language's failure doesn't corrupt
  *    another's already-written state.
  *
- * Runs exclusively per `identifier` (this is a Virtual Object handler, keyed by it): two triggers
- * for the same Content — a re-publish arriving while the first run is still in Whisper, which can
- * take minutes — serialize here instead of running concurrently. Without that, the second run's
- * `create()` would see the first run's still-`Draft` node and transcribe it again, or race its
- * `update()`/`approve()` against the first run's and fail with `ERR_EDIT_LOCKED`/
- * `ERR_APPROVE_NOT_ALLOWED` after paying for the whole Whisper and translation spend.
+ * Known gap (PR #4 review, "two runs for the same Content can overlap"): two triggers for the same
+ * Content — a re-publish arriving while the first run is still in Whisper, which can take minutes —
+ * are not serialized against each other. A Virtual Object keyed by `identifier` was tried and
+ * reverted: it conflicts with core-api's rule that one deployment endpoint may serve only a unit's
+ * own service and its trigger sink, nothing else (`checkEndpointServes`,
+ * apps/core-api/src/domain/registration.ts). A proper fix needs its own deployable unit (so the
+ * lock lives behind a separate endpoint) and is deferred.
  */
-async function process(
-  deps: TranscriptDeps,
-  ctx: restate.ObjectContext,
-  input: TranscriptInput,
-): Promise<TranscriptOutput> {
-  // The Kafka adapter already applies this; the REST trigger has no adapter of its own, so
-  // without this a REST caller could push a non-video Content all the way to Whisper.
-  if (!isTranscriptEligible(input.objectType, input.mimeType)) {
-    throw new restate.TerminalError(
-      `Transcript does not support objectType "${input.objectType}" / mimeType "${input.mimeType}"`,
-    );
-  }
-
-  const parentId = input.identifier;
-  ctx.console.info(
-    { event: 'transcript.start', parentId, channel: input.channel },
-    'transcript run started',
-  );
-
-  const sourceCreateBody = {
-    enrichmentObjectType: 'Transcript',
-    parentId,
-    channel: input.channel,
-    sourceLanguage: true,
-  };
-  ctx.console.debug(
-    { event: 'knowlg.request', operation: 'knowlg.create-source', body: sourceCreateBody },
-    'calling knowlg',
-  );
-  const source = await createOrRefreshNode(
-    ctx,
-    deps,
-    'knowlg.source',
-    sourceCreateBody,
-    input.artifactHash,
-  );
-  ctx.console.debug(
-    {
-      event: 'knowlg.response',
-      operation: 'knowlg.create-source',
-      identifier: source.identifier,
-      status: source.status,
-    },
-    'knowlg responded',
-  );
-
-  let sourceLanguageCode: string;
-  let sourceSegments: TranscriptSegment[];
-  let sourceStatus: string;
-
-  if (source.status === 'Live' && source.languageCode) {
-    sourceLanguageCode = source.languageCode;
-    sourceStatus = source.status;
-    ctx.console.info(
-      { event: 'transcript.resume', parentId, languageCode: sourceLanguageCode },
-      'source already Live, resuming from stored segments',
-    );
-    ctx.console.debug(
-      {
-        event: 'blob.download.start',
-        operation: 'blob.download-source',
-        parentId,
-        languageCode: sourceLanguageCode,
-      },
-      'downloading stored source segments',
-    );
-    sourceSegments = await ctx.run(
-      'blob.download-source',
-      () => downloadSegments(deps.downloadBlob, parentId, sourceLanguageCode),
-      retry.http,
-    );
-    ctx.console.debug(
-      {
-        event: 'blob.download.complete',
-        operation: 'blob.download-source',
-        segments: sourceSegments.length,
-      },
-      'download complete',
-    );
-  } else {
-    ctx.console.info(
-      { event: 'transcript.transcribe', parentId },
-      'no existing Live source, transcribing fresh',
-    );
-
-    ctx.console.debug(
-      {
-        event: 'knowlg.request',
-        operation: 'knowlg.read-content',
-        body: { identifier: parentId, fields: ['artifactUrl'] },
-      },
-      'calling knowlg',
-    );
-    const content = await ctx.run(
-      'knowlg.read-content',
-      () => deps.knowlg.readContent(parentId, ['artifactUrl']),
-      retry.http,
-    );
-    const artifactUrlResult = z.url().safeParse(content.artifactUrl);
-    if (!artifactUrlResult.success) {
-      // Bad input, not a bug to retry against: an upload that never finished, or a link-only
-      // video. The journaled `content` never changes, so retrying would just pause after 10
-      // attempts (CLAUDE.md: malformed input fails the run terminally, not retried blind).
-      throw new restate.TerminalError(
-        `knowlg.read-content: Content ${parentId} has no usable artifactUrl`,
-      );
-    }
-    const artifactUrl = artifactUrlResult.data;
-    ctx.console.debug(
-      { event: 'knowlg.response', operation: 'knowlg.read-content', artifactUrl },
-      'knowlg responded',
-    );
-
-    ctx.console.debug(
-      { event: 'whisper.request', operation: 'whisper.transcribe', body: { artifactUrl } },
-      'calling whisper',
-    );
-    const whisperResult = await ctx.client(whisperApi).transcribe({ artifactUrl });
-    ctx.console.info(
-      {
-        event: 'transcript.transcribed',
-        parentId,
-        language: whisperResult.language,
-        languageProbability: whisperResult.languageProbability,
-        duration: whisperResult.duration,
-        segments: whisperResult.segments.length,
-      },
-      'transcription complete',
-    );
-
-    ctx.console.debug(
-      {
-        event: 'blob.upload.start',
-        operation: 'blob.upload-source',
-        parentId,
-        languageCode: whisperResult.language,
-        segments: whisperResult.segments.length,
-      },
-      'uploading source transcript and captions',
-    );
-    // Uncapped from here on: an outage now would throw away the already-completed,
-    // multi-minute Whisper transcription, not just a cheap call worth retrying fresh.
-    const sourceUrls = await ctx.run(
-      'blob.upload-source',
-      () =>
-        uploadArtifacts(deps.uploadBlob, parentId, whisperResult.language, whisperResult.segments),
-      retry.httpResumable,
-    );
-    ctx.console.debug(
-      {
-        event: 'blob.upload.complete',
-        operation: 'blob.upload-source',
-        transcriptUrl: sourceUrls.transcriptUrl,
-        captionsUrl: sourceUrls.captionsUrl,
-      },
-      'upload complete',
-    );
-
-    const sourceUpdateBody = {
-      languageCode: whisperResult.language,
-      language: languageName(whisperResult.language),
-      artifactUrl: sourceUrls.transcriptUrl,
-      captionsUrl: sourceUrls.captionsUrl,
-      autoApproved: true,
-      status: 'Processing',
-      ...(input.artifactHash ? { artifactHash: input.artifactHash } : {}),
-    };
-    ctx.console.debug(
-      { event: 'knowlg.request', operation: 'knowlg.update-source', body: sourceUpdateBody },
-      'calling knowlg',
-    );
-    await ctx.run(
-      'knowlg.update-source',
-      () => deps.knowlg.updateEnrichmentObject(source.identifier, sourceUpdateBody),
-      retry.httpResumable,
-    );
-    ctx.console.debug(
-      {
-        event: 'knowlg.response',
-        operation: 'knowlg.update-source',
-        identifier: source.identifier,
-      },
-      'knowlg responded',
-    );
-
-    const sourceApproveBody = { status: 'Live' };
-    ctx.console.debug(
-      {
-        event: 'knowlg.request',
-        operation: 'knowlg.approve-source',
-        body: sourceApproveBody,
-      },
-      'calling knowlg',
-    );
-    const approvedSource = parseEnrichmentObjectResult(
-      await ctx.run(
-        'knowlg.approve-source',
-        () => deps.knowlg.approveEnrichmentObject(source.identifier, sourceApproveBody),
-        retry.httpResumable,
-      ),
-      'knowlg.approve-source',
-    );
-    ctx.console.info(
-      {
-        event: 'transcript.source.complete',
-        parentId,
-        identifier: approvedSource.identifier,
-        status: approvedSource.status,
-        languageCode: whisperResult.language,
-      },
-      'source language complete',
-    );
-
-    sourceLanguageCode = whisperResult.language;
-    sourceSegments = whisperResult.segments;
-    sourceStatus = approvedSource.status;
-  }
-
-  const targetLanguages = config.targetLanguages.filter((lang) => lang !== sourceLanguageCode);
-  ctx.console.info(
-    { event: 'transcript.languages', parentId, targetLanguages },
-    'target languages planned',
-  );
-  const translations: TranscriptResult[] = [];
-  for (const [index, lang] of targetLanguages.entries()) {
-    ctx.console.info(
-      {
-        event: 'transcript.language.start',
-        parentId,
-        targetLanguage: lang,
-        index,
-        total: targetLanguages.length,
-      },
-      'starting language',
-    );
-    translations.push(
-      await buildTranslation(
-        ctx,
-        deps,
-        parentId,
-        input.channel,
-        sourceSegments,
-        lang,
-        input.artifactHash,
-      ),
-    );
-  }
-
-  ctx.console.info(
-    { event: 'transcript.complete', parentId, translations: translations.length },
-    'transcript run complete',
-  );
-  return {
-    parentId,
-    source: {
-      identifier: source.identifier,
-      languageCode: sourceLanguageCode,
-      status: sourceStatus,
-    },
-    translations,
-  };
-}
-
-/** The per-Content Virtual Object that does the actual work — see `process`'s own doc comment. */
-export function createTranscriptObject(deps: TranscriptDeps) {
-  return restate.implement(transcriptObjectApi, {
-    handlers: {
-      process: (ctx: restate.ObjectContext, input: TranscriptInput) => process(deps, ctx, input),
-    },
-    options: serviceOptions(metadata),
-  });
-}
-
-/**
- * The Workflow entry point: one instance per Kafka record (keyed by `kafkaRunId`), so every
- * delivery — including a redelivery — gets its own durable, inspectable run. It does no work of
- * its own: it immediately delegates to the per-`identifier` Virtual Object (`process`, above),
- * whose exclusive handler is what actually serializes concurrent runs for the same Content.
- */
-export function createTranscript() {
+export function createTranscript(deps: TranscriptDeps) {
   return restate.implement(transcriptApi, {
     handlers: {
       run: async (ctx, { input, trigger }) => {
         ctx.set('trigger', trigger);
         ctx.set('version', metadata.version);
+
+        // The Kafka adapter already applies this; the REST trigger has no adapter of its own, so
+        // without this a REST caller could push a non-video Content all the way to Whisper.
+        if (!isTranscriptEligible(input.objectType, input.mimeType)) {
+          throw new restate.TerminalError(
+            `Transcript does not support objectType "${input.objectType}" / mimeType "${input.mimeType}"`,
+          );
+        }
+
+        const parentId = input.identifier;
         ctx.console.info(
-          { event: 'transcript.delegate', identifier: input.identifier },
-          'delegating to the per-Content transcript object',
+          { event: 'transcript.start', parentId, channel: input.channel },
+          'transcript run started',
         );
-        return ctx.client(transcriptObjectApi, input.identifier).process(input);
+
+        const sourceCreateBody = {
+          enrichmentObjectType: 'Transcript',
+          parentId,
+          channel: input.channel,
+          sourceLanguage: true,
+        };
+        ctx.console.debug(
+          { event: 'knowlg.request', operation: 'knowlg.create-source', body: sourceCreateBody },
+          'calling knowlg',
+        );
+        const source = await createOrRefreshNode(
+          ctx,
+          deps,
+          'knowlg.source',
+          sourceCreateBody,
+          input.artifactHash,
+        );
+        ctx.console.debug(
+          {
+            event: 'knowlg.response',
+            operation: 'knowlg.create-source',
+            identifier: source.identifier,
+            status: source.status,
+          },
+          'knowlg responded',
+        );
+
+        let sourceLanguageCode: string;
+        let sourceSegments: TranscriptSegment[];
+        let sourceStatus: string;
+
+        if (source.status === 'Live' && source.languageCode) {
+          sourceLanguageCode = source.languageCode;
+          sourceStatus = source.status;
+          ctx.console.info(
+            { event: 'transcript.resume', parentId, languageCode: sourceLanguageCode },
+            'source already Live, resuming from stored segments',
+          );
+          ctx.console.debug(
+            {
+              event: 'blob.download.start',
+              operation: 'blob.download-source',
+              parentId,
+              languageCode: sourceLanguageCode,
+            },
+            'downloading stored source segments',
+          );
+          sourceSegments = await ctx.run(
+            'blob.download-source',
+            () => downloadSegments(deps.downloadBlob, parentId, sourceLanguageCode),
+            retry.http,
+          );
+          ctx.console.debug(
+            {
+              event: 'blob.download.complete',
+              operation: 'blob.download-source',
+              segments: sourceSegments.length,
+            },
+            'download complete',
+          );
+        } else {
+          ctx.console.info(
+            { event: 'transcript.transcribe', parentId },
+            'no existing Live source, transcribing fresh',
+          );
+
+          ctx.console.debug(
+            {
+              event: 'knowlg.request',
+              operation: 'knowlg.read-content',
+              body: { identifier: parentId, fields: ['artifactUrl'] },
+            },
+            'calling knowlg',
+          );
+          const content = await ctx.run(
+            'knowlg.read-content',
+            () => deps.knowlg.readContent(parentId, ['artifactUrl']),
+            retry.http,
+          );
+          const artifactUrlResult = z.url().safeParse(content.artifactUrl);
+          if (!artifactUrlResult.success) {
+            // Bad input, not a bug to retry against: an upload that never finished, or a link-only
+            // video. The journaled `content` never changes, so retrying would just pause after 10
+            // attempts (CLAUDE.md: malformed input fails the run terminally, not retried blind).
+            throw new restate.TerminalError(
+              `knowlg.read-content: Content ${parentId} has no usable artifactUrl`,
+            );
+          }
+          const artifactUrl = artifactUrlResult.data;
+          ctx.console.debug(
+            { event: 'knowlg.response', operation: 'knowlg.read-content', artifactUrl },
+            'knowlg responded',
+          );
+
+          ctx.console.debug(
+            { event: 'whisper.request', operation: 'whisper.transcribe', body: { artifactUrl } },
+            'calling whisper',
+          );
+          const whisperResult = await ctx.client(whisperApi).transcribe({ artifactUrl });
+          ctx.console.info(
+            {
+              event: 'transcript.transcribed',
+              parentId,
+              language: whisperResult.language,
+              languageProbability: whisperResult.languageProbability,
+              duration: whisperResult.duration,
+              segments: whisperResult.segments.length,
+            },
+            'transcription complete',
+          );
+
+          ctx.console.debug(
+            {
+              event: 'blob.upload.start',
+              operation: 'blob.upload-source',
+              parentId,
+              languageCode: whisperResult.language,
+              segments: whisperResult.segments.length,
+            },
+            'uploading source transcript and captions',
+          );
+          // Uncapped from here on: an outage now would throw away the already-completed,
+          // multi-minute Whisper transcription, not just a cheap call worth retrying fresh.
+          const sourceUrls = await ctx.run(
+            'blob.upload-source',
+            () =>
+              uploadArtifacts(
+                deps.uploadBlob,
+                parentId,
+                whisperResult.language,
+                whisperResult.segments,
+              ),
+            retry.httpResumable,
+          );
+          ctx.console.debug(
+            {
+              event: 'blob.upload.complete',
+              operation: 'blob.upload-source',
+              transcriptUrl: sourceUrls.transcriptUrl,
+              captionsUrl: sourceUrls.captionsUrl,
+            },
+            'upload complete',
+          );
+
+          const sourceUpdateBody = {
+            languageCode: whisperResult.language,
+            language: languageName(whisperResult.language),
+            artifactUrl: sourceUrls.transcriptUrl,
+            captionsUrl: sourceUrls.captionsUrl,
+            autoApproved: true,
+            status: 'Processing',
+            ...(input.artifactHash ? { artifactHash: input.artifactHash } : {}),
+          };
+          ctx.console.debug(
+            { event: 'knowlg.request', operation: 'knowlg.update-source', body: sourceUpdateBody },
+            'calling knowlg',
+          );
+          await ctx.run(
+            'knowlg.update-source',
+            () => deps.knowlg.updateEnrichmentObject(source.identifier, sourceUpdateBody),
+            retry.httpResumable,
+          );
+          ctx.console.debug(
+            {
+              event: 'knowlg.response',
+              operation: 'knowlg.update-source',
+              identifier: source.identifier,
+            },
+            'knowlg responded',
+          );
+
+          const sourceApproveBody = { status: 'Live' };
+          ctx.console.debug(
+            {
+              event: 'knowlg.request',
+              operation: 'knowlg.approve-source',
+              body: sourceApproveBody,
+            },
+            'calling knowlg',
+          );
+          const approvedSource = parseEnrichmentObjectResult(
+            await ctx.run(
+              'knowlg.approve-source',
+              () => deps.knowlg.approveEnrichmentObject(source.identifier, sourceApproveBody),
+              retry.httpResumable,
+            ),
+            'knowlg.approve-source',
+          );
+          ctx.console.info(
+            {
+              event: 'transcript.source.complete',
+              parentId,
+              identifier: approvedSource.identifier,
+              status: approvedSource.status,
+              languageCode: whisperResult.language,
+            },
+            'source language complete',
+          );
+
+          sourceLanguageCode = whisperResult.language;
+          sourceSegments = whisperResult.segments;
+          sourceStatus = approvedSource.status;
+        }
+
+        const targetLanguages = config.targetLanguages.filter(
+          (lang) => lang !== sourceLanguageCode,
+        );
+        ctx.console.info(
+          { event: 'transcript.languages', parentId, targetLanguages },
+          'target languages planned',
+        );
+        const translations: TranscriptResult[] = [];
+        for (const [index, lang] of targetLanguages.entries()) {
+          ctx.console.info(
+            {
+              event: 'transcript.language.start',
+              parentId,
+              targetLanguage: lang,
+              index,
+              total: targetLanguages.length,
+            },
+            'starting language',
+          );
+          translations.push(
+            await buildTranslation(
+              ctx,
+              deps,
+              parentId,
+              input.channel,
+              sourceSegments,
+              lang,
+              input.artifactHash,
+            ),
+          );
+        }
+
+        ctx.console.info(
+          { event: 'transcript.complete', parentId, translations: translations.length },
+          'transcript run complete',
+        );
+        return {
+          parentId,
+          source: {
+            identifier: source.identifier,
+            languageCode: sourceLanguageCode,
+            status: sourceStatus,
+          },
+          translations,
+        };
       },
     },
     options: workflowOptions(metadata),
