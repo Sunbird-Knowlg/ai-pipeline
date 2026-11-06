@@ -169,7 +169,10 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD}
       RESTATE_INGRESS_URL: http://restate:8080
       RESTATE_ADMIN_URL: http://restate:9070
-      KAFKA_CLUSTER_NAME: local
+      # Must match every unit's own declared trigger cluster (transcript: "sunbird") -- core-api
+      # only ever ensures its own single configured cluster now, not whatever name a subscription
+      # declares (see triggers.ts), so a mismatch here means that trigger's subscription fails.
+      KAFKA_CLUSTER_NAME: sunbird
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel:4318
       OTEL_SERVICE_NAME: core-api

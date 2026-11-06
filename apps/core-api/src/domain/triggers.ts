@@ -71,12 +71,13 @@ export async function reconcileWithin(
 
   const errors = new Map<string, string>();
   for (const subscription of diff.remove) await cp.admin.deleteSubscription(subscription.id);
-  // Ensures the cluster each new subscription actually names, not just this process's own config.
-  if (cp.kafka) {
-    const clusters = new Set(diff.create.map((d) => new URL(d.source).host));
-    for (const cluster of clusters) {
-      await cp.admin.ensureKafkaCluster(cluster, cp.kafka.bootstrapServers);
-    }
+  // Idempotent; covers a Restate whose metadata was reset while core-api kept running. Only ever
+  // ensures this process's own configured cluster -- not whatever name a subscription declares.
+  // ensureKafkaCluster treats "already exists" as success, so auto-creating an unknown name here
+  // would make it permanently mean "core-api's own brokers", silently masking a typo or a cluster
+  // that genuinely lives elsewhere instead of letting createSubscription fail on it below.
+  if (diff.create.length > 0 && cp.kafka) {
+    await cp.admin.ensureKafkaCluster(cp.kafka.cluster, cp.kafka.bootstrapServers);
   }
   for (const create of diff.create) {
     try {
