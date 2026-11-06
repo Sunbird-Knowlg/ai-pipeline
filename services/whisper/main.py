@@ -246,10 +246,7 @@ def _transcribe(tmp_path: str, language: Optional[str]) -> TranscribeResponse:
         )
 
         detected_probability = 1.0
-        if language is not None:
-            if language not in model.supported_languages:
-                raise TerminalError(f"unsupported language: {language}")
-        else:
+        if language is None:
             language, detected_probability = _detect_language(audio)
 
         raw_regions = get_speech_timestamps(
@@ -336,6 +333,10 @@ whisper_service = restate.Service(
 @whisper_service.handler()
 async def transcribe(ctx: Context, req: TranscribeRequest) -> TranscribeResponse:
     _validate_artifact_url(req.artifactUrl)
+    # Checked here, before the download+decode step: a bad language code is permanent either way,
+    # so there's no reason to pay for a full download and decode first to discover that.
+    if req.language is not None and req.language not in model.supported_languages:
+        raise TerminalError(f"unsupported language: {req.language}")
     logger.info("transcribe request received: artifactUrl=%s", _strip_query(req.artifactUrl))
     async with _transcription_semaphore:
         return await ctx.run_typed(
