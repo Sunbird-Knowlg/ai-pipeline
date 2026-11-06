@@ -104,15 +104,18 @@ jobs:
           # Same role as sourceDigest() for TS units (apps/cli/src/artifact.ts): a content digest
           # over everything that defines this artifact, so an unchanged rebuild under a new tag is
           # still the artifact its version names, and core-api's VERSION_ARTIFACT_CONFLICT check
-          # means what it says.
-          ARTIFACT_DIGEST="sha256:$(cat \
-            services/whisper/Dockerfile \
-            services/whisper/requirements.txt \
-            services/whisper/metadata.json \
-            services/whisper/hypercorn-config.toml \
-            services/whisper/main.py \
-            services/whisper/register.py \
-            | sha256sum | cut -d' ' -f1)"
+          # means what it says. Every git-tracked file under the directory, not a hand-kept list --
+          # a module added to the Dockerfile's COPY but not to a list here would otherwise escape
+          # the digest. Each file's path is hashed alongside its content (both framed, like
+          # sourceDigest's own `path\0content\0`), so two files with identical bytes under
+          # different names still produce a different digest.
+          ARTIFACT_DIGEST="sha256:$(
+            git ls-files services/whisper | sort | while IFS= read -r f; do
+              printf '%s\0' "$f"
+              cat "$f"
+              printf '\0'
+            done | sha256sum | cut -d' ' -f1
+          )"
 
           docker build \
             --build-arg ARTIFACT_DIGEST="$ARTIFACT_DIGEST" \
