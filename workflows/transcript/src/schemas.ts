@@ -55,7 +55,7 @@ export type TranscriptOutput = z.infer<typeof TranscriptOutput>;
 
 export const TranscriptConfig = z.strictObject({
   /** Target languages translated from the source transcript, each its own Transcript sibling. */
-  targetLanguages: z.array(z.string().min(2).max(10)).default(['ar', 'pt', 'fr']),
+  targetLanguages: z.array(z.string().min(2).max(10)).default(['en', 'ar', 'pt', 'fr']),
   /** LiteLLM `model_name` used for translation. */
   translationModel: z.string().min(1),
   /** Segments per translation batch, and how many trailing segments of the previous batch are

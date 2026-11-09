@@ -1,8 +1,12 @@
 # Transcript Workflow — How It Starts, Works, and Ends
 
 Restate workflow that generates a source-language transcript for a Content's video
-artifact, then translates it into the configured target languages (`ar`, `pt`, `fr`), writing
-each as its own `Transcript` `EnrichmentObject` on the parent Content.
+artifact, then translates it into the configured target languages (`en`, `ar`, `pt`, `fr`),
+writing each as its own `Transcript` `EnrichmentObject` on the parent Content. `targetLanguages`
+is a fixed list, not "always translate into every other supported language" -- whichever one
+matches the detected source is dropped from the list (never translated into itself), so a video
+in a language outside this list (e.g. Hindi) gets its own language as the source plus all four
+targets, while an English video gets `en` as the source and only `ar`/`pt`/`fr` as targets.
 
 ---
 
@@ -138,7 +142,7 @@ Three paths from here (`createOrRefreshNode`):
 
 ### Step 3 — translate into each configured target language
 
-`config.targetLanguages` (`["ar", "pt", "fr"]`, minus whichever one matches the detected
+`config.targetLanguages` (`["en", "ar", "pt", "fr"]`, minus whichever one matches the detected
 source language) are processed **sequentially**, not in parallel — each call is a
 multi-step async chain (`buildTranslation`), not a single durable value, and Restate's
 `RestatePromise.all` only combines genuine single-step `ctx.run`/`ctx.client` results. Running
