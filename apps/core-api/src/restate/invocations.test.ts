@@ -27,12 +27,12 @@ describe('SQL builders', () => {
   it('builds a keyset page query', () => {
     const cursor = encodeCursor({ created_at: '2026-09-22T16:03:34.261Z', id: 'inv_abc' });
     const sql = listRunsSql({
-      services: ['ContentEnrichment'],
+      services: ['Transcript'],
       status: 'failed',
       limit: 20,
       cursor,
     });
-    expect(sql).toContain("target_service_name IN ('ContentEnrichment')");
+    expect(sql).toContain("target_service_name IN ('Transcript')");
     expect(sql).toContain("created_at < CAST('2026-09-22T16:03:34.261Z' AS TIMESTAMP)");
     expect(sql).toContain("id < 'inv_abc'");
     expect(sql).toMatch(/LIMIT 21$/);
@@ -40,7 +40,7 @@ describe('SQL builders', () => {
 
   it('rejects injection attempts', () => {
     expect(() => listRunsSql({ services: ["X' OR '1'='1"], limit: 1 })).toThrow(/invalid workflow/);
-    expect(() => getRunSql('ContentEnrichment', "a' OR 1=1 --")).toThrow(/invalid/);
+    expect(() => getRunSql('Transcript', "a' OR 1=1 --")).toThrow(/invalid/);
     expect(() => decodeCursor(Buffer.from('["x","inv_1"]').toString('base64url'))).toThrow(
       /cursor/,
     );
@@ -57,7 +57,7 @@ describe('toRunView', () => {
     const view = toRunView(
       {
         id: 'inv_1',
-        target_service_name: 'ContentEnrichment',
+        target_service_name: 'Transcript',
         target_service_key: 'kf_1',
         status: 'completed',
         completion_result: 'success',
@@ -66,13 +66,13 @@ describe('toRunView', () => {
         pinned_deployment_id: 'dp_1',
         trace_id: 'abc',
       },
-      'content-enrichment',
+      'transcript',
       { trigger: { type: 'kafka', offset: 3 }, version: '0.1.0' },
     );
     expect(view).toEqual({
       runId: 'kf_1',
       invocationId: 'inv_1',
-      workflow: 'content-enrichment',
+      workflow: 'transcript',
       workflowVersion: '0.1.0',
       deploymentId: 'dp_1',
       status: 'completed',

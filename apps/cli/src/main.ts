@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import { sep } from 'node:path';
 import { parseArgs } from 'node:util';
+import { sourceDigest } from './artifact.js';
 import { cancelRun, getRun, listRuns, listUnits, startRun } from './commands/runs.js';
 import { deploy } from './commands/deploy.js';
 import { listDeployments, retireDeployment } from './commands/deployments.js';
@@ -7,6 +9,7 @@ import { scaffold } from './commands/scaffold.js';
 import { coreApi } from './core-api.js';
 import { dockerCli } from './docker.js';
 import { readDotEnv, root, setting } from './env.js';
+import { discoverUnits } from './units.js';
 
 /**
  * `pnpm pipeline …`. This file does argument handling and printing only; each command is a function
@@ -21,6 +24,7 @@ const USAGE = `pipeline <command>
   deployments [name]              list deployments with in-flight counts
   retire <deploymentId>           retire a drained deployment and stop its container
   workflows                       list the catalogue
+  units                           list deployable units (local only, for CI)
   start <workflow> --input <json> [--key <idempotency-key>]
   runs [workflow] [--status s] [--limit n] [--cursor c]
                                   list runs (one page; the reply carries nextCursor)
@@ -28,7 +32,7 @@ const USAGE = `pipeline <command>
   cancel <workflow> <runId>       cancel a run
 
 env: CORE_API_URL (http://127.0.0.1:3000), UNIT_CORE_API_URL (http://core-api:3000),
-     DOCKER_NETWORK (ai-pipeline)`;
+     DOCKER_NETWORK (ai-pipeline), UNIT_KNOWLG_BASE_URL (unset -- required by units that call knowlg)`;
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -52,12 +56,37 @@ const print = (value: unknown) => {
   console.log(JSON.stringify(value, null, 2));
 };
 
+// Omitted entirely (not defaulted to '') when unset, so the unit's own LITELLM_API_KEY stays
+// genuinely absent rather than an empty string — generate.ts's schema now rejects an explicitly
+// empty key (z.string().min(1).optional()) rather than silently treating it the same as absent.
+const litellmApiKey = process.env.LITELLM_MASTER_KEY ?? dotEnv.LITELLM_MASTER_KEY;
+
+// There's no safe default for a real knowlg instance (EXPLAINED.md's manual flow port-forwards
+// one from the dev cluster), so this is omitted entirely unless the caller sets it — units that
+// don't need it (most of them) deploy exactly as before.
+const knowlgBaseUrl = process.env.UNIT_KNOWLG_BASE_URL ?? dotEnv.UNIT_KNOWLG_BASE_URL;
+
+// Azurite's own published emulator credential (same on every Azurite instance everywhere, not a
+// secret) — safe to default directly, unlike the knowlg URL above.
+const AZURITE_CONNECTION_STRING =
+  'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;' +
+  'AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;' +
+  'BlobEndpoint=http://azurite:10000/devstoreaccount1;';
+
 /** The environment a unit's container runs with. Secrets travel in the environment, not in argv. */
 const unitEnv = () => ({
   // Where the unit registers itself on boot: core-api as seen from inside the Docker network.
   CORE_API_URL: setting(dotEnv, 'UNIT_CORE_API_URL', 'http://core-api:3000'),
   LITELLM_URL: setting(dotEnv, 'UNIT_LITELLM_URL', 'http://litellm:4000'),
-  LITELLM_API_KEY: setting(dotEnv, 'LITELLM_MASTER_KEY'),
+  ...(litellmApiKey ? { LITELLM_API_KEY: litellmApiKey } : {}),
+  ...(knowlgBaseUrl ? { KNOWLG_BASE_URL: knowlgBaseUrl } : {}),
+  AZURE_STORAGE_ACCOUNT: setting(dotEnv, 'UNIT_AZURE_STORAGE_ACCOUNT', 'devstoreaccount1'),
+  AZURE_STORAGE_CONTAINER: setting(dotEnv, 'UNIT_AZURE_STORAGE_CONTAINER', 'transcripts'),
+  AZURE_STORAGE_CONNECTION_STRING: setting(
+    dotEnv,
+    'UNIT_AZURE_STORAGE_CONNECTION_STRING',
+    AZURITE_CONNECTION_STRING,
+  ),
   OTEL_EXPORTER_OTLP_ENDPOINT: setting(dotEnv, 'UNIT_OTEL_ENDPOINT', 'http://otel:4318'),
 });
 
@@ -116,6 +145,25 @@ async function main(): Promise<void> {
 
     case 'workflows':
       return print(await listUnits(api));
+
+    // Local discovery, no core-api call — so CI can use this before anything is deployed.
+    case 'units': {
+      const { units, broken } = discoverUnits(repo);
+      for (const b of broken) console.error(`✖ ${b.dir} has an invalid metadata.json: ${b.error}`);
+      return print(
+        units
+          // tests/fixtures/* are real units for deploy/vitest, but not for CI to push images of.
+          .filter((u) => !u.dir.includes(`${sep}tests${sep}fixtures${sep}`))
+          .map((u) => ({
+            name: u.metadata.name,
+            image: u.packageName.replace(/^@ai-pipeline\//, ''),
+            package: u.packageName,
+            // What CI bakes in as ARTIFACT_DIGEST — the same content digest `deploy` uses, so an
+            // unchanged unit rebuilt under a new tag is still the artifact its version names.
+            artifactDigest: sourceDigest(repo, u.packageName),
+          })),
+      );
+    }
 
     case 'start': {
       const workflow = required(args[0], 'start needs <workflow> --input <json>');

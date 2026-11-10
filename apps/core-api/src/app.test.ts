@@ -16,7 +16,7 @@ function app(overrides: { dbOk?: boolean; restateOk?: boolean } = {}) {
     db: db as unknown as Db,
     admin: fakeAdmin({ health: async () => overrides.restateOk ?? true }),
     ingress: fakeIngress(),
-    kafka: { cluster: 'local', bootstrapServers: 'kafka:9092' },
+    kafka: { cluster: 'local', bootstrapServers: 'kafka:9092', topicPrefix: '' },
     log: silentLogger(),
     allowedHosts: ['localhost', '127.0.0.1', 'core-api'],
   };
@@ -72,7 +72,7 @@ describe('host guard', () => {
     const post = (headers: Record<string, string>) =>
       app().inject({
         method: 'POST',
-        url: '/v1/runs/content-enrichment/api_x/cancel',
+        url: '/v1/runs/transcript/api_x/cancel',
         headers: { host: 'localhost:3000', ...headers },
       });
     expect((await post({ origin: 'https://evil.example' })).statusCode).toBe(403);
@@ -100,7 +100,7 @@ describe('error envelope', () => {
 
     const badBody = await app().inject({
       method: 'POST',
-      url: '/v1/workflows/content-enrichment/runs',
+      url: '/v1/workflows/transcript/runs',
       headers: { host: 'localhost', 'content-type': 'application/json' },
       payload: { input: {}, extra: 1 },
     });
@@ -111,7 +111,7 @@ describe('error envelope', () => {
   it('reports malformed JSON as a client error, not a crash', async () => {
     const res = await app().inject({
       method: 'POST',
-      url: '/v1/workflows/content-enrichment/runs',
+      url: '/v1/workflows/transcript/runs',
       headers: { host: 'localhost', 'content-type': 'application/json' },
       payload: '{ not json',
     });

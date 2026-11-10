@@ -1,4 +1,4 @@
-import { createLogger, type Logger } from '@ai-pipeline/observability/logger';
+import { silentLogger } from '@ai-pipeline/observability/testing/logger';
 import { parseMetadata, type Metadata } from '@ai-pipeline/metadata/metadata';
 import type { ControlPlane } from '../domain/deps.js';
 import type { RestateAdminPort, Subscription } from '../restate/admin.js';
@@ -141,7 +141,7 @@ export function fakeIngress(overrides: Partial<FakeIngress> = {}): FakeIngress {
   return ingress;
 }
 
-export const silentLogger = (): Logger => createLogger('test').child({}, { level: 'silent' });
+export { silentLogger };
 
 /** A `ControlPlane` wired entirely from fakes. */
 export function fakeControlPlane(
@@ -151,7 +151,7 @@ export function fakeControlPlane(
     store: fakeStore(parts.seed),
     admin: fakeAdmin(parts.admin),
     ingress: fakeIngress(parts.ingress),
-    kafka: { cluster: 'local', bootstrapServers: 'kafka:9092' },
+    kafka: { cluster: 'local', bootstrapServers: 'kafka:9092', topicPrefix: '' },
     log: silentLogger(),
   };
 }
@@ -161,8 +161,8 @@ export function fakeControlPlane(
 const BASE_METADATA = {
   apiVersion: 'ai-pipeline/v1alpha1',
   kind: 'workflow',
-  name: 'content-enrichment',
-  restateName: 'ContentEnrichment',
+  name: 'transcript',
+  restateName: 'Transcript',
   version: '1.0.0',
 };
 
@@ -196,9 +196,9 @@ export function definitionOf(overrides: Partial<Definition> = {}): Definition {
 export function deploymentOf(overrides: Partial<Deployment> = {}): Deployment {
   return {
     deploymentId: 'dp_1',
-    name: 'content-enrichment',
+    name: 'transcript',
     version: '1.0.0',
-    endpoint: 'http://content-enrichment-abc:9080',
+    endpoint: 'http://transcript-abc:9080',
     artifactDigest: `sha256:${'b'.repeat(64)}`,
     mode: 'immutable',
     status: 'active',
@@ -209,7 +209,7 @@ export function deploymentOf(overrides: Partial<Deployment> = {}): Deployment {
 
 export function triggerOf(overrides: Partial<TriggerRecord> = {}): TriggerRecord {
   return {
-    name: 'content-enrichment',
+    name: 'transcript',
     triggerId: 'api',
     type: 'rest',
     definition: { id: 'api', type: 'rest' },

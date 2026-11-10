@@ -5,8 +5,8 @@ import { apiRunId, kafkaRunId, RUN_ID_PATTERN } from './run-ids.js';
 const base = {
   apiVersion: 'ai-pipeline/v1alpha1',
   kind: 'workflow',
-  name: 'content-enrichment',
-  restateName: 'ContentEnrichment',
+  name: 'transcript',
+  restateName: 'Transcript',
   version: '0.1.0',
 };
 
@@ -43,7 +43,7 @@ describe('metadata', () => {
       /same handler/,
     );
     expect(() => parseMetadata({ ...base, triggers: [kafka('orders-')] })).toThrow(/kebab/);
-    const dep = { kind: 'service', name: 'summary' };
+    const dep = { kind: 'service', name: 'whisper' };
     expect(() => parseMetadata({ ...base, dependencies: [dep, dep] })).toThrow(
       /duplicate dependency/,
     );

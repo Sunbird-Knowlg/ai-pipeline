@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { ContractEntry } from '@ai-pipeline/contracts/entry';
 import { contractHash, contractSchemas } from '@ai-pipeline/contracts/schemas';
 import { describe, expect, it } from 'vitest';
-import { discoverUnits, findUnit } from './units.js';
+import { allDeclaredUnitNames, discoverUnits, findUnit } from './units.js';
 import { workspaceGroups, workspacePackages } from './workspace.js';
 
 /**
@@ -37,7 +37,7 @@ describe('discoverUnits', () => {
     // Asserted as a subset on purpose: a hardcoded list would mean adding a workflow breaks this
     // test, which is exactly the friction the scaffold exists to remove.
     expect(units.map((u) => u.metadata.name)).toEqual(
-      expect.arrayContaining(['content-enrichment', 'summary', 'versioned-sleeper']),
+      expect.arrayContaining(['transcript', 'versioned-sleeper']),
     );
   });
 
@@ -57,7 +57,7 @@ describe('discoverUnits', () => {
   });
 
   it('names the units it knows when asked for one it does not', () => {
-    expect(() => findUnit(ROOT, 'nope')).toThrow(/known units: .*content-enrichment/);
+    expect(() => findUnit(ROOT, 'nope')).toThrow(/known units: .*transcript/);
   });
 });
 
@@ -111,7 +111,9 @@ describe('units and contracts agree', () => {
   );
 
   it('every unit dependency names another unit in the workspace', () => {
-    const names = new Set(units.map((u) => u.metadata.name));
+    // Not `units.map(...)`: a dependency can be a unit this CLI can't deploy itself (whisper is
+    // Python), so the name just needs to exist somewhere, not be TS-deployable.
+    const names = allDeclaredUnitNames(ROOT);
     for (const unit of units)
       for (const dependency of unit.metadata.dependencies)
         expect(names, `${unit.metadata.name} → ${dependency.name}`).toContain(dependency.name);

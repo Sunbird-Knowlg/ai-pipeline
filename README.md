@@ -8,55 +8,46 @@ A Restate-native AI pipeline platform.
 - Each **workflow or service** is an independently deployable container.
 - LLM calls go through **LiteLLM**, which routes to host Ollama.
 
-Two examples ship with it:
+One example ships with it:
 
-- **`content-authoring` is the reference.** A DIKSHA content item arrives by REST or by Kafka
-  `diksha.content.published`, and the run returns an authoring pack: a summary, extracted metadata
-  (keywords, concepts, difficulty) and a quiz. It calls three shared services — two of them at the
-  same time, the third after them because it needs their answer — and owns exactly one side effect
-  of its own. **Read [docs/example-workflow.md](docs/example-workflow.md) before writing a
-  workflow**: it walks through every decision the handler makes and why.
-- **`content-enrichment` is the minimal one.** REST or Kafka `content.published`, one durable call
-  to the private `summary` service, `{ summary, metadata }` back. Read it for the skeleton.
+- **`transcript`** generates a source-language transcript for a video/audio Content's artifact via
+  the private `whisper` service, then translates it into each configured target language, each as
+  its own `Transcript` enrichment object. Triggered by REST or by the generic Kafka
+  `content.published` event. **Read [workflows/transcript/EXPLAINED.md](workflows/transcript/EXPLAINED.md)
+  before writing a workflow**: it walks through every decision the handler makes and why.
 
 ```
 REST  ──► core-api ──(restate-sdk-clients)──┐
                                             ▼
-                                     ContentAuthoring ─┬─► SummaryService          ─┐
-Kafka ──► ContentAuthoringTrigger ──────────┘ (workflow)│                            ├ parallel
-   diksha.content.published                             └─► ContentMetadataService ─┘
-                                                             │   └ ctx.run → LiteLLM → Ollama
-                                                             └─► QuizGenerateService  (needs the
-                                                                   concepts found above)
+Kafka ──► TranscriptTrigger ──────────► Transcript (workflow) ──► WhisperService
+   content.published                                              │  └ ctx.run → faster-whisper
+                                                                   └─► LiteLLM → per-language translation
 
 core-api (control plane) ──► Restate admin: deployments · subscriptions · SQL introspection
                          ──► Postgres catalogue: definitions · deployments · dependencies · triggers
 ```
 
-The design is in [docs/plan.md](docs/plan.md). Settled decisions and lessons learned are in [docs/decisions.md](docs/decisions.md). The annotated example is in [docs/example-workflow.md](docs/example-workflow.md).
+The design is in [docs/plan.md](docs/plan.md). Settled decisions and lessons learned are in [docs/decisions.md](docs/decisions.md). The annotated example is in [workflows/transcript/EXPLAINED.md](workflows/transcript/EXPLAINED.md).
 
 ## Layout
 
-| Path                               | What it holds                                                                                  |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `packages/contracts`               | zod schemas (`./<unit>`) and `restate.iface` bindings (`./<unit>/api`), per unit               |
-| `packages/api-contract`            | the HTTP surface: request/response schemas, the error envelope and its code union              |
-| `packages/metadata`                | the `metadata.json` schema (`./metadata`), Restate naming (`./naming`), `./run-ids`            |
-| `packages/runtime`                 | small helpers: `./retry`, `./options`, `./kafka-trigger`, `./config`, `./serve`                |
-| `packages/ai`                      | `Generate` over LiteLLM (AI SDK); providers stay behind it                                     |
-| `packages/observability`           | pino logger and optional OTel SDK                                                              |
-| `packages/typescript-config`       | the shared `tsc` presets every package extends                                                 |
-| `packages/eslint-config`           | the shared lint rules, including the handler determinism checks                                |
-| `packages/contract-<name>`         | a contract a _second_ unit needs: `summary`, `content-metadata`, `quiz-generate`               |
-| `services/summary`                 | `SummaryService`, private; one durable LLM step                                                |
-| `services/content-metadata`        | `ContentMetadataService`, private; keywords, concepts and a difficulty                         |
-| `services/quiz-generate`           | `QuizGenerateService`, private; multiple-choice questions                                      |
-| `workflows/content-authoring`      | the reference workflow ([walkthrough](docs/example-workflow.md)); two triggers, three services |
-| `workflows/content-enrichment`     | `ContentEnrichment` workflow, its Kafka trigger service and adapter                            |
-| `apps/core-api`                    | Fastify: HTTP (`routes/`, `plugins/`) over rules (`domain/`) over stores (`store/`)            |
-| `apps/cli`                         | `pnpm pipeline …`: `commands/` over a typed API client and a Docker port                       |
-| `tests/fixtures/versioned-sleeper` | test-only workflow used for the versioning e2e                                                 |
-| `tests/e2e`                        | end-to-end suites against the compose stack                                                    |
+| Path                               | What it holds                                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `packages/contracts`               | zod schemas (`./<unit>`) and `restate.iface` bindings (`./<unit>/api`), per unit                 |
+| `packages/api-contract`            | the HTTP surface: request/response schemas, the error envelope and its code union                |
+| `packages/metadata`                | the `metadata.json` schema (`./metadata`), Restate naming (`./naming`), `./run-ids`              |
+| `packages/runtime`                 | small helpers: `./retry`, `./options`, `./kafka-trigger`, `./config`, `./serve`                  |
+| `packages/ai`                      | `Generate` over LiteLLM (AI SDK); providers stay behind it                                       |
+| `packages/observability`           | pino logger and optional OTel SDK                                                                |
+| `packages/typescript-config`       | the shared `tsc` presets every package extends                                                   |
+| `packages/eslint-config`           | the shared lint rules, including the handler determinism checks                                  |
+| `packages/contract-<name>`         | a contract a _second_ unit needs, e.g. `contract-whisper`                                        |
+| `services/whisper`                 | `WhisperService`, private; streaming download + VAD-chunked transcription                        |
+| `workflows/transcript`             | the reference workflow ([walkthrough](workflows/transcript/EXPLAINED.md)); REST + Kafka triggers |
+| `apps/core-api`                    | Fastify: HTTP (`routes/`, `plugins/`) over rules (`domain/`) over stores (`store/`)              |
+| `apps/cli`                         | `pnpm pipeline …`: `commands/` over a typed API client and a Docker port                         |
+| `tests/fixtures/versioned-sleeper` | test-only workflow used for the versioning e2e                                                   |
+| `tests/e2e`                        | end-to-end suites against the compose stack                                                      |
 
 Packages export one entry point per purpose rather than a barrel `index.ts`, so a consumer pulls in
 what it uses and no more — core-api reads catalogue schemas without loading the Restate SDK, and a
@@ -71,9 +62,11 @@ You need Docker, Node 22.13 or newer, pnpm 11 (`corepack enable`), and a host Ol
 cp .env.example .env
 pnpm install && pnpm build
 docker compose up -d --build            # postgres, kafka, restate, litellm, otel, core-api
-pnpm pipeline deploy summary content-metadata quiz-generate   # dependencies first
-pnpm pipeline deploy content-enrichment content-authoring
+pnpm pipeline deploy transcript
 ```
+
+`whisper` is a Python service; the CLI's unit discovery only covers the TS workspace, so it is
+built and run separately from its own `Dockerfile` — not yet wired into `pnpm pipeline deploy`.
 
 All ports bind to `127.0.0.1` only:
 
@@ -92,20 +85,19 @@ The Restate ingress (8080) stays internal; REST requests go through core-api.
 
 ```sh
 # REST: start a run (Idempotency-Key makes it idempotent), then read it
-curl -s localhost:3000/v1/workflows/content-authoring/runs -H 'content-type: application/json' \
+curl -s localhost:3000/v1/workflows/transcript/runs -H 'content-type: application/json' \
   -H 'idempotency-key: demo-1' \
-  -d '{"input":{"contentId":"do_1","name":"Photosynthesis","text":"Green plants use sunlight to make food…","subject":"Science","gradeLevel":"Class 7"}}'
-pnpm pipeline run content-authoring <runId>
+  -d '{"input":{"identifier":"do_1","objectType":"Content","mimeType":"video/mp4"}}'
+pnpm pipeline run transcript <runId>
 
-# Kafka: publish a DIKSHA content event (the adapter maps it to the workflow input)
-echo '{"objectType":"Content","identifier":"do_2","edata":{"state":"Live","name":"The Water Cycle","body":"Heat from the sun makes water evaporate…","language":["Hindi"]}}' | \
-  docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic diksha.content.published
-pnpm pipeline runs content-authoring
+# Kafka: publish a content-published event (the adapter maps it to the workflow input)
+echo '{"eid":"BE_JOB_REQUEST","edata":{"action":"content-published","identifier":"do_2","objectType":"Content","mimeType":"video/mp4","enrichmentTypes":["Transcript"]}}' | \
+  docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic dev.content.published
+pnpm pipeline runs transcript
 ```
 
-A run takes about a minute on the local `qwen3.5:4b`: three model calls, two of them concurrent.
-[docs/example-workflow.md](docs/example-workflow.md) explains what it returns and why it is built
-the way it is.
+[workflows/transcript/EXPLAINED.md](workflows/transcript/EXPLAINED.md) explains what it returns and
+why it is built the way it is.
 
 ### Core API
 
@@ -146,10 +138,10 @@ pnpm pipeline workflows | start <wf> --input '{…}' [--key k] | runs [wf] | run
 
 ## Add a workflow or service
 
-**Start from [docs/example-workflow.md](docs/example-workflow.md).** It walks through
-`content-authoring` — the reference workflow — decision by decision: the two triggers, the adapter's
-skip-versus-fail rule, when to call services in parallel and when not to, where `ctx.run` belongs,
-which contracts move into a package, and what each level of test proves. Its last section is the
+**Start from [workflows/transcript/EXPLAINED.md](workflows/transcript/EXPLAINED.md).** It walks
+through `transcript` — the reference workflow — decision by decision: the two triggers, the
+adapter's skip-versus-fail rule, when to call a service and where `ctx.run` belongs, which
+contracts move into a package, and what each level of test proves. Its last section is the
 checklist below in long form.
 
 ```sh
@@ -185,9 +177,9 @@ What it generates, and why:
 
 **Each unit is independently deployable, and adding one does not disturb the others.** A unit owns
 its own contract; there is no shared registry to edit. `packages/contract-*` exists only for a
-contract that a _second_ unit needs — `contract-summary` is shared because two workflows call that
-service, and `contract-quiz-generate` because `content-authoring` does. This is not just tidiness:
-the artifact digest covers a unit's workspace dependencies,
+contract that a _second_ unit needs — `contract-whisper` moved into its own package the moment a
+second workflow was expected to call `WhisperService`. This is not just tidiness: the artifact
+digest covers a unit's workspace dependencies,
 so a shared registry would mean adding one workflow changed every other unit's artifact and forced a
 round of version bumps. `apps/cli/src/artifact.test.ts` pins the property.
 
@@ -250,12 +242,12 @@ The overlay needs about 4 GB of extra memory. The `traceId` in a `RunView` is th
 
 ## Tests
 
-| Command            | What it runs                                                                                                            |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `pnpm check`       | one `turbo run`: build, typecheck (tests included), lint, unit tests, formatting — then `turbo boundaries`              |
-| `pnpm test`        | unit tests only                                                                                                         |
-| `pnpm test:replay` | always-replay Restate tests (Testcontainers; needs Docker)                                                              |
-| `pnpm test:e2e`    | against the running stack, host Ollama included: catalogue, REST, Kafka, triggers, immutable versioning, crash recovery |
+| Command            | What it runs                                                                                               |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `pnpm check`       | one `turbo run`: build, typecheck (tests included), lint, unit tests, formatting — then `turbo boundaries` |
+| `pnpm test`        | unit tests only                                                                                            |
+| `pnpm test:replay` | always-replay Restate tests (Testcontainers; needs Docker)                                                 |
+| `pnpm test:e2e`    | against the running stack: catalogue, REST, Kafka, immutable versioning                                    |
 
 `pnpm check` is the gate. It fails on a formatting drift as readily as on a type error, because a
 reformat changes a unit's artifact digest and therefore needs a version bump — so drift is a

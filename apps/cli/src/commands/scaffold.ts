@@ -48,11 +48,11 @@ export function triggerIdFor(topic: string, unitName: string): string {
   return NAME.test(derived) ? derived : `${unitName}-events`;
 }
 
-/** `content-enrichment` → `ContentEnrichment`; the Restate service name. */
+/** `order-fulfilment` → `OrderFulfilment`; the Restate service name. */
 const pascal = (name: string): string =>
   name.replace(/(^|-)([a-z0-9])/g, (_, __, c: string) => c.toUpperCase());
 
-/** `content-enrichment` → `contentEnrichment`; an identifier. */
+/** `order-fulfilment` → `orderFulfilment`; an identifier. */
 const camel = (name: string): string => {
   const p = pascal(name);
   return p.charAt(0).toLowerCase() + p.slice(1);

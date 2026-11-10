@@ -11,8 +11,8 @@ import {
 const metadata = parseMetadata({
   apiVersion: 'ai-pipeline/v1alpha1',
   kind: 'workflow',
-  name: 'content-enrichment',
-  restateName: 'ContentEnrichment',
+  name: 'transcript',
+  restateName: 'Transcript',
   version: '0.1.0',
   triggers: [
     { id: 'api', type: 'rest' },
@@ -20,7 +20,7 @@ const metadata = parseMetadata({
     { id: 'content-updated', type: 'kafka', cluster: 'local', topic: 'content.updated' },
   ],
 });
-const prefix = sinkPrefix('ContentEnrichment');
+const prefix = sinkPrefix('Transcript');
 /** A live subscription as Restate reports it, matching what `desiredSubscriptions` asks for. */
 const sub = (id: string, topic: string, handler: string, options?: Record<string, string>) => ({
   id,
@@ -41,9 +41,9 @@ describe('desiredSubscriptions', () => {
     expect(desired[0]).toMatchObject({
       triggerId: 'content-published',
       source: 'kafka://local/content.published',
-      sink: 'service://ContentEnrichmentTrigger/onContentPublished',
+      sink: 'service://TranscriptTrigger/onContentPublished',
       options: {
-        'group.id': 'wf.content-enrichment.content-published',
+        'group.id': 'wf.transcript.content-published',
         'auto.offset.reset': 'earliest',
       },
     });
@@ -91,7 +91,7 @@ describe('diffSubscriptions', () => {
     // replacing it. Matching on source and sink alone would leave an existing subscription on
     // whatever it was created with, and a settings change would reach new units only.
     const stale = sub('sub_old_options', 'content.published', 'onContentPublished', {
-      'group.id': 'wf.content-enrichment.content-published',
+      'group.id': 'wf.transcript.content-published',
       'auto.offset.reset': 'earliest',
       'client.id': 'restate',
     });

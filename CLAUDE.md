@@ -10,8 +10,8 @@ Use the Restate context directly (`ctx.run`, `ctx.client`, `ctx.sendClient`, `Re
 ## Vocabulary
 
 - **Step**: a plain function run inside a handler. It lives in the owning package and is not catalogued.
-- **Service**: a reusable capability with its own Restate invocation, e.g. `services/summary`. Usually `visibility: private`.
-- **Workflow**: stateful orchestration with a unique run ID, e.g. `workflows/content-enrichment`.
+- **Service**: a reusable capability with its own Restate invocation, e.g. `services/whisper`. Usually `visibility: private`.
+- **Workflow**: stateful orchestration with a unique run ID, e.g. `workflows/transcript`.
 
 ## Rules for handler code
 
@@ -79,12 +79,10 @@ Use the Restate context directly (`ctx.run`, `ctx.client`, `ctx.sendClient`, `Re
 lints and deploys as it stands, with the conventions already applied. Do not hand-roll one: the files
 have to agree with each other, and the failure mode is a deploy-time error.
 
-**The reference is `workflows/content-authoring`, annotated in
-[docs/example-workflow.md](docs/example-workflow.md)** — read it before writing a workflow. It shows
-the whole shape once: both triggers, an adapter whose skip/fail rule is deliberate, three shared
-service calls (two in parallel via `RestatePromise.all`, one sequential because it depends on their
-answer), deterministic steps, one `ctx.run` side effect, and the four levels of test.
-`workflows/content-enrichment` is the minimal version of the same skeleton.
+**The reference is `workflows/transcript`, annotated in
+[workflows/transcript/EXPLAINED.md](workflows/transcript/EXPLAINED.md)** — read it before writing a
+workflow. It shows the whole shape once: both triggers, an adapter whose skip/fail rule is
+deliberate, a service call, deterministic steps, `ctx.run` side effects, and the four levels of test.
 
 ## The catalogue schema
 

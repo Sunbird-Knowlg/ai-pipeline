@@ -17,7 +17,7 @@ export interface AppDeps {
   db: Db;
   admin: RestateAdminPort;
   ingress: IngressPort;
-  kafka: { cluster: string; bootstrapServers: string };
+  kafka: { cluster: string; bootstrapServers: string; topicPrefix: string };
   log: Logger;
   allowedHosts: string[];
 }

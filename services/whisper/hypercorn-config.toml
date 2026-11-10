@@ -1,0 +1,10 @@
+# uvicorn does not support HTTP/2, which Restate's invocation protocol needs — hypercorn is
+# required here, not a style choice.
+bind = "0.0.0.0:9080"
+h2_max_concurrent_streams = 2147483647
+keep_alive_max_requests = 2147483647
+keep_alive_timeout = 2147483647
+# One worker: the whisper model loads once, as a module-level global, at import time. Each
+# additional hypercorn worker is a separate process that would load its own full copy — 8 workers
+# would mean 8x the memory this pod is actually sized for.
+workers = 1

@@ -4,3 +4,9 @@ dist/
 .env
 *.log
 coverage/
+
+# services/whisper (Python, not part of the pnpm/turbo build above)
+__pycache__/
+*.pyc
+.venv/
+venv/

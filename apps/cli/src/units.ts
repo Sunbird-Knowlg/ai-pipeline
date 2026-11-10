@@ -1,8 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseMetadata, type Metadata } from '@ai-pipeline/metadata/metadata';
 import { readManifest } from './manifest.js';
-import { workspacePackages } from './workspace.js';
+import { workspaceGroups, workspacePackages } from './workspace.js';
 
 export interface Unit {
   dir: string;
@@ -57,6 +57,33 @@ export function discoverUnits(root: string): Discovered {
     }
   }
   return { units, broken };
+}
+
+/**
+ * Every unit's declared name, whether or not it's deployable via this CLI.
+ *
+ * `discoverUnits` only sees TS units (it needs `package.json`/`src/main.ts` to build and run one),
+ * but a unit can depend on one that isn't -- `whisper` is Python. A dependency name just needs to
+ * resolve to *something* registered in the catalogue, so this reads `metadata.json` off every
+ * workspace-group directory directly, regardless of language.
+ */
+export function allDeclaredUnitNames(root: string): Set<string> {
+  const names = new Set<string>();
+  for (const group of workspaceGroups(root)) {
+    const base = join(root, group);
+    if (!existsSync(base)) continue;
+    for (const entry of readdirSync(base)) {
+      const metadataPath = join(base, entry, 'metadata.json');
+      if (!existsSync(metadataPath)) continue;
+      try {
+        names.add(parseMetadata(JSON.parse(readFileSync(metadataPath, 'utf8')) as unknown).name);
+      } catch {
+        // Invalid metadata is that unit's own problem (discoverUnits collects it as broken);
+        // this is only ever used to ask "does this name exist at all".
+      }
+    }
+  }
+  return names;
 }
 
 export function findUnit(root: string, name: string): Unit {

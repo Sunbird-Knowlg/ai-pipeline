@@ -20,7 +20,7 @@ import { deploy, latestOutcome } from './deploy.js';
  */
 
 const ROOT = process.cwd().replace(/\/apps\/cli$/, '');
-const UNIT = 'summary';
+const UNIT = 'transcript';
 
 interface Recorded {
   built: { tag: string; buildArgs: Record<string, string> | undefined }[];
@@ -127,7 +127,7 @@ describe('deploy', () => {
 
     const [container] = docker.recorded.started;
     // One container per artifact, labelled so a later deploy can tell whether it may be reused.
-    expect(container!.name).toMatch(/^summary-[0-9a-f]{12}$/);
+    expect(container!.name).toMatch(/^transcript-[0-9a-f]{12}$/);
     expect(container!.labels).toMatchObject({ 'ai-pipeline.name': UNIT });
     const artifact = container!.labels['ai-pipeline.artifact'];
     expect(artifact).toMatch(/^sha256:[0-9a-f]{64}$/);
@@ -195,7 +195,7 @@ describe('deploy', () => {
     // Replacing a container Restate already routes to interrupts that endpoint; it must not be
     // something a deploy does quietly.
     expect(lines).toContainEqual(
-      expect.stringMatching(/^! replacing container summary-[0-9a-f]{12}/),
+      expect.stringMatching(/^! replacing container transcript-[0-9a-f]{12}/),
     );
   });
 
@@ -203,7 +203,7 @@ describe('deploy', () => {
     const docker = fakeDocker({ image: true, container: 'running', configLabel: 'whatever' });
     await deploy(options(docker, { dev: true }));
     const [container] = docker.recorded.started;
-    expect(container!.name).toBe('summary-dev');
+    expect(container!.name).toBe('transcript-dev');
     expect(container!.env.DEPLOYMENT_MODE).toBe('dev');
   });
 

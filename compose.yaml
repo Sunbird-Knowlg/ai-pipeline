@@ -103,6 +103,9 @@ services:
     command: ['--config', '/app/config.yaml', '--host', '0.0.0.0', '--port', '4000']
     environment:
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      # Must be non-empty: litellm's get_secret resolves a set-but-empty var to '', not None, and
+      # only None skips auth -- an empty key here means every call gets rejected with "No api key
+      # passed in.", not "no auth". `:?` fails the whole stack fast instead of landing there.
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set in .env}
       LITELLM_LOCAL_MODEL_COST_MAP: 'true'
       LITELLM_TELEMETRY: 'false'
@@ -132,6 +135,26 @@ services:
     ports:
       - 127.0.0.1:4318:4318
 
+  # Local stand-in for Azure Blob Storage. Its well-known devstoreaccount1 key below is Microsoft's
+  # own published emulator credential, not a secret -- same key on every Azurite instance everywhere.
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0
+    restart: unless-stopped
+    command: ['azurite-blob', '--blobHost', '0.0.0.0', '--blobPort', '10000']
+    ports:
+      - 127.0.0.1:10000:10000
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('net').connect(10000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
   core-api:
     build:
       context: .
@@ -146,7 +169,10 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD}
       RESTATE_INGRESS_URL: http://restate:8080
       RESTATE_ADMIN_URL: http://restate:9070
-      KAFKA_CLUSTER_NAME: local
+      # Must match every unit's own declared trigger cluster (transcript: "sunbird") -- core-api
+      # only ever ensures its own single configured cluster now, not whatever name a subscription
+      # declares (see triggers.ts), so a mismatch here means that trigger's subscription fails.
+      KAFKA_CLUSTER_NAME: sunbird
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel:4318
       OTEL_SERVICE_NAME: core-api
